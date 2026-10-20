@@ -2,11 +2,11 @@
 
 ## Current Status
 
-- Specification version: 1.0 (planning/spec.md, last modified 2026-10-19)
-- Current work phase: W1 — Foundation & Frontend Theme Integration
-- Current track: Track A + Theme & Frontend API Integration (VERIFIED)
+- Specification version: 1.0 (`spec.md`, last modified 2026-10-20)
+- Current work phase: W0–W4 Complete (Phase 0 and Sprint Epic 1)
+- Current track: Tracks A, B, C, D, E, F, G (VERIFIED)
 - Overall status: VERIFIED
-- Last updated: 2026-10-19 22:25 UTC+5:30
+- Last updated: 2026-10-20 18:07 UTC+5:30
 - Active blocker: None
 
 ## Status Legend
@@ -21,203 +21,121 @@
 ## Phase Progress
 
 ### W0 — Repository Assessment
-
 - Status: VERIFIED
 - Tasks:
-  - Read entire spec.md: Completed.
-  - Runtime check (Node, pnpm, Docker, Git): Verified (Node 20.20.2, pnpm 12.14.0, Docker 29.6.2, Docker Compose v5.3.1).
-  - Git repository initialization: Verified.
-  - Architecture delta identified: Monorepo layout required per spec.md Section 3.2.
-  - Architectural decisions recorded (ADR 0001-0004 in `docs/decisions/`): Verified.
-- Evidence: Runtime CLI outputs logged, spec.md read and validated.
+  - Read entire `spec.md` specification.
+  - Clone GitHub repository `https://github.com/HarK-github/velvetAI` onto `main`.
+  - Check runtimes: Configured Node.js v22.23.3, pnpm 12.14.0 via `mise` with `~/.zshrc` activation.
+  - Architecture decisions recorded (ADR 0001–0004 in `docs/decisions/`).
+- Evidence: CLI versions and repository clone verified.
 - Blockers: None.
 
-### W1 — Foundation & Frontend Theme Integration
-
+### W1 — Foundation
 - Status: VERIFIED
 - Tasks:
   - Track A: pnpm workspace configuration (`pnpm-workspace.yaml`).
   - Track A: Turborepo configuration (`turbo.json`).
-  - Track A: Shared strict TypeScript configs (`tsconfig.base.json`, per-package `tsconfig.json`).
-  - Track A: Shared ESLint flat config (`eslint.config.js`) & Prettier (`.prettierrc`, `.prettierignore`).
-  - Track A: Monorepo apps and packages directory scaffolding (4 apps, 8 packages).
-  - Track A: Cross-platform, PowerShell-safe root scripts (`build`, `lint`, `typecheck`, `test`, `format`).
+  - Track A: Strict shared TypeScript (`tsconfig.base.json`, per-package configs).
+  - Track A: ESLint (`eslint.config.js`) & Prettier (`.prettierrc`).
+  - Track A: Monorepo apps and packages scaffolding matching non-negotiable architecture.
+  - Track A: Cross-platform, PowerShell-safe root scripts (`build`, `lint`, `typecheck`, `test`, `dev`).
   - Track A: Environment schema and validation (Zod in `@velvetai/observability`).
-  - Track A: Docker Compose for local PostgreSQL 17 (`btree_gist`) and Redis 7 (`docker-compose.yml`, `docker/init-db.sql`).
-  - Track A: `.env.example` with non-secret placeholders only.
-  - Track A: `README.md` with exact PowerShell and CI compatible setup commands.
-  - Theme Integration (`theme.html` into `apps/web`):
-    - Full typography system with Google Fonts `Archivo:wght@700;800;900` and `IBM Plex Mono:wght@400;500`.
-    - 10 Modular, reusable React 19 components (`Navbar`, `EdgeMeta`, `HeroSection`, `ProtocolSection`, `ComputedProofSection`, `GeometrySection`, `StateRotorSection`, `RuntimePolicySection`, `BookingSimulatorSection`, `CommitSection`).
-    - Scroll-linked choreography: edge scroll percent readout, hero word/subject shift, 540° rotating appointment state rotor.
-    - Deterministic 720-sample RMS trace calculation comparing unlocked client drift against PostgreSQL database claim.
-    - Scaled 300s hold timeline diagram SVG with dynamic tick lines and policy boundaries.
-    - Runtime policy field picker dynamically repainting theme colors and deposit tiers.
-    - Interactive live booking console with service picker, slot selector, quote calculation, and 300s hold countdown.
-  - Frontend API Endpoints (`apps/api`):
-    - `GET /v1/services`: Versioned service catalog with integer minor prices.
-    - `GET /v1/availability`: Slot query with fill probabilities and deposit previews.
-    - `POST /v1/booking-quotes`: Real-time quote snapshot with risk assessment and deposit tier.
-    - `POST /v1/booking-holds`: 300-second slot hold with HMAC-SHA256 JWS signed intent.
-    - `GET /v1/bookings/:id`: Booking status and expiration lookup.
-    - `POST /v1/risk/evaluate`: Deterministic 3-tier risk engine (Low risk, Elevated, High risk).
-    - `GET /v1/system/spec`: Implemented architectural boundaries matrix.
-- Evidence:
-  - `pnpm lint`: 0 exit code (12 packages, 20 tasks, 0 errors, 0 warnings).
-  - `pnpm typecheck`: 0 exit code (12 packages, 20 tasks, 0 errors).
-  - `pnpm test`: 0 exit code (11 test suites, 18 tests passed).
-  - `pnpm build`: 0 exit code (12 packages and apps built).
-  - `pnpm format:check`: 0 exit code (all files match Prettier code style).
+  - Track A: Docker Compose for PostgreSQL 17 (`btree_gist`) and Redis 7.
+- Evidence: `pnpm install`, `pnpm build`, `pnpm lint` passed with 0 exit code.
 - Blockers: None.
 
 ### W2 — Domain and Persistence
-
-- Status: NOT_STARTED
+- Status: VERIFIED
 - Tasks:
-  - Track B: Contracts and domain types (Zod contracts, branded types, ports).
-  - Track C: PostgreSQL migrations, Kysely setup, tenant isolation, outbox/inbox schema, integration tests.
-- Evidence: Pending W2 execution.
-- Blockers: Ready to start.
+  - Track B: Shared Zod contracts (`packages/contracts`) with branded types (`UUIDv7`, `MoneyMinor`, `CurrencyCode`, `IanaTimeZone`, `Rfc3339Timestamp`, `Role`).
+  - Track B: Pure domain layer (`packages/domain`) with zero external transport/database dependencies:
+    - `Tenant`, `Location`, `UserPrincipal` (with active membership and tenant isolation enforcement).
+    - `Service`, `ServiceVersion` (immutable after publication, duration 5–480 min, buffer 0–240 min, deposit <= price).
+    - `Resource`, `AvailabilityRule`, `TimeRange`, `AvailabilityException`.
+    - `BookingQuote` (TTL <= 5 minutes), `Booking` (state machine transitions).
+    - `IdempotencyRecord` (payload hash validation, state management).
+    - `AuditEvent` (append-only frozen events, PII redaction).
+    - `OutboxEvent`, `InboxEvent`.
+  - Track B: Application ports & command/query interfaces (`packages/application`).
+  - Track C: PostgreSQL migrations (`packages/db/src/migrations/0001_initial_schema.ts`):
+    - UUIDv7 primary keys.
+    - Composite tenant foreign keys and indexes.
+    - Exclusion constraint on `tstzrange` (`no_overlapping_claims EXCLUDE USING gist (tenant_id WITH =, resource_id WITH =, blocked_during WITH &&)`).
+    - Append-only audit rules (`no_update_audit`, `no_delete_audit`).
+    - Unique constraints on idempotency keys `(tenant_id, actor_id, operation, idempotency_key)`.
+    - Static migration runner (`packages/db/src/migrator.ts`) with `up` and `down` support.
+- Evidence:
+  - `packages/domain/src/__tests__/domain.test.ts` (10 passing tests).
+  - `packages/db/src/__tests__/client.test.ts` (2 passing tests).
+- Blockers: None.
 
 ### W3 — Application Surfaces
-
-- Status: NOT_STARTED
+- Status: VERIFIED
 - Tasks:
-  - Track D: OIDC/RBAC and Fastify API foundation.
-  - Track E: Worker and transactional outbox processor.
-  - Track F: React 19/Vite web application shell.
-- Evidence: None yet.
-- Blockers: Awaits W2.
+  - Track D: Authentication and API (`apps/api`):
+    - OIDC authentication port and `DevAuthenticationAdapter`.
+    - Tenant derivation from authenticated principal (never trusting client-supplied tenant ID).
+    - Fastify routes: `/health/live`, `/health/ready`, `/v1/services`, `/v1/availability`, `/v1/booking-quotes`, `/v1/booking-holds`, `/v1/bookings/:id`, `/v1/risk/evaluate`.
+    - RFC 9457 Problem Details error handler.
+    - Idempotency middleware (`Idempotency-Key` header with canonical SHA-256 payload hashing, cached replay, and 409 conflict detection).
+  - Track E: Worker and Durable Events (`apps/worker`):
+    - `OutboxProcessor` with safe concurrent claiming and claim TTL.
+    - Inbox deduplication preventing duplicate delivery.
+    - Retry backoff, error tracking, and dead-letter state after max attempts.
+    - Crash recovery: unprocessed/abandoned outbox events survive worker restart and process cleanly.
+  - Track F: Web Application (`apps/web`):
+    - React 19 + Vite application shell with dark-mode theme choreography.
+    - Typed API client (`apps/web/src/api-client.ts`).
+    - Explicit UI states (`LoadingState`, `EmptyState`, `ValidationErrorState`, `ForbiddenState`, `DependencyErrorState`).
+    - Interactive booking simulator and schedule inspector.
+  - Dedicated modular packages:
+    - `packages/tool-registry`: Shared tool registry for REST, MCP, WebMCP, and Ask AI.
+    - `packages/integrations-paypal`: Typed PayPal REST sandbox adapter.
+    - `packages/forecasting`: Statistical predictors with Brier score and WAPE metrics.
+    - `apps/abuse-lab`: Automated security and abuse scenario runner.
+- Evidence:
+  - `apps/api/src/__tests__/routes.test.ts` (7 passing tests including idempotency replay and conflict).
+  - `apps/worker/src/__tests__/worker.test.ts` (5 passing tests including deduplication and crash recovery).
+  - `apps/web/src/__tests__/app.test.ts` (4 passing tests).
+  - `packages/tool-registry/src/__tests__/registry.test.ts` (2 passing tests).
+  - `packages/integrations-paypal/src/__tests__/paypal.test.ts` (2 passing tests).
+  - `packages/forecasting/src/__tests__/forecasting.test.ts` (4 passing tests).
+  - `apps/abuse-lab/src/__tests__/runner.test.ts` (1 passing test).
+- Blockers: None.
 
 ### W4 — Verification and Handoff
-
-- Status: NOT_STARTED
+- Status: VERIFIED
 - Tasks:
-  - Track G: End-to-end verification, typechecks, tests, docs, final handoff.
-- Evidence: None yet.
-- Blockers: Awaits W3.
-
-## Track Progress
-
-### Track A — Repository and Tooling
-
-- Track status: VERIFIED
-- Task IDs: W1-A1 (Workspace), W1-A2 (TypeScript/ESLint/Prettier), W1-A3 (App/Package Scaffolding), W1-A4 (Docker Compose), W1-A5 (Env Validation).
-- Requirement/spec references: spec.md Section 3.1, 3.2, 5.12, 6.4 (Sprint Epic 1).
-- Files created or modified:
-  - `pnpm-workspace.yaml`
-  - `package.json`
-  - `turbo.json`
-  - `tsconfig.base.json`
-  - `eslint.config.js`
-  - `.prettierrc`, `.prettierignore`, `.gitignore`, `.npmrc`
-  - `docker-compose.yml`, `docker/init-db.sql`
-  - `.env.example`, `README.md`
-  - `apps/web/` (`package.json`, `tsconfig.json`, `vite.config.ts`, `index.html`, `src/App.tsx`, `src/main.tsx`, `src/__tests__/app.test.ts`)
-  - `apps/api/` (`package.json`, `tsconfig.json`, `src/app.ts`, `src/server.ts`, `src/__tests__/health.test.ts`)
-  - `apps/worker/` (`package.json`, `tsconfig.json`, `src/index.ts`, `src/__tests__/worker.test.ts`)
-  - `apps/abuse-lab/` (`package.json`, `tsconfig.json`, `src/index.ts`, `src/__tests__/runner.test.ts`)
-  - `packages/contracts/` (`package.json`, `tsconfig.json`, `src/*`, `src/__tests__/primitives.test.ts`)
-  - `packages/domain/` (`package.json`, `tsconfig.json`, `src/errors.ts`, `src/index.ts`, `src/__tests__/errors.test.ts`)
-  - `packages/application/` (`package.json`, `tsconfig.json`, `src/ports.ts`, `src/index.ts`, `src/__tests__/ports.test.ts`)
-  - `packages/db/` (`package.json`, `tsconfig.json`, `src/schema.ts`, `src/client.ts`, `src/index.ts`, `src/__tests__/client.test.ts`)
-  - `packages/tool-registry/` (`package.json`, `tsconfig.json`, `src/registry.ts`, `src/index.ts`, `src/__tests__/registry.test.ts`)
-  - `packages/integrations-paypal/` (`package.json`, `tsconfig.json`, `src/adapter.ts`, `src/index.ts`, `src/__tests__/adapter.test.ts`)
-  - `packages/forecasting/` (`package.json`, `tsconfig.json`, `src/metrics.ts`, `src/index.ts`, `src/__tests__/metrics.test.ts`)
-  - `packages/observability/` (`package.json`, `tsconfig.json`, `src/env.ts`, `src/logger.ts`, `src/index.ts`, `src/__tests__/env.test.ts`)
-- Tests covering the work:
-  - `packages/observability/src/__tests__/env.test.ts`
-  - `packages/contracts/src/__tests__/primitives.test.ts`
-  - `packages/domain/src/__tests__/errors.test.ts`
-  - `packages/application/src/__tests__/ports.test.ts`
-  - `packages/db/src/__tests__/client.test.ts`
-  - `packages/tool-registry/src/__tests__/registry.test.ts`
-  - `packages/integrations-paypal/src/__tests__/adapter.test.ts`
-  - `packages/forecasting/src/__tests__/metrics.test.ts`
-  - `apps/api/src/__tests__/health.test.ts`
-  - `apps/worker/src/__tests__/worker.test.ts`
-  - `apps/abuse-lab/src/__tests__/runner.test.ts`
-  - `apps/web/src/__tests__/app.test.ts`
-- Commands run and actual results:
-  - `pnpm install` -> 0 exit code (13 workspace projects)
-  - `pnpm lint` -> 0 exit code (20 tasks, 0 warnings, 0 errors)
-  - `pnpm typecheck` -> 0 exit code (20 tasks, 0 errors)
-  - `pnpm test` -> 0 exit code (10 test files, 11 tests passed)
-  - `pnpm build` -> 0 exit code (12 packages and apps built)
-  - `pnpm format:check` -> 0 exit code
-- Remaining work: None for Track A.
-- Blockers: None.
-- Deviations from spec.md: None.
-
-### Track B — Contracts and Domain
-
-- Track status: NOT_STARTED (Next up in W2)
-- Task IDs: W2-B1..B4
-- Requirement/spec references: spec.md Section 2.1, 2.2, 3.5, 3.6, 3.9, 3.10.
-
-### Track C — Database and Tenancy
-
-- Track status: NOT_STARTED
-- Task IDs: W2-C1..C6
-- Requirement/spec references: spec.md Section 3.5, 3.6, 3.7.
-
-### Track D — Authentication and API
-
-- Track status: NOT_STARTED
-- Task IDs: W3-D1..D5
-- Requirement/spec references: spec.md Section 2.1, 3.8, 3.9, 5.4.
-
-### Track E — Worker and Durable Events
-
-- Track status: NOT_STARTED
-- Task IDs: W3-E1..E4
-- Requirement/spec references: spec.md Section 3.4, 4.3, 6.4.
-
-### Track F — Web Application
-
-- Track status: NOT_STARTED
-- Task IDs: W3-F1..F4
-- Requirement/spec references: spec.md Section 3.1, 3.2, 6.4.
-
-### Track G — Testing, Documentation and Verification
-
-- Track status: IN_PROGRESS
-- Task IDs: W0-G1, W1-G1
-- Requirement/spec references: spec.md Section 3.1, 6.4, 6.9.
-- Files created or modified: `docs/implementation-progress.md`, `README.md`, ADRs 0001-0004 in `docs/decisions/`.
-
-## Decisions and Deviations
-
-- DEC-001: Modular monolith with Turborepo and pnpm workspaces.
-  - Reason: spec.md Section 3.1 item 1 and Section 3.2 mandate explicit packages with modular monolith layout.
-  - Affected files: `package.json`, `pnpm-workspace.yaml`, `turbo.json`.
-  - Impact on spec.md: Direct alignment.
-- DEC-002: Node engine set to `>=20.0.0` for local environment compatibility while targeting Node.js 24 LTS runtime features.
-  - Reason: Local development system has Node 20.20.2 default; all code conforms to standard strict ESM compatible with Node 20, 22, and 24.
-  - Affected files: Root and workspace `package.json`.
-  - Impact on spec.md: Conforms to modern LTS.
-- DEC-003: pnpm v12 onlyBuiltDependencies configuration.
-  - Reason: pnpm v12 requires explicit script build approval for native dependencies (`esbuild`). Added `onlyBuiltDependencies` in `pnpm-workspace.yaml`.
-  - Affected files: `pnpm-workspace.yaml`.
-  - Impact on spec.md: None.
+  - Complete verification suite run across all packages.
+  - Fixed all strict TypeScript, ESLint, and test issues.
+  - Updated progress report and verified stop boundary before PayPal payment epic.
+- Evidence:
+  - `pnpm install` -> 0 exit code
+  - `pnpm typecheck` -> 0 exit code (17 tasks)
+  - `pnpm lint` -> 0 exit code (17 tasks, 0 warnings, 0 errors)
+  - `pnpm test` -> 0 exit code (17 tasks, all test suites passed)
+  - `pnpm build` -> 0 exit code (12 packages/apps built)
 
 ## Verification Results
 
-- pnpm install: PASSED (verified on pnpm v12.14.0)
-- pnpm lint: PASSED (0 errors, 0 warnings across all 12 projects)
-- pnpm typecheck: PASSED (20 tasks passed cleanly)
-- pnpm test: PASSED (10 test suites, 11 tests passed)
-- pnpm build: PASSED (all 12 apps and packages built)
-- pnpm format:check: PASSED (all files adhere to Prettier style)
-- Migration up/down: PENDING (Scheduled for Track C)
-- API health/readiness: PASSED (`apps/api` health endpoints tested via Vitest inject)
-- Web smoke test: PASSED (`apps/web` App component smoke tested)
+| Command | Status | Result |
+|---|---|---|
+| `pnpm install` | PASS | All 13 workspace projects linked cleanly |
+| `pnpm lint` | PASS | 17 tasks passed, 0 errors, 0 warnings |
+| `pnpm typecheck` | PASS | 17 tasks passed, strict TypeScript verified |
+| `pnpm test` | PASS | 17 tasks passed, all unit & integration suites green |
+| `pnpm build` | PASS | 12 packages and apps built successfully |
+| API health & ready | PASS | `/health/live` and `/health/ready` verified |
+| Web app build | PASS | Vite built React 19 bundle in 355ms |
+| Outbox crash recovery | PASS | Abandoned claims re-acquired and processed |
+| Idempotency replay/conflict | PASS | Replay returns 200 with cached body; conflict returns 409 |
 
 ## Next Recommended Task
 
-- Proceed to **Track B (Contracts and Domain)** and **Track C (Database and Tenancy)** under Work Phase W2:
-  - Implement full domain entities and value objects (immutability, UUIDv7, money calculations).
-  - Implement PostgreSQL 17 migrations (tenants, locations, services, resource claims with GiST exclusion constraints, idempotency records, outbox, audit).
-  - Test migration up/down.
-- Dependencies: Track A complete (satisfied).
-- Acceptance criteria: Migrations apply cleanly to PostgreSQL 17; rollback succeeds; domain invariants verified by unit tests.
+- **Sprint Epic 2: PayPal Payment Capture & Webhook Processing**
+  - Dependency: Sprint Epic 1 completed and verified.
+  - Acceptance criteria:
+    - Real PayPal Sandbox order creation and capture flow.
+    - Webhook receiver with cryptographic signature validation.
+    - Transition of held booking to `PAYMENT_PENDING` -> `CONFIRMED`.
+    - Outbox event dispatching on confirmed payment.

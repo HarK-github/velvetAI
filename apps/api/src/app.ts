@@ -8,6 +8,8 @@ import { servicesRoutes } from "./routes/services.js";
 import { availabilityRoutes } from "./routes/availability.js";
 import { bookingsRoutes } from "./routes/bookings.js";
 import { riskRoutes } from "./routes/risk.js";
+import { registerAuth } from "./plugins/auth.js";
+import { registerIdempotency } from "./plugins/idempotency.js";
 
 export function buildApp(): FastifyInstance {
   const env = validateEnv();
@@ -25,6 +27,10 @@ export function buildApp(): FastifyInstance {
     origin: [env.WEB_BASE_URL, "http://localhost:5173"],
     credentials: true,
   });
+
+  // Auth and Idempotency Middleware on Root App
+  registerAuth(app);
+  registerIdempotency(app);
 
   // Health checks
   app.get("/health/live", async () => {

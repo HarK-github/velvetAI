@@ -1,11 +1,17 @@
 import { createLogger, validateEnv } from "@velvetai/observability";
+import { OutboxProcessor, InMemoryOutboxStore, OutboxStore } from "./outbox-processor.js";
+
+export * from "./outbox-processor.js";
 
 export class OutboxWorker {
   private isRunning = false;
   private readonly logger = createLogger({ name: "outbox-worker" });
+  readonly processor: OutboxProcessor;
 
-  constructor() {
+  constructor(store?: OutboxStore) {
     validateEnv();
+    const effectiveStore = store ?? new InMemoryOutboxStore();
+    this.processor = new OutboxProcessor(effectiveStore);
   }
 
   async start(): Promise<void> {

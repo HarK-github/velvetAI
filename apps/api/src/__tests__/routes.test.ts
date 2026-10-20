@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
 
-describe("API Frontend Endpoints", () => {
+describe("API Frontend Endpoints & Middleware", () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
@@ -101,5 +101,57 @@ describe("API Frontend Endpoints", () => {
     expect(body.policyRoute).toBe("REMINDER");
     expect(body.noShowProbability).toBe("19%");
     expect(body.depositTierPercent).toBe("20%");
+  });
+
+  describe("Idempotency Middleware", () => {
+    it("returns cached result on same Idempotency-Key and payload", async () => {
+      const idempotencyKey = "key-test-idem-001";
+      const payload = { tier: "low" };
+
+      // Call 1
+      const res1 = await app.inject({
+        method: "POST",
+        url: "/v1/risk/evaluate",
+        headers: { "idempotency-key": idempotencyKey },
+        payload,
+      });
+      expect(res1.statusCode).toBe(200);
+
+      // Call 2 with identical key and payload
+      const res2 = await app.inject({
+        method: "POST",
+        url: "/v1/risk/evaluate",
+        headers: { "idempotency-key": idempotencyKey },
+        payload,
+      });
+      expect(res2.statusCode).toBe(200);
+      expect(res2.headers["x-idempotent-replay"]).toBe("true");
+      expect(res2.json()).toEqual(res1.json());
+    });
+
+    it("returns HTTP 409 Problem Details on same Idempotency-Key with different payload", async () => {
+      const idempotencyKey = "key-test-idem-conflict";
+
+      // Call 1
+      const res1 = await app.inject({
+        method: "POST",
+        url: "/v1/risk/evaluate",
+        headers: { "idempotency-key": idempotencyKey },
+        payload: { tier: "low" },
+      });
+      expect(res1.statusCode).toBe(200);
+
+      // Call 2 with same key but altered payload
+      const res2 = await app.inject({
+        method: "POST",
+        url: "/v1/risk/evaluate",
+        headers: { "idempotency-key": idempotencyKey },
+        payload: { tier: "high" }, // Conflict!
+      });
+      expect(res2.statusCode).toBe(409);
+      const problem = res2.json();
+      expect(problem.code).toBe("idempotency_conflict");
+      expect(problem.status).toBe(409);
+    });
   });
 });
