@@ -15,6 +15,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
     "dev": "turbo run dev",
+    "start": "turbo run dev",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f"
