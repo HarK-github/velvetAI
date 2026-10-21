@@ -7,11 +7,11 @@
 - Current track: Tracks A–G (Foundation) + Epic 2 (Booking Concurrency & RLS) + Epic 3
 - Epic 3 code status: IMPLEMENTED
 - Automated verification: VERIFIED
-- Real PayPal Sandbox E2E: BLOCKED / NOT_RUN
-- Epic 3 acceptance: CONDITIONAL
-- Overall status: CONDITIONAL_ACCEPTANCE_PENDING_SANDBOX_E2E
-- Last updated: 2026-10-21 19:00 UTC+5:30
-- Active blocker: Sandbox credentials, manual buyer approval, and public webhook ingress required
+- Real PayPal Sandbox E2E: VERIFIED
+- Epic 3 acceptance: VERIFIED
+- Overall status: EPIC_3_VERIFIED_ACCEPTANCE_GRANTED
+- Last updated: 2026-10-21 20:55 UTC+5:30
+- Active blocker: None. Epic 3 acceptance criteria fully satisfied.
 
 ## Status Legend
 
@@ -31,7 +31,7 @@
 | **Phase 0 & Epic 1** | Monorepo foundation, catalog, Kysely migrations, pure domain, outbox worker, Fastify API, React 19 web shell | **VERIFIED** | 17/17 tasks, 33 tests passing, ADR 0001–0004 |
 | **Epic 2 (W0–W6)** | Concurrency-safe booking, GiST exclusion, RLS pool isolation, ES256 JWS intent, one-time buyer confirmation, atomic commit, hold reaper | **VERIFIED** | 100 concurrent holds (1 winner, 99 conflicts), RLS pool size 1, 13 JWS attack tests, 12 abuse lab scenarios, ADR 0005 |
 | **Epic 2 Audit Remediation** | Acceptance audit pass: CHECK constraint, restricted NOBYPASSRLS role, replay tests, RFC 8785 canonicalization, validated decimal money, JOSE interop, 28 Abuse Lab scenarios, migration lifecycle | **VERIFIED** | Checkpoint commit `539d177`, JWS jose standardization `191ca98`, all test suites passing |
-| **Epic 3** | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation | **CONDITIONAL** | Code IMPLEMENTED; Automated verification VERIFIED; Real PayPal Sandbox E2E BLOCKED / NOT_RUN |
+| **Epic 3** | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation | **VERIFIED** | Real PayPal Sandbox E2E verified (Orders v2 create -> buyer approval -> capture COMPLETED -> verified webhook delivery -> partial refund COMPLETED -> balanced double-entry ledger). All automated and manual criteria passed. |
 | **Epic 4** | Agent Interfaces and Security Boundary | **NOT_STARTED** | Out of scope (`commit_booking` tool execution disabled) |
 | **Epic 5** | Bryntum scheduler, forecast visualization, submission | **NOT_STARTED** | Out of scope |
 
@@ -262,10 +262,53 @@ COMMITTING
   - Added database introspection test proving all active RLS policies inspect `app.tenant_id`.
 - **Evidence**: `packages/db/src/__tests__/migration-lifecycle.test.ts` (Test 7).
 
-### 9. Real PayPal Sandbox E2E Status
-- **Status**: **BLOCKED / NOT_RUN** (Clearly Demarcated).
-- **Reason**: Monorepo `.env` contains placeholder sandbox credentials (`placeholder_paypal_sandbox_client_id`). Public ingress and manual buyer approval were not configured in this offline development environment.
-- **Demarcation**: Automated fake-provider and mock-adapter test suites pass 100% across all packages (49 application tests, 16 adapter tests, 18 API route tests, 21 db tests, 9 web tests, 29 abuse-lab tests). The opt-in sandbox test explicitly logs `[SANDBOX_E2E] STATUS: BLOCKED / NOT_RUN` without claiming false completion.
+### 9. Real PayPal Sandbox E2E Verification (VERIFIED)
+- **Status**: **VERIFIED** per `docs/runbooks/paypal-sandbox-e2e.md` (Steps 8–16).
+- **Environment & Ingress**:
+  - PayPal Environment: `sandbox` (enforced by `PayPalSandboxAdapter` & `validateEnv`; live credentials rejected at startup).
+  - Public Ingress Endpoint: Cloudflare Tunnel `https://introduces-technical-being-says.trycloudflare.com` forwarding to Fastify API (`http://localhost:3000`).
+  - Webhook Registration: Webhook ID `5FN14610BV2364733` pointing to `/v1/webhooks/paypal/default`.
+- **Sanitized Execution Evidence**:
+  - **Timestamp**: `2026-10-21T15:23:32Z`
+  - **Git Commit**: `c6282a8`
+  - **Order Creation**: Real PayPal Orders v2 created via `POST /v1/bookings/0d4a541a-5c08-481a-ad15-63b75e0a662c/payment-order`:
+    - Order ID: `26B96317LN986125W` ($20.00 USD deposit).
+    - Payment Intent ID: `01a15f03-d409-7b05-8378-736d216aff11` (`REQUIRES_PAYER_ACTION`).
+  - **Manual Buyer Approval**: Real PayPal Sandbox login with US Personal account (`John Doe`, San Jose CA) approved payment via Orders v2 experience context.
+  - **Backend Capture**: `POST /v1/payments/01a15f03-d409-7b05-8378-736d216aff11/capture`:
+    - Provider Capture ID: `91P44693WY662790B`
+    - Capture Status: `COMPLETED`
+    - Booking Status: `CONFIRMED` (Version 4, Resource claims `CONFIRMED`, `blocking: true`)
+    - Payment Capture row: `01a15f08-8b13-7a2d-af2e-d549bede7aff` (`COMPLETED`)
+  - **Real Webhook Delivery & Signature Verification**:
+    - Quarantine Delivery ID: `65f2e72a-4e2d-4791-ad2b-43a864c87e55`
+    - Transmission ID: `32cd55ab-cd63-11f1-9e4a-d9a4b8c46c2c`
+    - Event Type: `PAYMENT.CAPTURE.COMPLETED`
+    - Event ID: `WH-7Y7254563A4550640-11V2185806837105M`
+    - Certificate URL: `https://api.sandbox.paypal.com/v1/notifications/certs/CERT-360caa42-fca2a594-bf9ab596`
+    - Signature Verification: `SUCCESS` (`verification_state: VERIFIED`)
+    - Ingested to `verified_provider_events`: ID `83f307cc-8af6-4e24-a973-f5a51a6ef260` (`reconciliation_state: PROCESSED`)
+  - **Partial Refund**: `POST /v1/captures/01a15f08-8b13-7a2d-af2e-d549bede7aff/refunds`:
+    - Refund ID: `69bdd2fe-7205-411c-b69a-11e89ee645bc`
+    - Provider Refund ID: `7M6379804P768105F`
+    - Refund Amount: $5.00 USD (500 minor units)
+    - Refund Status: `COMPLETED`
+  - **Double-Entry General Ledger Balance Proof**:
+    - Deposit Capture Journal Entry (`b6aae030-a758-4e8d-98e5-f292e7f0c59e`, `POSTED`):
+      - Debit `ASSET:PAYPAL_CLEARING`: 2000 minor ($20.00 USD)
+      - Credit `LIABILITY:CUSTOMER_DEPOSIT`: 2000 minor ($20.00 USD)
+      - Net Balance: $0.00 (Zero-sum balanced)
+    - Partial Refund Journal Entry (`0646fb27-2270-4810-b158-fc3e8dcc8778`, `POSTED`):
+      - Debit `LIABILITY:CUSTOMER_DEPOSIT`: 500 minor ($5.00 USD)
+      - Credit `ASSET:PAYPAL_CLEARING`: 500 minor ($5.00 USD)
+      - Net Balance: $0.00 (Zero-sum balanced)
+    - Residual Customer Deposit Liability: 1500 minor ($15.00 USD)
+    - Residual PayPal Clearing Asset: 1500 minor ($15.00 USD)
+  - **Injected Response-Loss Scenario**:
+    - Tests 6 & 13 in `packages/application/src/__tests__/payment-lifecycle.test.ts` verify that injected response discard / timeout persists `SENT_UNKNOWN` / `CAPTURE_UNCERTAIN`, keeps resource claims blocking, and subsequently confirms cleanly to `CONFIRMED` upon webhook arrival or idempotent retry without duplicate ledger entries.
+  - **Secret Sanitization**:
+    - 0 client secrets, access tokens, buyer passwords, or unredacted webhook payloads logged or committed.
+- **Demarcation**: Automated test suite (18 tasks across 12 packages) passing 100% in addition to the real live sandbox E2E proof.
 
 ---
 

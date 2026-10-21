@@ -117,6 +117,17 @@ export class PayPalSandboxAdapter implements PaymentPort {
           },
         },
       ],
+      payment_source: {
+        paypal: {
+          experience_context: {
+            brand_name: "Velvet Flagship",
+            landing_page: "LOGIN",
+            user_action: "PAY_NOW",
+            return_url: `${process.env.WEB_BASE_URL || "http://localhost:5173"}/book?status=success`,
+            cancel_url: `${process.env.WEB_BASE_URL || "http://localhost:5173"}/book?status=cancel`,
+          },
+        },
+      },
     };
 
     const { data } = await this.client.request<PayPalApiOrder>({

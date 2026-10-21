@@ -1,3 +1,4 @@
+import "./env-loader.js";
 import { buildApp } from "./app.js";
 import { validateEnv } from "@velvetai/observability";
 

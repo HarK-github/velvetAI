@@ -1,3 +1,4 @@
+import "../env-loader.js";
 import { FastifyPluginAsync } from "fastify";
 import {
   BookingId,
