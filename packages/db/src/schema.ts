@@ -21,7 +21,8 @@ export interface Database {
   payment_intents: PaymentIntentTable;
   payment_captures: PaymentCaptureTable;
   refund_reservations: RefundReservationTable;
-  webhook_deliveries: WebhookDeliveryTable;
+  webhook_quarantine: WebhookQuarantineTable;
+  webhook_deliveries: WebhookQuarantineTable;
   verified_provider_events: VerifiedProviderEventTable;
   financial_journal_entries: FinancialJournalEntryTable;
   financial_journal_lines: FinancialJournalLineTable;
@@ -290,7 +291,7 @@ export interface RefundReservationTable {
   updated_at: ColumnType<Date, string | Date | undefined, string | Date>;
 }
 
-export interface WebhookDeliveryTable {
+export interface WebhookQuarantineTable {
   id: string;
   connection_key: string;
   environment: string;
@@ -300,10 +301,13 @@ export interface WebhookDeliveryTable {
   auth_algo: string;
   transmission_sig: string;
   raw_payload: string;
+  payload_sha256: string;
   body_bytes_length: number;
   verification_state: string;
   received_at: ColumnType<Date, string | Date | undefined, never>;
 }
+
+export type WebhookDeliveryTable = WebhookQuarantineTable;
 
 export interface VerifiedProviderEventTable {
   id: string;
@@ -326,7 +330,9 @@ export interface FinancialJournalEntryTable {
   entry_type: string;
   reference_id: string;
   currency: string;
-  posted_at: ColumnType<Date, string | Date | undefined, never>;
+  status: string;
+  posted_at: ColumnType<Date | null, string | Date | null, string | Date | null>;
+  created_at: ColumnType<Date, string | Date | undefined, never>;
 }
 
 export interface FinancialJournalLineTable {

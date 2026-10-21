@@ -683,7 +683,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
     });
 
     it("Requirement 3: Confirmation tokens and approval locators security invariants", async () => {
-      const slotTime = new Date(Date.now() + 86400_000 * 50 + Math.floor(Math.random() * 1000000000)).toISOString();
+      const slotTime = "2026-12-25T10:00:00.000Z" as Rfc3339Timestamp;
       const prep = await bookingService.prepareBooking(
         tenantA,
         { userId: userA, subject: subjectA, role: "OWNER" },

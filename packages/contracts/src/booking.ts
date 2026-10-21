@@ -22,6 +22,7 @@ export const bookingStatusSchema = z.enum([
   "CAPTURE_UNCERTAIN",
   "CONFIRMED",
   "PAYMENT_WINDOW_EXPIRED",
+  "PAYMENT_FAILED",
   "CHECKED_IN",
   "COMPLETED",
   "NO_SHOW",

@@ -258,12 +258,12 @@ describe("PayPalSandboxAdapter", () => {
   }
 
   it("createOrder sends proper payload and PayPal-Request-Id header", async () => {
-    let capturedBody: any = null;
-    let capturedHeaders: any = null;
+    let capturedBody: unknown = null;
+    let capturedHeaders: Record<string, string> | undefined = undefined;
 
     const adapter = createMockAdapter(async (_path, init) => {
       capturedBody = JSON.parse(init.body as string);
-      capturedHeaders = init.headers;
+      capturedHeaders = init.headers as Record<string, string> | undefined;
       return new Response(
         JSON.stringify({
           id: "ORDER_987654321",
@@ -286,10 +286,11 @@ describe("PayPalSandboxAdapter", () => {
 
     expect(result.providerOrderId).toBe("ORDER_987654321");
     expect(result.paymentIntentId).toBeDefined();
-    expect(capturedBody.intent).toBe("CAPTURE");
-    expect(capturedBody.purchase_units[0].amount.value).toBe("50.00");
-    expect(capturedBody.purchase_units[0].custom_id).toBe(bookingId);
-    expect(capturedHeaders["PayPal-Request-Id"]).toBe("idempotency-key-001");
+    const body = capturedBody as { intent: string; purchase_units: Array<{ custom_id: string; amount: { value: string } }> };
+    expect(body.intent).toBe("CAPTURE");
+    expect(body.purchase_units[0]?.amount.value).toBe("50.00");
+    expect(body.purchase_units[0]?.custom_id).toBe(bookingId);
+    expect(capturedHeaders?.["PayPal-Request-Id"]).toBe("idempotency-key-001");
   });
 
   it("getOrder returns parsed order details with captures", async () => {
@@ -409,7 +410,7 @@ describe("PayPalSandboxAdapter", () => {
 
   it("refundPayment posts formatted amount and returns status", async () => {
     const paymentCaptureId = paymentCaptureIdSchema.parse(generateUUIDv7());
-    let capturedBody: any = null;
+    let capturedBody: unknown = null;
     const adapter = createMockAdapter(async (_path, init) => {
       capturedBody = JSON.parse(init.body as string);
       return new Response(
@@ -435,7 +436,8 @@ describe("PayPalSandboxAdapter", () => {
 
     expect(refund.providerRefundId).toBe("REF_555");
     expect(refund.status).toBe("COMPLETED");
-    expect(capturedBody.amount.value).toBe("25.00");
+    const body = capturedBody as { amount: { value: string } };
+    expect(body.amount.value).toBe("25.00");
   });
 
   it("verifyWebhookSignature validates PayPal cert host and prevents SSRF", async () => {
@@ -484,7 +486,7 @@ describe("PayPalSandboxAdapter", () => {
   });
 
   it("createInvoiceDraft creates Invoicing v2 draft with item and balance due", async () => {
-    let capturedBody: any = null;
+    let capturedBody: unknown = null;
     const adapter = createMockAdapter(async (_path, init) => {
       capturedBody = JSON.parse(init.body as string);
       return new Response(
@@ -519,7 +521,11 @@ describe("PayPalSandboxAdapter", () => {
 
     expect(result.providerInvoiceId).toBe("INV2-ABC");
     expect(result.providerInvoiceNumber).toBe("0001");
-    expect(capturedBody.primary_recipients[0].billing_info.email_address).toBe("client@example.com");
-    expect(capturedBody.items[0].unit_amount.value).toBe("100.00");
+    const body = capturedBody as {
+      primary_recipients: Array<{ billing_info: { email_address: string } }>;
+      items: Array<{ unit_amount: { value: string } }>;
+    };
+    expect(body.primary_recipients[0]?.billing_info.email_address).toBe("client@example.com");
+    expect(body.items[0]?.unit_amount.value).toBe("100.00");
   });
 });

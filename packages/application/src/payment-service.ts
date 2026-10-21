@@ -14,6 +14,10 @@ import {
   paymentIntentIdSchema,
   refundIdSchema,
   bookingIdSchema,
+  isSupportedMvpCurrency,
+  SUPPORTED_MVP_CURRENCIES,
+  getCurrencyScale,
+  decimalToMinorUnits,
   SlotUnavailableError,
   InvalidStateTransitionError,
   IdempotencyConflictError,
@@ -24,6 +28,7 @@ import {
   CreateOrderResult,
   CapturePaymentResult,
   RefundPaymentResult,
+  PayPalRefundDetails,
 } from "./ports.js";
 import { canonicalHash } from "./canonicalizer.js";
 
@@ -44,7 +49,7 @@ export interface CreateDepositOrderResult {
 
 export interface CapturePaymentOutcome {
   bookingId: BookingId;
-  bookingStatus: "CONFIRMED" | "CAPTURE_UNCERTAIN" | "CANCELLED";
+  bookingStatus: "CONFIRMED" | "CAPTURE_UNCERTAIN" | "PAYMENT_FAILED" | "CANCELLED";
   paymentStatus: "CAPTURED" | "UNCERTAIN" | "FAILED";
   providerCaptureId?: string;
   operationId?: string;
@@ -170,6 +175,14 @@ export class PaymentService {
 
       if (!snapshot) {
         throw new DomainError("Booking snapshot not found", "SNAPSHOT_NOT_FOUND", 404);
+      }
+
+      if (!isSupportedMvpCurrency(snapshot.currency)) {
+        throw new DomainError(
+          `Currency ${snapshot.currency} is not supported. Supported currencies: ${SUPPORTED_MVP_CURRENCIES.join(", ")}`,
+          "UNSUPPORTED_CURRENCY",
+          400,
+        );
       }
 
       // 4. Compute canonical hash of payload
@@ -546,7 +559,7 @@ export class PaymentService {
           .where("id", "=", operationId)
           .execute();
 
-        // W8: Double-entry financial journal entry
+        // W8: Double-entry financial journal entry (DRAFT -> lines -> POSTED)
         const entryId = crypto.randomUUID();
         await trx
           .insertInto("financial_journal_entries")
@@ -557,7 +570,8 @@ export class PaymentService {
             entry_type: "DEPOSIT_CAPTURE",
             reference_id: captureResult.paymentCaptureId,
             currency: intent.currency,
-            posted_at: dbNow,
+            status: "DRAFT",
+            created_at: dbNow,
           })
           .execute();
 
@@ -588,6 +602,13 @@ export class PaymentService {
               created_at: dbNow,
             },
           ])
+          .execute();
+
+        // Atomically post the journal entry
+        await trx
+          .updateTable("financial_journal_entries")
+          .set({ status: "POSTED", posted_at: dbNow })
+          .where("id", "=", entryId)
           .execute();
 
         // Outbox event
@@ -621,6 +642,22 @@ export class PaymentService {
 
       // 6. Handle UNCERTAIN capture (e.g. PayPal PENDING)
       if (captureResult.status === "UNCERTAIN") {
+        await trx
+          .insertInto("payment_captures")
+          .values({
+            id: captureResult.paymentCaptureId,
+            tenant_id: tenantId,
+            payment_intent_id: paymentIntentId,
+            booking_id: booking.id,
+            provider_capture_id: captureResult.providerCaptureId,
+            amount_minor: intent.amount_minor,
+            currency: intent.currency,
+            state: "PENDING",
+            captured_at: null,
+            created_at: dbNow,
+          })
+          .execute();
+
         await trx
           .updateTable("provider_operations")
           .set({
@@ -666,13 +703,13 @@ export class PaymentService {
 
       await trx
         .updateTable("payment_intents")
-        .set({ state: "FAILED", updated_at: dbNow })
+        .set({ state: "PAYMENT_FAILED", updated_at: dbNow })
         .where("id", "=", paymentIntentId)
         .execute();
 
       await trx
         .updateTable("bookings")
-        .set({ status: "CANCELLED", version: booking.version + 1 })
+        .set({ status: "PAYMENT_FAILED", version: booking.version + 1 })
         .where("id", "=", booking.id)
         .execute();
 
@@ -685,7 +722,7 @@ export class PaymentService {
 
       return {
         bookingId: bookingIdSchema.parse(booking.id),
-        bookingStatus: "CANCELLED" as const,
+        bookingStatus: "PAYMENT_FAILED" as const,
         paymentStatus: "FAILED" as const,
         version: booking.version + 1,
       };
@@ -835,7 +872,36 @@ export class PaymentService {
           requestId: idempotencyKey,
         });
       } catch (err: unknown) {
-        // Unknown outcome / timeout: reservation remains locked
+        const isClientError =
+          err &&
+          typeof err === "object" &&
+          "statusCode" in err &&
+          typeof (err as { statusCode: unknown }).statusCode === "number" &&
+          (err as { statusCode: number }).statusCode >= 400 &&
+          (err as { statusCode: number }).statusCode < 500 &&
+          (err as { statusCode: number }).statusCode !== 409;
+
+        if (isClientError) {
+          // Definitive PayPal rejection: reservation moves to FAILED and releases capacity
+          const errCode = (err && typeof err === "object" && "name" in err && typeof (err as { name: unknown }).name === "string")
+            ? (err as { name: string }).name
+            : "CLIENT_ERROR";
+          await trx
+            .updateTable("provider_operations")
+            .set({ state: "FAILED_TERMINAL", error_code: errCode, updated_at: dbNow })
+            .where("id", "=", operationId)
+            .execute();
+
+          await trx
+            .updateTable("refund_reservations")
+            .set({ state: "FAILED", updated_at: dbNow })
+            .where("id", "=", refundId)
+            .execute();
+
+          throw err;
+        }
+
+        // Unknown outcome / timeout / 5xx / 409: reservation remains UNKNOWN, capacity remains reserved
         await trx
           .updateTable("provider_operations")
           .set({ state: "SENT_UNKNOWN", error_code: (err as Error).name, updated_at: dbNow })
@@ -889,7 +955,7 @@ export class PaymentService {
           .where("id", "=", operationId)
           .execute();
 
-        // W8: Double-entry financial journal reversal entry
+        // W8: Double-entry financial journal reversal entry (DRAFT -> lines -> POSTED)
         const entryId = crypto.randomUUID();
         await trx
           .insertInto("financial_journal_entries")
@@ -900,7 +966,8 @@ export class PaymentService {
             entry_type: "REFUND",
             reference_id: refundId,
             currency: capture.currency,
-            posted_at: dbNow,
+            status: "DRAFT",
+            created_at: dbNow,
           })
           .execute();
 
@@ -933,6 +1000,12 @@ export class PaymentService {
           ])
           .execute();
 
+        await trx
+          .updateTable("financial_journal_entries")
+          .set({ status: "POSTED", posted_at: dbNow })
+          .where("id", "=", entryId)
+          .execute();
+
         return {
           refundId,
           providerRefundId: refundResult.providerRefundId,
@@ -952,6 +1025,209 @@ export class PaymentService {
           valueMinor: moneyMinorSchema.parse(targetRefundMinor.toString()),
         },
         status: refundResult.status,
+      };
+    });
+  }
+
+  /**
+   * Reconciles a refund in UNKNOWN state by querying authoritative PayPal state.
+   */
+  async reconcileUnknownRefund(params: {
+    tenantId: TenantId;
+    refundId: RefundId;
+  }): Promise<RefundOutcome> {
+    const { tenantId, refundId } = params;
+
+    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+      // 1. Lock refund reservation row
+      const reservation = await trx
+        .selectFrom("refund_reservations")
+        .where("id", "=", refundId)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!reservation) {
+        throw new DomainError("Refund reservation not found", "REFUND_RESERVATION_NOT_FOUND", 404);
+      }
+
+      if (reservation.state === "COMPLETED" || reservation.state === "FAILED") {
+        return {
+          refundId,
+          providerRefundId: reservation.provider_refund_id ?? undefined,
+          amount: {
+            currency: currencyCodeSchema.parse(reservation.currency),
+            valueMinor: moneyMinorSchema.parse(reservation.amount_minor),
+          },
+          status: reservation.state as "COMPLETED" | "FAILED",
+        };
+      }
+
+      // Lock parent capture
+      const capture = await trx
+        .selectFrom("payment_captures")
+        .where("id", "=", reservation.capture_id)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!capture) {
+        throw new DomainError("Payment capture not found", "CAPTURE_NOT_FOUND", 404);
+      }
+
+      // Query PayPal state if provider refund ID is known; otherwise retry with same request ID
+      let providerRefund: PayPalRefundDetails | null = null;
+      let resolvedProviderRefundId = reservation.provider_refund_id;
+
+      if (resolvedProviderRefundId) {
+        try {
+          providerRefund = await this.paymentPort.getRefund(resolvedProviderRefundId);
+        } catch {
+          // Provider query failed, retains UNKNOWN
+        }
+      } else {
+        try {
+          const retryRes = await this.paymentPort.refundPayment({
+            tenantId,
+            paymentCaptureId: capture.id as PaymentCaptureId,
+            providerCaptureId: capture.provider_capture_id,
+            amount: {
+              currency: currencyCodeSchema.parse(reservation.currency),
+              valueMinor: moneyMinorSchema.parse(reservation.amount_minor),
+            },
+            requestId: reservation.request_id,
+          });
+          resolvedProviderRefundId = retryRes.providerRefundId ?? null;
+          providerRefund = {
+            id: retryRes.providerRefundId ?? "",
+            status: retryRes.status === "REQUESTED" ? "PENDING" : retryRes.status,
+            amount: {
+              currency: currencyCodeSchema.parse(reservation.currency),
+              valueMinor: moneyMinorSchema.parse(reservation.amount_minor),
+            },
+          };
+        } catch {
+          // Retry failed, retains UNKNOWN
+        }
+      }
+
+      const clockRes = await sql<{ now: Date }>`SELECT clock_timestamp() as now`.execute(trx);
+      const dbNow = clockRes.rows[0]?.now ?? new Date();
+
+      if (providerRefund?.status === "COMPLETED") {
+        await trx
+          .updateTable("refund_reservations")
+          .set({
+            state: "COMPLETED",
+            provider_refund_id: resolvedProviderRefundId,
+            updated_at: dbNow,
+          })
+          .where("id", "=", refundId)
+          .execute();
+
+        const allCompleted = await trx
+          .selectFrom("refund_reservations")
+          .where("capture_id", "=", capture.id)
+          .where("state", "=", "COMPLETED")
+          .selectAll()
+          .execute();
+
+        const totalRefunded = allCompleted.reduce((acc, r) => acc + BigInt(r.amount_minor), 0n);
+        const nextCaptureState =
+          totalRefunded >= BigInt(capture.amount_minor) ? "REFUNDED" : "PARTIALLY_REFUNDED";
+
+        await trx
+          .updateTable("payment_captures")
+          .set({ state: nextCaptureState })
+          .where("id", "=", capture.id)
+          .execute();
+
+        // Journal posting: DRAFT -> lines -> POSTED
+        const entryId = crypto.randomUUID();
+        await trx
+          .insertInto("financial_journal_entries")
+          .values({
+            id: entryId,
+            tenant_id: tenantId,
+            booking_id: reservation.booking_id,
+            entry_type: "REFUND",
+            reference_id: refundId,
+            currency: reservation.currency,
+            status: "DRAFT",
+            created_at: dbNow,
+          })
+          .execute();
+
+        await trx
+          .insertInto("financial_journal_lines")
+          .values([
+            {
+              id: crypto.randomUUID(),
+              journal_entry_id: entryId,
+              tenant_id: tenantId,
+              account: "LIABILITY:CUSTOMER_DEPOSIT",
+              debit_minor: reservation.amount_minor,
+              credit_minor: "0",
+              currency: reservation.currency,
+              created_at: dbNow,
+            },
+            {
+              id: crypto.randomUUID(),
+              journal_entry_id: entryId,
+              tenant_id: tenantId,
+              account: "ASSET:PAYPAL_CLEARING",
+              debit_minor: "0",
+              credit_minor: reservation.amount_minor,
+              currency: reservation.currency,
+              created_at: dbNow,
+            },
+          ])
+          .execute();
+
+        await trx
+          .updateTable("financial_journal_entries")
+          .set({ status: "POSTED", posted_at: dbNow })
+          .where("id", "=", entryId)
+          .execute();
+
+        return {
+          refundId,
+          providerRefundId: reservation.provider_refund_id ?? undefined,
+          amount: {
+            currency: currencyCodeSchema.parse(reservation.currency),
+            valueMinor: moneyMinorSchema.parse(reservation.amount_minor),
+          },
+          status: "COMPLETED",
+        };
+      }
+
+      if (providerRefund?.status === "FAILED" || providerRefund?.status === "CANCELLED") {
+        await trx
+          .updateTable("refund_reservations")
+          .set({ state: "FAILED", updated_at: dbNow })
+          .where("id", "=", refundId)
+          .execute();
+
+        return {
+          refundId,
+          amount: {
+            currency: currencyCodeSchema.parse(reservation.currency),
+            valueMinor: moneyMinorSchema.parse(reservation.amount_minor),
+          },
+          status: "FAILED",
+        };
+      }
+
+      // Still UNKNOWN
+      return {
+        refundId,
+        amount: {
+          currency: currencyCodeSchema.parse(reservation.currency),
+          valueMinor: moneyMinorSchema.parse(reservation.amount_minor),
+        },
+        status: "UNCERTAIN",
       };
     });
   }
@@ -1123,9 +1399,10 @@ export class PaymentService {
   }): Promise<{ deliveryId: string }> {
     const deliveryId = crypto.randomUUID();
     const dbNow = new Date();
+    const payloadSha256 = crypto.createHash("sha256").update(params.rawPayload).digest("hex");
 
     await this.db
-      .insertInto("webhook_deliveries")
+      .insertInto("webhook_quarantine")
       .values({
         id: deliveryId,
         connection_key: params.connectionKey,
@@ -1136,6 +1413,7 @@ export class PaymentService {
         auth_algo: params.authAlgo,
         transmission_sig: params.transmissionSig,
         raw_payload: params.rawPayload,
+        payload_sha256: payloadSha256,
         body_bytes_length: params.bodyBytesLength,
         verification_state: "UNVERIFIED",
         received_at: dbNow,
@@ -1147,10 +1425,12 @@ export class PaymentService {
 
   /**
    * W6: Verifies an unverified webhook delivery and reconciles domain state idempotently.
+   * Unverified events never reserve provider_event_id.
+   * Material events are reconciled using an authoritative reducer handling out-of-order delivery.
    */
   async processWebhookDelivery(deliveryId: string, explicitTenantId?: TenantId): Promise<boolean> {
     const delivery = await this.db
-      .selectFrom("webhook_deliveries")
+      .selectFrom("webhook_quarantine")
       .where("id", "=", deliveryId)
       .selectAll()
       .executeTakeFirst();
@@ -1172,7 +1452,7 @@ export class PaymentService {
 
     if (!isValid) {
       await this.db
-        .updateTable("webhook_deliveries")
+        .updateTable("webhook_quarantine")
         .set({ verification_state: "REJECTED" })
         .where("id", "=", deliveryId)
         .execute();
@@ -1180,7 +1460,7 @@ export class PaymentService {
     }
 
     await this.db
-      .updateTable("webhook_deliveries")
+      .updateTable("webhook_quarantine")
       .set({ verification_state: "VERIFIED" })
       .where("id", "=", deliveryId)
       .execute();
@@ -1193,7 +1473,7 @@ export class PaymentService {
     }
 
     const providerEventId = String(event.id ?? "");
-    const eventType = event.event_type as string;
+    const eventType = String(event.event_type ?? "");
     if (!providerEventId || !eventType) {
       return false;
     }
@@ -1234,7 +1514,7 @@ export class PaymentService {
     }
 
     return await withTenantTransaction(this.db, tenantId, async (trx) => {
-      // Check for duplicate verified event under tenant isolation
+      // 1. Deduplication check in verified_provider_events
       const existingVerified = await trx
         .selectFrom("verified_provider_events")
         .where("provider_event_id", "=", providerEventId)
@@ -1242,7 +1522,7 @@ export class PaymentService {
         .executeTakeFirst();
 
       if (existingVerified) {
-        // Idempotently skip re-processing
+        // Idempotently skip re-processing verified event
         return true;
       }
 
@@ -1267,8 +1547,68 @@ export class PaymentService {
         })
         .execute();
 
-      // Reconcile capture completion if event is PAYMENT.CAPTURE.COMPLETED
-      if (eventType === "PAYMENT.CAPTURE.COMPLETED" && resourceId) {
+      const clockRes = await sql<{ now: Date }>`SELECT clock_timestamp() as now`.execute(trx);
+      const dbNow = clockRes.rows[0]?.now ?? new Date();
+
+      // 2. Authoritative event reducer
+      if (eventType === "CHECKOUT.ORDER.APPROVED" && resourceId) {
+        const intent = await trx
+          .selectFrom("payment_intents")
+          .where("provider_order_id", "=", resourceId)
+          .selectAll()
+          .executeTakeFirst();
+
+        if (intent) {
+          const booking = await trx
+            .selectFrom("bookings")
+            .where("id", "=", intent.booking_id)
+            .selectAll()
+            .executeTakeFirst();
+
+          if (booking && booking.status === "COMMITTING") {
+            await trx
+              .updateTable("bookings")
+              .set({ status: "REQUIRES_PAYER_ACTION", version: booking.version + 1 })
+              .where("id", "=", booking.id)
+              .execute();
+          }
+        }
+      } else if (eventType === "CHECKOUT.PAYMENT-APPROVAL.REVERSED" && resourceId) {
+        const intent = await trx
+          .selectFrom("payment_intents")
+          .where("provider_order_id", "=", resourceId)
+          .selectAll()
+          .executeTakeFirst();
+
+        if (intent && intent.state !== "CAPTURED") {
+          await trx
+            .updateTable("payment_intents")
+            .set({ state: "PAYMENT_FAILED", updated_at: dbNow })
+            .where("id", "=", intent.id)
+            .execute();
+
+          const booking = await trx
+            .selectFrom("bookings")
+            .where("id", "=", intent.booking_id)
+            .selectAll()
+            .executeTakeFirst();
+
+          if (booking && booking.status !== "CONFIRMED") {
+            await trx
+              .updateTable("bookings")
+              .set({ status: "PAYMENT_FAILED", version: booking.version + 1 })
+              .where("id", "=", booking.id)
+              .execute();
+
+            await trx
+              .updateTable("resource_claims")
+              .set({ state: "RELEASED", blocking: false })
+              .where("booking_id", "=", booking.id)
+              .where("tenant_id", "=", tenantId!)
+              .execute();
+          }
+        }
+      } else if (eventType === "PAYMENT.CAPTURE.PENDING" && resourceId) {
         const capture = await trx
           .selectFrom("payment_captures")
           .where("provider_capture_id", "=", resourceId)
@@ -1276,30 +1616,330 @@ export class PaymentService {
           .forUpdate()
           .executeTakeFirst();
 
-        if (capture && capture.state !== "COMPLETED") {
+        // Duplicate or out-of-order PENDING: do not downgrade if already COMPLETED / REFUNDED
+        if (capture) {
+          if (capture.state !== "COMPLETED" && capture.state !== "REFUNDED" && capture.state !== "PARTIALLY_REFUNDED") {
+            await trx
+              .updateTable("bookings")
+              .set({ status: "CAPTURE_UNCERTAIN" })
+              .where("id", "=", capture.booking_id)
+              .execute();
+
+            await trx
+              .updateTable("resource_claims")
+              .set({ state: "CAPTURE_UNCERTAIN", blocking: true })
+              .where("booking_id", "=", capture.booking_id)
+              .execute();
+          }
+        }
+      } else if (eventType === "PAYMENT.CAPTURE.COMPLETED" && resourceId) {
+        const capture = await trx
+          .selectFrom("payment_captures")
+          .where("provider_capture_id", "=", resourceId)
+          .selectAll()
+          .forUpdate()
+          .executeTakeFirst();
+
+        if (capture) {
+          if (capture.state !== "COMPLETED" && capture.state !== "REFUNDED" && capture.state !== "PARTIALLY_REFUNDED") {
+            await trx
+              .updateTable("payment_captures")
+              .set({ state: "COMPLETED" })
+              .where("id", "=", capture.id)
+              .execute();
+
+            await trx
+              .updateTable("payment_intents")
+              .set({ state: "CAPTURED", updated_at: dbNow })
+              .where("id", "=", capture.payment_intent_id)
+              .execute();
+
+            await trx
+              .updateTable("bookings")
+              .set({ status: "CONFIRMED" })
+              .where("id", "=", capture.booking_id)
+              .execute();
+
+            await trx
+              .updateTable("resource_claims")
+              .set({ state: "CONFIRMED", blocking: true })
+              .where("booking_id", "=", capture.booking_id)
+              .execute();
+
+            // Financial journal entry if not already posted
+            const existingEntry = await trx
+              .selectFrom("financial_journal_entries")
+              .where("reference_id", "=", capture.id)
+              .where("entry_type", "=", "DEPOSIT_CAPTURE")
+              .selectAll()
+              .executeTakeFirst();
+
+            if (!existingEntry) {
+              const entryId = crypto.randomUUID();
+              await trx
+                .insertInto("financial_journal_entries")
+                .values({
+                  id: entryId,
+                  tenant_id: tenantId!,
+                  booking_id: capture.booking_id,
+                  entry_type: "DEPOSIT_CAPTURE",
+                  reference_id: capture.id,
+                  currency: capture.currency,
+                  status: "DRAFT",
+                  created_at: dbNow,
+                })
+                .execute();
+
+              await trx
+                .insertInto("financial_journal_lines")
+                .values([
+                  {
+                    id: crypto.randomUUID(),
+                    journal_entry_id: entryId,
+                    tenant_id: tenantId!,
+                    account: "ASSET:PAYPAL_CLEARING",
+                    debit_minor: capture.amount_minor,
+                    credit_minor: "0",
+                    currency: capture.currency,
+                    created_at: dbNow,
+                  },
+                  {
+                    id: crypto.randomUUID(),
+                    journal_entry_id: entryId,
+                    tenant_id: tenantId!,
+                    account: "LIABILITY:CUSTOMER_DEPOSIT",
+                    debit_minor: "0",
+                    credit_minor: capture.amount_minor,
+                    currency: capture.currency,
+                    created_at: dbNow,
+                  },
+                ])
+                .execute();
+
+              await trx
+                .updateTable("financial_journal_entries")
+                .set({ status: "POSTED", posted_at: dbNow })
+                .where("id", "=", entryId)
+                .execute();
+            }
+          }
+        }
+      } else if ((eventType === "PAYMENT.CAPTURE.DENIED" || eventType === "PAYMENT.CAPTURE.DECLINED") && resourceId) {
+        const capture = await trx
+          .selectFrom("payment_captures")
+          .where("provider_capture_id", "=", resourceId)
+          .selectAll()
+          .forUpdate()
+          .executeTakeFirst();
+
+        if (capture && capture.state !== "COMPLETED" && capture.state !== "REFUNDED") {
           await trx
             .updateTable("payment_captures")
-            .set({ state: "COMPLETED" })
+            .set({ state: "FAILED" })
             .where("id", "=", capture.id)
             .execute();
 
           await trx
+            .updateTable("payment_intents")
+            .set({ state: "PAYMENT_FAILED", updated_at: dbNow })
+            .where("id", "=", capture.payment_intent_id)
+            .execute();
+
+          await trx
             .updateTable("bookings")
-            .set({ status: "CONFIRMED" })
+            .set({ status: "PAYMENT_FAILED" })
             .where("id", "=", capture.booking_id)
             .execute();
 
           await trx
             .updateTable("resource_claims")
-            .set({ state: "CONFIRMED", blocking: true })
+            .set({ state: "RELEASED", blocking: false })
             .where("booking_id", "=", capture.booking_id)
             .execute();
+        }
+      } else if (eventType === "PAYMENT.CAPTURE.REFUNDED" && resourceId) {
+        // Out-of-order refund or external dashboard refund
+        const refundAmountObj = resource.amount as { value?: string; currency_code?: string } | undefined;
+        let providerCaptureId: string | null = typeof resource.capture_id === "string" ? resource.capture_id : null;
+        if (!providerCaptureId && Array.isArray(resource.links)) {
+          const upLink = (resource.links as Array<{ rel?: string; href?: string }>).find((l) => l.rel === "up");
+          if (upLink?.href) {
+            const parts = upLink.href.split("/");
+            providerCaptureId = parts[parts.length - 1] ?? null;
+          }
+        }
+
+        let capture = providerCaptureId
+          ? await trx
+              .selectFrom("payment_captures")
+              .where("provider_capture_id", "=", providerCaptureId)
+              .selectAll()
+              .forUpdate()
+              .executeTakeFirst()
+          : null;
+
+        if (!capture && typeof resource.custom_id === "string") {
+          capture = await trx
+            .selectFrom("payment_captures")
+            .where("booking_id", "=", resource.custom_id)
+            .selectAll()
+            .forUpdate()
+            .executeTakeFirst();
+        }
+
+        if (capture) {
+          if (capture.state === "PENDING" || capture.state === "UNCERTAIN") {
+            await trx
+              .updateTable("payment_captures")
+              .set({ state: "COMPLETED" })
+              .where("id", "=", capture.id)
+              .execute();
+
+            await trx
+              .updateTable("payment_intents")
+              .set({ state: "CAPTURED", updated_at: dbNow })
+              .where("id", "=", capture.payment_intent_id)
+              .execute();
+
+            await trx
+              .updateTable("bookings")
+              .set({ status: "CONFIRMED" })
+              .where("id", "=", capture.booking_id)
+              .execute();
+
+            await trx
+              .updateTable("resource_claims")
+              .set({ state: "CONFIRMED", blocking: true })
+              .where("booking_id", "=", capture.booking_id)
+              .execute();
+          }
+
+          const existingRefund = await trx
+            .selectFrom("refund_reservations")
+            .where("provider_refund_id", "=", resourceId)
+            .selectAll()
+            .forUpdate()
+            .executeTakeFirst();
+
+          let refundMinorStr = "0";
+          if (refundAmountObj?.value && refundAmountObj?.currency_code) {
+            refundMinorStr = decimalToMinorUnits(
+              refundAmountObj.value,
+              getCurrencyScale(refundAmountObj.currency_code),
+            );
+          } else if (existingRefund) {
+            refundMinorStr = existingRefund.amount_minor;
+          } else {
+            refundMinorStr = capture.amount_minor;
+          }
+
+          let localRefundId: string;
+          if (existingRefund) {
+            localRefundId = existingRefund.id;
+            if (existingRefund.state !== "COMPLETED") {
+              await trx
+                .updateTable("refund_reservations")
+                .set({ state: "COMPLETED", updated_at: dbNow })
+                .where("id", "=", existingRefund.id)
+                .execute();
+            }
+          } else {
+            localRefundId = crypto.randomUUID();
+            await trx
+              .insertInto("refund_reservations")
+              .values({
+                id: localRefundId,
+                tenant_id: tenantId!,
+                capture_id: capture.id,
+                booking_id: capture.booking_id,
+                provider_refund_id: resourceId,
+                amount_minor: refundMinorStr,
+                currency: capture.currency,
+                reason: "EXTERNAL_DASHBOARD_REFUND",
+                state: "COMPLETED",
+                request_id: `ext_${resourceId}`,
+                created_at: dbNow,
+                updated_at: dbNow,
+              })
+              .execute();
+          }
+
+          const allRefunds = await trx
+            .selectFrom("refund_reservations")
+            .where("capture_id", "=", capture.id)
+            .where("state", "=", "COMPLETED")
+            .selectAll()
+            .execute();
+
+          const totalRefundedMinor = allRefunds.reduce((acc, r) => acc + BigInt(r.amount_minor), 0n);
+          const nextCaptureState =
+            totalRefundedMinor >= BigInt(capture.amount_minor) ? "REFUNDED" : "PARTIALLY_REFUNDED";
+
+          await trx
+            .updateTable("payment_captures")
+            .set({ state: nextCaptureState })
+            .where("id", "=", capture.id)
+            .execute();
+
+          const existingJournal = await trx
+            .selectFrom("financial_journal_entries")
+            .where("reference_id", "=", localRefundId)
+            .where("entry_type", "=", "REFUND")
+            .selectAll()
+            .executeTakeFirst();
+
+          if (!existingJournal) {
+            const entryId = crypto.randomUUID();
+            await trx
+              .insertInto("financial_journal_entries")
+              .values({
+                id: entryId,
+                tenant_id: tenantId!,
+                booking_id: capture.booking_id,
+                entry_type: "REFUND",
+                reference_id: localRefundId,
+                currency: capture.currency,
+                status: "DRAFT",
+                created_at: dbNow,
+              })
+              .execute();
+
+            await trx
+              .insertInto("financial_journal_lines")
+              .values([
+                {
+                  id: crypto.randomUUID(),
+                  journal_entry_id: entryId,
+                  tenant_id: tenantId!,
+                  account: "LIABILITY:CUSTOMER_DEPOSIT",
+                  debit_minor: refundMinorStr,
+                  credit_minor: "0",
+                  currency: capture.currency,
+                  created_at: dbNow,
+                },
+                {
+                  id: crypto.randomUUID(),
+                  journal_entry_id: entryId,
+                  tenant_id: tenantId!,
+                  account: "ASSET:PAYPAL_CLEARING",
+                  debit_minor: "0",
+                  credit_minor: refundMinorStr,
+                  currency: capture.currency,
+                  created_at: dbNow,
+                },
+              ])
+              .execute();
+
+            await trx
+              .updateTable("financial_journal_entries")
+              .set({ status: "POSTED", posted_at: dbNow })
+              .where("id", "=", entryId)
+              .execute();
+          }
         }
       }
 
       return true;
     });
-
-    return true;
   }
 }

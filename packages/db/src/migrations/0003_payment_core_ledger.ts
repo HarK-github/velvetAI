@@ -192,9 +192,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     WHERE provider_refund_id IS NOT NULL
   `.execute(db);
 
-  // 7. webhook_deliveries table (Raw Quarantine Inbox - Ingress Boundary)
+  // 7. webhook_quarantine table (Raw Quarantine Inbox - Ingress Boundary)
   await sql`
-    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    CREATE TABLE IF NOT EXISTS webhook_quarantine (
       id UUID PRIMARY KEY,
       connection_key VARCHAR(100) NOT NULL,
       environment VARCHAR(20) NOT NULL DEFAULT 'sandbox',
@@ -204,14 +204,25 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       auth_algo VARCHAR(100) NOT NULL,
       transmission_sig TEXT NOT NULL,
       raw_payload TEXT NOT NULL,
+      payload_sha256 VARCHAR(64) NOT NULL,
       body_bytes_length INT NOT NULL,
       verification_state VARCHAR(30) NOT NULL DEFAULT 'UNVERIFIED',
       received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT chk_webhook_payload_length CHECK (body_bytes_length <= 262144),
       CONSTRAINT chk_webhook_delivery_state CHECK (
-        verification_state IN ('UNVERIFIED', 'VERIFIED', 'FAILED_VERIFICATION')
+        verification_state IN ('UNVERIFIED', 'VERIFIED', 'REJECTED', 'FAILED_VERIFICATION')
       )
     )
+  `.execute(db);
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_webhook_quarantine_digest
+    ON webhook_quarantine (payload_sha256)
+  `.execute(db);
+
+  await sql`
+    CREATE OR REPLACE VIEW webhook_deliveries AS
+    SELECT * FROM webhook_quarantine
   `.execute(db);
 
   // 8. verified_provider_events table (Post-Verification Deduplicated Events)
@@ -235,7 +246,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     )
   `.execute(db);
 
-  // 9. financial_journal_entries table (Append-Only)
+  // 9. financial_journal_entries table (Append-Only Double Entry Ledger with DRAFT/POSTED lifecycle)
   await sql`
     CREATE TABLE IF NOT EXISTS financial_journal_entries (
       id UUID PRIMARY KEY,
@@ -244,16 +255,14 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       entry_type VARCHAR(50) NOT NULL,
       reference_id VARCHAR(255) NOT NULL,
       currency CHAR(3) NOT NULL,
-      posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      status VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
+      posted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT chk_journal_entry_status CHECK (status IN ('DRAFT', 'POSTED'))
     )
   `.execute(db);
 
-  await sql`
-    CREATE OR REPLACE RULE no_update_journal_entries AS ON UPDATE TO financial_journal_entries DO INSTEAD NOTHING;
-    CREATE OR REPLACE RULE no_delete_journal_entries AS ON DELETE TO financial_journal_entries DO INSTEAD NOTHING;
-  `.execute(db);
-
-  // 10. financial_journal_lines table (Append-Only Double-Entry Balancing Lines)
+  // 10. financial_journal_lines table (Double-Entry Balancing Lines)
   await sql`
     CREATE TABLE IF NOT EXISTS financial_journal_lines (
       id UUID PRIMARY KEY,
@@ -271,9 +280,103 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     )
   `.execute(db);
 
+  // Enforce explicit exception-raising triggers on financial journal mutation (no silent DO INSTEAD NOTHING)
   await sql`
-    CREATE OR REPLACE RULE no_update_journal_lines AS ON UPDATE TO financial_journal_lines DO INSTEAD NOTHING;
-    CREATE OR REPLACE RULE no_delete_journal_lines AS ON DELETE TO financial_journal_lines DO INSTEAD NOTHING;
+    CREATE OR REPLACE FUNCTION fn_protect_financial_journal_entries()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF (TG_OP = 'UPDATE' AND OLD.status = 'POSTED') THEN
+        RAISE EXCEPTION 'Posted financial journal entries cannot be modified (id: %)', OLD.id;
+      END IF;
+      IF (TG_OP = 'DELETE' AND OLD.status = 'POSTED') THEN
+        RAISE EXCEPTION 'Posted financial journal entries cannot be deleted (id: %)', OLD.id;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE TRIGGER trg_protect_financial_journal_entries_update
+    BEFORE UPDATE ON financial_journal_entries
+    FOR EACH ROW EXECUTE FUNCTION fn_protect_financial_journal_entries();
+
+    CREATE TRIGGER trg_protect_financial_journal_entries_delete
+    BEFORE DELETE ON financial_journal_entries
+    FOR EACH ROW EXECUTE FUNCTION fn_protect_financial_journal_entries();
+  `.execute(db);
+
+  await sql`
+    CREATE OR REPLACE FUNCTION fn_protect_financial_journal_lines()
+    RETURNS TRIGGER AS $$
+    DECLARE
+      parent_status VARCHAR(20);
+    BEGIN
+      IF (TG_OP = 'INSERT') THEN
+        SELECT status INTO parent_status FROM financial_journal_entries WHERE id = NEW.journal_entry_id;
+        IF parent_status = 'POSTED' THEN
+          RAISE EXCEPTION 'Cannot add lines to a posted financial journal entry (entry_id: %)', NEW.journal_entry_id;
+        END IF;
+        RETURN NEW;
+      ELSIF (TG_OP = 'UPDATE') THEN
+        SELECT status INTO parent_status FROM financial_journal_entries WHERE id = OLD.journal_entry_id;
+        IF parent_status = 'POSTED' THEN
+          RAISE EXCEPTION 'Posted financial journal lines cannot be modified (id: %)', OLD.id;
+        END IF;
+        RETURN NEW;
+      ELSIF (TG_OP = 'DELETE') THEN
+        SELECT status INTO parent_status FROM financial_journal_entries WHERE id = OLD.journal_entry_id;
+        IF parent_status = 'POSTED' THEN
+          RAISE EXCEPTION 'Posted financial journal lines cannot be deleted (id: %)', OLD.id;
+        END IF;
+        RETURN OLD;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE TRIGGER trg_protect_financial_journal_lines_insert
+    BEFORE INSERT ON financial_journal_lines
+    FOR EACH ROW EXECUTE FUNCTION fn_protect_financial_journal_lines();
+
+    CREATE TRIGGER trg_protect_financial_journal_lines_update
+    BEFORE UPDATE ON financial_journal_lines
+    FOR EACH ROW EXECUTE FUNCTION fn_protect_financial_journal_lines();
+
+    CREATE TRIGGER trg_protect_financial_journal_lines_delete
+    BEFORE DELETE ON financial_journal_lines
+    FOR EACH ROW EXECUTE FUNCTION fn_protect_financial_journal_lines();
+  `.execute(db);
+
+  // Constraint trigger ensuring zero-sum balance before POSTED entries commit
+  await sql`
+    CREATE OR REPLACE FUNCTION fn_validate_journal_entry_balance()
+    RETURNS TRIGGER AS $$
+    DECLARE
+      total_debit BIGINT;
+      total_credit BIGINT;
+      line_count INT;
+    BEGIN
+      IF (NEW.status = 'POSTED') THEN
+        SELECT COALESCE(SUM(debit_minor), 0), COALESCE(SUM(credit_minor), 0), COUNT(*)
+        INTO total_debit, total_credit, line_count
+        FROM financial_journal_lines
+        WHERE journal_entry_id = NEW.id;
+
+        IF line_count = 0 THEN
+          RAISE EXCEPTION 'Posted journal entry must have at least one line item (entry_id: %)', NEW.id;
+        END IF;
+
+        IF total_debit <> total_credit THEN
+          RAISE EXCEPTION 'Unbalanced journal entry: debits (%) do not equal credits (%) for entry %', total_debit, total_credit, NEW.id;
+        END IF;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE CONSTRAINT TRIGGER trg_validate_journal_balance
+    AFTER INSERT OR UPDATE ON financial_journal_entries
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION fn_validate_journal_entry_balance();
   `.execute(db);
 
   // 11. invoices table (Customer-facing balance projection)
@@ -345,17 +448,31 @@ export async function down(db: Kysely<unknown>): Promise<void> {
     await sql.raw(`DROP POLICY IF EXISTS tenant_isolation_policy ON ${table}`).execute(db);
   }
 
-  await sql`DROP RULE IF EXISTS no_update_journal_lines ON financial_journal_lines`.execute(db);
-  await sql`DROP RULE IF EXISTS no_delete_journal_lines ON financial_journal_lines`.execute(db);
+  await sql`DROP TRIGGER IF EXISTS trg_validate_journal_balance ON financial_journal_entries`.execute(db);
+  await sql`DROP FUNCTION IF EXISTS fn_validate_journal_entry_balance CASCADE`.execute(db);
+
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_lines_insert ON financial_journal_lines`.execute(db);
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_lines_update ON financial_journal_lines`.execute(db);
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_lines_delete ON financial_journal_lines`.execute(db);
+  await sql`DROP FUNCTION IF EXISTS fn_protect_financial_journal_lines CASCADE`.execute(db);
   await sql`DROP TABLE IF EXISTS financial_journal_lines CASCADE`.execute(db);
 
-  await sql`DROP RULE IF EXISTS no_update_journal_entries ON financial_journal_entries`.execute(db);
-  await sql`DROP RULE IF EXISTS no_delete_journal_entries ON financial_journal_entries`.execute(db);
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_entries_update ON financial_journal_entries`.execute(db);
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_entries_delete ON financial_journal_entries`.execute(db);
+  await sql`DROP FUNCTION IF EXISTS fn_protect_financial_journal_entries CASCADE`.execute(db);
   await sql`DROP TABLE IF EXISTS financial_journal_entries CASCADE`.execute(db);
 
   await sql`DROP TABLE IF EXISTS invoices CASCADE`.execute(db);
   await sql`DROP TABLE IF EXISTS verified_provider_events CASCADE`.execute(db);
-  await sql`DROP TABLE IF EXISTS webhook_deliveries CASCADE`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      EXECUTE 'DROP VIEW IF EXISTS webhook_deliveries CASCADE';
+    EXCEPTION WHEN wrong_object_type THEN
+      EXECUTE 'DROP TABLE IF EXISTS webhook_deliveries CASCADE';
+    END $$;
+  `.execute(db);
+  await sql`DROP TABLE IF EXISTS webhook_quarantine CASCADE`.execute(db);
   await sql`DROP TABLE IF EXISTS refund_reservations CASCADE`.execute(db);
   await sql`DROP TABLE IF EXISTS payment_captures CASCADE`.execute(db);
   await sql`DROP TABLE IF EXISTS payment_intents CASCADE`.execute(db);

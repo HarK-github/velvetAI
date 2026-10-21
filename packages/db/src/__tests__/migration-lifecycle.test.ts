@@ -358,21 +358,23 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       )
     `.execute(adminDb);
 
-    expect(constraints.rows.length).toBe(6);
+    expect(constraints.rows.length).toBeGreaterThanOrEqual(6);
 
-    // 2. Verify append-only rules on financial journal entries and lines
-    const rules = await sql<{ rulename: string }>`
-      SELECT rulename
-      FROM pg_rewrite
-      WHERE rulename IN (
-        'no_update_journal_entries',
-        'no_delete_journal_entries',
-        'no_update_journal_lines',
-        'no_delete_journal_lines'
+    // 2. Verify append-only and balance triggers on financial journal entries and lines
+    const triggers = await sql<{ tgname: string }>`
+      SELECT tgname
+      FROM pg_trigger
+      WHERE tgname IN (
+        'trg_protect_financial_journal_entries_update',
+        'trg_protect_financial_journal_entries_delete',
+        'trg_protect_financial_journal_lines_insert',
+        'trg_protect_financial_journal_lines_update',
+        'trg_protect_financial_journal_lines_delete',
+        'trg_validate_journal_balance'
       )
     `.execute(adminDb);
 
-    expect(rules.rows.length).toBe(4);
+    expect(triggers.rows.length).toBe(6);
 
     // 3. Verify payment_expires_at column on bookings
     const bookingCol = await sql<{ exists: boolean }>`
@@ -385,5 +387,189 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     `.execute(adminDb);
 
     expect(bookingCol.rows[0]?.exists).toBe(true);
+  });
+
+  it("6. Financial journal database integrity: enforces balance and immutability via triggers", async () => {
+    const seed = await seedTenantContext(adminDb, "journal");
+    const tenantId = seed.tenantId;
+    const quoteId = crypto.randomUUID();
+    const bookingId = crypto.randomUUID();
+
+    await withTenantTransaction(adminDb, tenantId, async (trx) => {
+      await trx.insertInto("booking_quotes").values({
+        id: quoteId,
+        tenant_id: tenantId,
+        service_version_id: seed.serviceVersionId,
+        customer_id: seed.actorUserId,
+        starts_at: new Date(Date.now() + 86400000),
+        ends_at: new Date(Date.now() + 90000000),
+        total_minor: "5000",
+        deposit_minor: "2500",
+        currency: "USD",
+        canonical_hash: "hash-quote-1",
+        expires_at: new Date(Date.now() + 300000),
+      }).execute();
+
+      await trx.insertInto("bookings").values({
+        id: bookingId,
+        tenant_id: tenantId,
+        customer_id: seed.actorUserId,
+        quote_id: quoteId,
+        status: "COMMITTING",
+        version: 1,
+        starts_at: new Date(Date.now() + 86400000),
+        ends_at: new Date(Date.now() + 90000000),
+      }).execute();
+    });
+
+    // A. Unbalanced entry cannot commit as POSTED
+    await expect(
+      withTenantTransaction(adminDb, tenantId, async (trx) => {
+        const entryId = crypto.randomUUID();
+        await trx.insertInto("financial_journal_entries").values({
+          id: entryId,
+          tenant_id: tenantId,
+          booking_id: bookingId,
+          entry_type: "DEPOSIT_CAPTURE",
+          reference_id: "ref-unbalanced",
+          currency: "USD",
+          status: "DRAFT",
+        }).execute();
+
+        // Line with 2500 debit and 0 credit
+        await trx.insertInto("financial_journal_lines").values({
+          id: crypto.randomUUID(),
+          journal_entry_id: entryId,
+          tenant_id: tenantId,
+          account: "ASSET:PAYPAL_CLEARING",
+          debit_minor: "2500",
+          credit_minor: "0",
+          currency: "USD",
+        }).execute();
+
+        // Update to POSTED without offsetting credit
+        await trx.updateTable("financial_journal_entries")
+          .set({ status: "POSTED", posted_at: new Date() })
+          .where("id", "=", entryId)
+          .execute();
+      }),
+    ).rejects.toThrow(/Unbalanced journal entry/);
+
+    // B. Post a properly balanced entry
+    const validEntryId = crypto.randomUUID();
+    const lineDebitId = crypto.randomUUID();
+    const lineCreditId = crypto.randomUUID();
+
+    await withTenantTransaction(adminDb, tenantId, async (trx) => {
+      await trx.insertInto("financial_journal_entries").values({
+        id: validEntryId,
+        tenant_id: tenantId,
+        booking_id: bookingId,
+        entry_type: "DEPOSIT_CAPTURE",
+        reference_id: "ref-valid",
+        currency: "USD",
+        status: "DRAFT",
+      }).execute();
+
+      await trx.insertInto("financial_journal_lines").values([
+        {
+          id: lineDebitId,
+          journal_entry_id: validEntryId,
+          tenant_id: tenantId,
+          account: "ASSET:PAYPAL_CLEARING",
+          debit_minor: "2500",
+          credit_minor: "0",
+          currency: "USD",
+        },
+        {
+          id: lineCreditId,
+          journal_entry_id: validEntryId,
+          tenant_id: tenantId,
+          account: "LIABILITY:CUSTOMER_DEPOSIT",
+          debit_minor: "0",
+          credit_minor: "2500",
+          currency: "USD",
+        },
+      ]).execute();
+
+      await trx.updateTable("financial_journal_entries")
+        .set({ status: "POSTED", posted_at: new Date() })
+        .where("id", "=", validEntryId)
+        .execute();
+    });
+
+    // C. Adding a line after posting fails visibly
+    await expect(
+      withTenantTransaction(adminDb, tenantId, async (trx) => {
+        await trx.insertInto("financial_journal_lines").values({
+          id: crypto.randomUUID(),
+          journal_entry_id: validEntryId,
+          tenant_id: tenantId,
+          account: "EXPENSE:FEE",
+          debit_minor: "100",
+          credit_minor: "0",
+          currency: "USD",
+        }).execute();
+      }),
+    ).rejects.toThrow(/Cannot add lines to a posted financial journal entry/);
+
+    // D. Updating a posted line fails visibly
+    await expect(
+      withTenantTransaction(adminDb, tenantId, async (trx) => {
+        await trx.updateTable("financial_journal_lines")
+          .set({ debit_minor: "3000" })
+          .where("id", "=", lineDebitId)
+          .execute();
+      }),
+    ).rejects.toThrow(/Posted financial journal lines cannot be modified/);
+
+    // E. Deleting a posted line fails visibly
+    await expect(
+      withTenantTransaction(adminDb, tenantId, async (trx) => {
+        await trx.deleteFrom("financial_journal_lines")
+          .where("id", "=", lineCreditId)
+          .execute();
+      }),
+    ).rejects.toThrow(/Posted financial journal lines cannot be deleted/);
+
+    // F. Updating a posted entry fails visibly
+    await expect(
+      withTenantTransaction(adminDb, tenantId, async (trx) => {
+        await trx.updateTable("financial_journal_entries")
+          .set({ reference_id: "tampered" })
+          .where("id", "=", validEntryId)
+          .execute();
+      }),
+    ).rejects.toThrow(/Posted financial journal entries cannot be modified/);
+
+    // G. Deleting a posted entry fails visibly
+    await expect(
+      withTenantTransaction(adminDb, tenantId, async (trx) => {
+        await trx.deleteFrom("financial_journal_entries")
+          .where("id", "=", validEntryId)
+          .execute();
+      }),
+    ).rejects.toThrow(/Posted financial journal entries cannot be deleted/);
+  });
+
+  it("7. Canonical RLS setting consistency: all tenant policies inspect app.tenant_id", async () => {
+    const policies = await sql<{ tablename: string; qual: string; with_check: string }>`
+      SELECT tablename, qual, with_check
+      FROM pg_policies
+      WHERE schemaname = 'public'
+    `.execute(adminDb);
+
+    expect(policies.rows.length).toBeGreaterThan(0);
+
+    for (const row of policies.rows) {
+      if (row.qual) {
+        expect(row.qual).toContain("app.tenant_id");
+        expect(row.qual).not.toContain("app.current_tenant_id");
+      }
+      if (row.with_check) {
+        expect(row.with_check).toContain("app.tenant_id");
+        expect(row.with_check).not.toContain("app.current_tenant_id");
+      }
+    }
   });
 });

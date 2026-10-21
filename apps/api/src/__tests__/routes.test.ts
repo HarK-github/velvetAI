@@ -54,6 +54,8 @@ describe("API Frontend Endpoints & Middleware", () => {
 
     // Seed tenant-scoped fixtures within tenant context
     await withTenantTransaction(db, DEV_TENANT_ID, async (trx) => {
+      await trx.deleteFrom("resource_claims").execute();
+
       await trx
         .insertInto("locations")
         .values({

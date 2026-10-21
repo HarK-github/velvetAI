@@ -1,34 +1,85 @@
-import { FC, useEffect, useState, useRef } from "react";
+import { FC, useEffect, useState, useRef, useCallback } from "react";
 import { apiClient } from "../api-client.js";
+
+/**
+ * Official PayPal JS SDK v6 URLs.
+ * Documentation Reference:
+ * https://www.paypal.com/web-sdk/v6/core
+ * Note: v6 loads the lightweight core script directly without query parameters (unlike legacy v5).
+ */
+export const PAYPAL_V6_CORE_SCRIPT_URL = "https://www.sandbox.paypal.com/web-sdk/v6/core";
+export const PAYPAL_V6_PROD_CORE_SCRIPT_URL = "https://www.paypal.com/web-sdk/v6/core";
+export const LEGACY_V5_SCRIPT_PREFIX = "https://www.paypal.com/sdk/js";
+
+export interface PayPalV6InstanceConfig {
+  clientId?: string;
+  clientToken?: string;
+  components?: string[];
+  pageType?: string;
+  locale?: string;
+}
+
+export interface PayPalV6PaymentSessionConfig {
+  createOrder?: () => Promise<{ orderId: string }>;
+  onApprove: (data: { orderId: string }) => Promise<void>;
+  onCancel?: (data: unknown) => void;
+  onError?: (err: unknown) => void;
+}
+
+export interface PayPalV6PaymentSession {
+  start: (options?: { presentationMode?: "auto" | "popup" | "modal" }) => Promise<void>;
+}
+
+export interface PayPalV6SDKInstance {
+  createPayPalOneTimePaymentSession: (
+    config: PayPalV6PaymentSessionConfig,
+  ) => PayPalV6PaymentSession;
+}
 
 declare global {
   interface Window {
     paypal?: {
-      Buttons: (config: {
-        createOrder: () => Promise<string>;
-        onApprove: (data: { orderID: string }) => Promise<void>;
-        onCancel?: (data: Record<string, unknown>) => void;
-        onError?: (err: unknown) => void;
-        style?: Record<string, unknown>;
-      }) => {
-        render: (container: HTMLElement | string) => Promise<void>;
-      };
+      createInstance: (config: PayPalV6InstanceConfig) => Promise<PayPalV6SDKInstance>;
     };
   }
 }
 
+export function loadPayPalV6Script(env: "sandbox" | "production" = "sandbox"): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof document === "undefined") {
+      resolve();
+      return;
+    }
+    const targetUrl = env === "production" ? PAYPAL_V6_PROD_CORE_SCRIPT_URL : PAYPAL_V6_CORE_SCRIPT_URL;
+    const existing = document.querySelector(`script[src="${targetUrl}"]`);
+    if (existing) {
+      resolve();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = targetUrl;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = (err) =>
+      reject(new Error(`Failed to load PayPal v6 core script from ${targetUrl}: ${String(err)}`));
+    document.head.appendChild(script);
+  });
+}
+
 export interface PayPalPaymentSuccess {
   bookingId: string;
-  bookingStatus: "CONFIRMED" | "CAPTURE_UNCERTAIN" | "CANCELLED";
+  bookingStatus: "CONFIRMED" | "CAPTURE_UNCERTAIN" | "PAYMENT_FAILED" | "CANCELLED";
   paymentStatus: "CAPTURED" | "UNCERTAIN" | "FAILED";
   providerCaptureId?: string;
 }
 
-interface PayPalButtonProps {
+export interface PayPalButtonProps {
   bookingId: string;
   onPaymentOutcome: (outcome: PayPalPaymentSuccess) => void;
   onPaymentExpired?: () => void;
   onCancel?: () => void;
+  clientId?: string;
+  environment?: "sandbox" | "production";
 }
 
 export const PayPalButton: FC<PayPalButtonProps> = ({
@@ -36,6 +87,8 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
   onPaymentOutcome,
   onPaymentExpired,
   onCancel,
+  clientId = "placeholder_paypal_sandbox_client_id",
+  environment = "sandbox",
 }) => {
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
   const [paymentExpiresAt, setPaymentExpiresAt] = useState<string | null>(null);
@@ -43,7 +96,7 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sdkReady, setSdkReady] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef<PayPalV6PaymentSession | null>(null);
 
   // 1. Initialize payment order to retrieve server-backed payment_expires_at
   useEffect(() => {
@@ -86,69 +139,103 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
     return () => clearInterval(interval);
   }, [paymentExpiresAt, onPaymentExpired]);
 
-  // 3. Check for window.paypal SDK
+  // 3. Dynamic loading of PayPal JS SDK v6 core script
   useEffect(() => {
-    if (typeof window !== "undefined" && window.paypal) {
-      setSdkReady(true);
+    let isMounted = true;
+    loadPayPalV6Script(environment)
+      .then(() => {
+        if (!isMounted) return;
+        if (typeof window !== "undefined" && window.paypal?.createInstance) {
+          setSdkReady(true);
+        }
+      })
+      .catch(() => {
+        // External CDN may be offline in mock/sandbox test environments
+        if (isMounted) setSdkReady(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [environment]);
+
+  // 4. Initialize v6 SDK instance and One-Time Payment Session
+  const initV6Session = useCallback(async () => {
+    if (typeof window === "undefined" || !window.paypal?.createInstance) return;
+
+    try {
+      const sdkInstance = await window.paypal.createInstance({
+        clientId,
+        components: ["paypal-payments"],
+        pageType: "checkout",
+        locale: "en-US",
+      });
+
+      const session = sdkInstance.createPayPalOneTimePaymentSession({
+        createOrder: async () => {
+          setIsProcessing(true);
+          setError(null);
+          try {
+            const res = await apiClient.createPaymentOrder(bookingId);
+            setPaymentIntentId(res.paymentIntentId);
+            setPaymentExpiresAt(res.paymentExpiresAt);
+            return { orderId: res.paypalOrderId };
+          } catch (err: unknown) {
+            setError((err as Error).message || "Order creation failed");
+            throw err;
+          } finally {
+            setIsProcessing(false);
+          }
+        },
+        onApprove: async (_data: { orderId: string }) => {
+          if (!paymentIntentId) return;
+          setIsProcessing(true);
+          try {
+            const outcome = await apiClient.capturePayment(paymentIntentId);
+            onPaymentOutcome(outcome);
+          } catch (err: unknown) {
+            setError((err as Error).message || "Capture failed");
+          } finally {
+            setIsProcessing(false);
+          }
+        },
+        onCancel: () => {
+          onCancel?.();
+        },
+        onError: (err) => {
+          setError(typeof err === "string" ? err : "PayPal Checkout error occurred");
+        },
+      });
+
+      sessionRef.current = session;
+    } catch (err: unknown) {
+      setError((err as Error).message || "Failed to initialize PayPal v6 session");
     }
-  }, []);
+  }, [bookingId, clientId, onPaymentOutcome, onCancel, paymentIntentId]);
 
-  // 4. Render official PayPal JS SDK v6 buttons if script is loaded
   useEffect(() => {
-    if (!sdkReady || !containerRef.current || !window.paypal) return;
+    if (sdkReady) {
+      void initV6Session();
+    }
+  }, [sdkReady, initV6Session]);
 
-    containerRef.current.innerHTML = "";
-    const buttons = window.paypal.Buttons({
-      style: {
-        layout: "vertical",
-        color: "gold",
-        shape: "rect",
-        label: "paypal",
-      },
-      // createOrder calls velvetAI payment-order endpoint (server determines amount/currency)
-      createOrder: async () => {
-        setIsProcessing(true);
-        setError(null);
-        try {
-          const res = await apiClient.createPaymentOrder(bookingId);
-          setPaymentIntentId(res.paymentIntentId);
-          setPaymentExpiresAt(res.paymentExpiresAt);
-          return res.paypalOrderId;
-        } catch (err: unknown) {
-          setError((err as Error).message || "Order creation failed");
-          throw err;
-        } finally {
-          setIsProcessing(false);
-        }
-      },
-      // onApprove calls velvetAI backend capture endpoint (does NOT confirm locally)
-      onApprove: async () => {
-        if (!paymentIntentId) return;
-        setIsProcessing(true);
-        try {
-          const outcome = await apiClient.capturePayment(paymentIntentId);
-          onPaymentOutcome(outcome);
-        } catch (err: unknown) {
-          setError((err as Error).message || "Capture failed");
-        } finally {
-          setIsProcessing(false);
-        }
-      },
-      onCancel: () => {
-        onCancel?.();
-      },
-      onError: (err) => {
-        setError(typeof err === "string" ? err : "PayPal Checkout error occurred");
-      },
-    });
-
-    buttons.render(containerRef.current);
-  }, [sdkReady, bookingId, paymentIntentId, onPaymentOutcome, onCancel]);
-
-  // Fallback interactive sandbox execution when external CDN script is not loaded
-  const handleSimulatedApproval = async () => {
+  // 5. User interaction: triggers paymentSession.start() or backend simulated fallback
+  const handlePaymentClick = async () => {
     setIsProcessing(true);
     setError(null);
+
+    if (sessionRef.current) {
+      try {
+        await sessionRef.current.start({ presentationMode: "auto" });
+      } catch (err: unknown) {
+        setError((err as Error).message || "PayPal checkout session failed");
+      } finally {
+        setIsProcessing(false);
+      }
+      return;
+    }
+
+    // Direct API fallback execution (when CDN is blocked or mock testing)
     try {
       let intentId = paymentIntentId;
       if (!intentId) {
@@ -157,7 +244,6 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
         setPaymentIntentId(order.paymentIntentId);
         setPaymentExpiresAt(order.paymentExpiresAt);
       }
-      // Call backend capture endpoint
       const outcome = await apiClient.capturePayment(intentId);
       onPaymentOutcome(outcome);
     } catch (err: unknown) {
@@ -216,13 +302,11 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
         </div>
       )}
 
-      {/* Official PayPal JS SDK Buttons container */}
-      <div ref={containerRef} id="paypal-button-container" />
-
-      {/* Interactive Sandbox Checkout Button */}
-      {(!sdkReady || isProcessing) && (
+      {/* Official PayPal JS SDK v6 Web Component & Interactive Trigger */}
+      <div id="paypal-button-container">
         <button
           type="button"
+          id="paypal-v6-checkout-button"
           className="button button--solid"
           style={{
             width: "100%",
@@ -234,22 +318,24 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
             minHeight: "44px",
           }}
           disabled={isExpired || isProcessing}
-          onClick={handleSimulatedApproval}
+          onClick={handlePaymentClick}
         >
           {isProcessing
             ? "Authorizing & Capturing Deposit..."
             : isExpired
               ? "Payment Window Expired - Slot Released"
-              : "Authorize & Capture via PayPal Sandbox"}
+              : sdkReady
+                ? "Pay with PayPal (JS SDK v6)"
+                : "Authorize & Capture via PayPal Sandbox"}
         </button>
-      )}
+      </div>
 
       {isExpired && (
         <p
           className="mono"
           style={{ fontSize: "10px", color: "var(--muted)", marginTop: "8px", textAlign: "center" }}
         >
-          Slot hold released back to inventory. Please re-select a slot to continue.
+          Slot hold released. Please return to schedule to select a new time slot.
         </p>
       )}
     </div>

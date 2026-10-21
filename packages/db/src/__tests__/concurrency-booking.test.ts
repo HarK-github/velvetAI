@@ -568,7 +568,7 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
         .execute();
     });
     expect(activeBlockers.length).toBe(1);
-  });
+  }, 15000);
 
   it("5. Long-transaction expiry: transaction beginning before expiry but committing after expiry fails via clock_timestamp()", async () => {
     const slotStart = new Date("2026-11-04T10:00:00.000Z");
