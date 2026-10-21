@@ -242,12 +242,15 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     expect(role.rolbypassrls).toBe(false);
     expect(role.rolcanlogin).toBe(true);
 
-    // Verify FORCE ROW LEVEL SECURITY across all tenant tables
+    // Verify FORCE ROW LEVEL SECURITY across all 25 tenant tables
     const tenantTables = [
       "locations", "customers", "memberships", "services",
       "service_versions", "resources", "availability_rules", "booking_quotes",
       "bookings", "resource_claims", "booking_hold_snapshots", "buyer_confirmations",
-      "committed_intents", "idempotency_records", "outbox_events", "audit_events"
+      "committed_intents", "idempotency_records", "outbox_events", "audit_events",
+      "provider_connections", "provider_operations", "payment_intents", "payment_captures",
+      "refund_reservations", "verified_provider_events", "financial_journal_entries",
+      "financial_journal_lines", "invoices"
     ];
 
     const rlsTables = await sql<{
@@ -277,7 +280,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       WHERE policyname = 'tenant_isolation_policy'
     `.execute(adminDb);
 
-    expect(policies.rows.length).toBeGreaterThanOrEqual(16);
+    expect(policies.rows.length).toBe(25);
     for (const p of policies.rows) {
       // The qual must match NULLIF(current_setting('app.tenant_id', true), '')::uuid
       expect(p.qual).toContain("app.tenant_id");
@@ -287,10 +290,22 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
   });
 
   it("4. Migration Rollback and Re-apply Proof: verifies down() and up() idempotency", async () => {
+    // Rollback migration 0003
+    await migrateDown(adminDb);
+
+    // After rollback of 0003, provider_operations should be absent
+    const rolledBackOps = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'provider_operations'
+      ) as exists
+    `.execute(adminDb);
+    expect(rolledBackOps.rows[0]?.exists).toBe(false);
+
     // Rollback migration 0002
     await migrateDown(adminDb);
 
-    // After rollback, 0002 tables and constraints should be absent
+    // After rollback of 0002, 0002 tables and constraints should be absent
     const rolledBackSnapshots = await sql<{ exists: boolean }>`
       SELECT EXISTS (
         SELECT FROM information_schema.tables
@@ -299,7 +314,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     `.execute(adminDb);
     expect(rolledBackSnapshots.rows[0]?.exists).toBe(false);
 
-    // Re-apply migration 0002
+    // Re-apply migrations to latest
     await migrateToLatest(adminDb);
 
     // Verify table restored
@@ -311,6 +326,14 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     `.execute(adminDb);
     expect(restoredSnapshots.rows[0]?.exists).toBe(true);
 
+    const restoredOps = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'provider_operations'
+      ) as exists
+    `.execute(adminDb);
+    expect(restoredOps.rows[0]?.exists).toBe(true);
+
     // Verify CHECK constraint restored
     const checkConstraint = await sql<{ conname: string }>`
       SELECT conname
@@ -318,5 +341,49 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       WHERE conname = 'chk_resource_claim_blocking_state'
     `.execute(adminDb);
     expect(checkConstraint.rows.length).toBe(1);
+  });
+
+  it("5. Payment core ledger migration 0003 schema, constraints and append-only rules proof", async () => {
+    // 1. Verify CHECK constraints for payment state machines & payload limits
+    const constraints = await sql<{ conname: string }>`
+      SELECT conname
+      FROM pg_constraint
+      WHERE conname IN (
+        'chk_provider_op_state',
+        'chk_webhook_payload_length',
+        'chk_line_debit_credit',
+        'chk_payment_intent_state',
+        'chk_payment_capture_state',
+        'chk_refund_reservation_state'
+      )
+    `.execute(adminDb);
+
+    expect(constraints.rows.length).toBe(6);
+
+    // 2. Verify append-only rules on financial journal entries and lines
+    const rules = await sql<{ rulename: string }>`
+      SELECT rulename
+      FROM pg_rewrite
+      WHERE rulename IN (
+        'no_update_journal_entries',
+        'no_delete_journal_entries',
+        'no_update_journal_lines',
+        'no_delete_journal_lines'
+      )
+    `.execute(adminDb);
+
+    expect(rules.rows.length).toBe(4);
+
+    // 3. Verify payment_expires_at column on bookings
+    const bookingCol = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'bookings'
+          AND column_name = 'payment_expires_at'
+      ) as exists
+    `.execute(adminDb);
+
+    expect(bookingCol.rows[0]?.exists).toBe(true);
   });
 });

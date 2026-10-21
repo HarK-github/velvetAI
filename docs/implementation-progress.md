@@ -3,11 +3,11 @@
 ## Current Status
 
 - Specification version: 1.1 (`spec.md` version 1.0 amended by `SPEC_V1_1_AMENDMENT.md`, last modified 2026-10-21)
-- Current work phase: Sprint Epic 2 Final Acceptance Verification (COMPLETED & VERIFIED)
-- Current track: Tracks A–G (Foundation) + Epic 2 W0–W6 (Booking Concurrency, Cryptography & RLS) + Acceptance Verification
-- Overall status: VERIFIED (All 5 Acceptance Clarifications Resolved)
-- Last updated: 2026-10-21 13:45 UTC+5:30
-- Active blocker: None (Ready for Sprint Epic 3)
+- Current work phase: Sprint Epic 3 — PayPal Integration & Financial Reconciliation (VERIFIED)
+- Current track: Tracks A–G (Foundation) + Epic 2 (Booking Concurrency & RLS) + Epic 3 (W0–W10 Complete & Verified)
+- Overall status: READY_FOR_HANDOFF
+- Last updated: 2026-10-21 17:45 UTC+5:30
+- Active blocker: None
 
 ## Status Legend
 
@@ -26,8 +26,8 @@
 |---|---|---|---|
 | **Phase 0 & Epic 1** | Monorepo foundation, catalog, Kysely migrations, pure domain, outbox worker, Fastify API, React 19 web shell | **VERIFIED** | 17/17 tasks, 33 tests passing, ADR 0001–0004 |
 | **Epic 2 (W0–W6)** | Concurrency-safe booking, GiST exclusion, RLS pool isolation, ES256 JWS intent, one-time buyer confirmation, atomic commit, hold reaper | **VERIFIED** | 100 concurrent holds (1 winner, 99 conflicts), RLS pool size 1, 13 JWS attack tests, 12 abuse lab scenarios, ADR 0005 |
-| **Epic 2 Audit Remediation** | Acceptance audit pass: CHECK constraint, restricted NOBYPASSRLS role, replay tests, RFC 8785 canonicalization, validated decimal money, JOSE interop, 28 Abuse Lab scenarios, migration lifecycle | **VERIFIED** | 31/31 application tests, 18/18 db tests, 16/16 contracts tests, 29/29 abuse lab tests, 11/11 api tests, 0 lint/typecheck errors |
-| **Epic 3** | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation | **NOT_STARTED** | State progression corrected per audit; strictly deferred to Epic 3 |
+| **Epic 2 Audit Remediation** | Acceptance audit pass: CHECK constraint, restricted NOBYPASSRLS role, replay tests, RFC 8785 canonicalization, validated decimal money, JOSE interop, 28 Abuse Lab scenarios, migration lifecycle | **VERIFIED** | Checkpoint commit `539d177`, JWS jose standardization `191ca98`, all test suites passing |
+| **Epic 3** | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation | **VERIFIED** | W0-W10 complete; 11 payment lifecycle tests, 7 API payment tests, 16 paypal adapter tests, 19 db migration tests passing; ADR 0006 accepted |
 | **Epic 4** | MCP, WebMCP progressive enhancement, Ask AI, and security boundary | **NOT_STARTED** | Out of scope (`commit_booking` tool execution disabled) |
 | **Epic 5** | Bryntum scheduler, forecast visualization, submission | **NOT_STARTED** | Out of scope |
 
@@ -173,20 +173,42 @@ COMMITTING
 
 ---
 
+## Sprint Epic 3 — PayPal Integration & Financial Reconciliation Work Breakdown
+
+| Phase | Description | Status | Evidence |
+|---|---|---|---|
+| **W0** | Audit & Architecture Plan | **VERIFIED** | State machine mapped, checklist created, ADR 0006 written & accepted |
+| **W1** | Persistence & Domain Model | **VERIFIED** | Migration `0003_payment_core_ledger.ts`, 9 tables, Kysely schema types, check constraints, append-only rules, RLS policies, `payment_expires_at` column; migration apply/rollback/re-apply tests pass |
+| **W2** | PayPal Sandbox Client | **VERIFIED** | Typed `PaymentPort` adapter (`PayPalHttpClient`, `PayPalSandboxAdapter`), token caching with stampede prevention, timeout taxonomy, typed error hierarchy (`PayPalClientError`, `PayPalRetryableError`, `PayPalUnknownOutcomeError`, `PayPalAuthError`), strictly rejects live environment |
+| **W3** | Create Deposit Order | **VERIFIED** | `POST /v1/bookings/:bookingId/payment-order`, stable request ID, immutable snapshot binding (deposit minor, currency, merchant), transition to `REQUIRES_PAYER_ACTION` |
+| **W4** | PayPal JS SDK v6 | **VERIFIED** | `apps/web/src/components/PayPalButton.tsx`, client `createOrder` calls backend payment-order endpoint, `onApprove` calls backend capture (no local confirmation), countdown timer derived from server `payment_expires_at`, slot released on expiry |
+| **W5** | Backend Capture & Reconciliation | **VERIFIED** | `POST /v1/payments/:paymentIntentId/capture`, confirms booking ONLY on contained capture status `COMPLETED`, returns HTTP 202 with status URL on `UNCERTAIN` / timeout / network drop |
+| **W6** | Webhook Ingress | **VERIFIED** | `POST /v1/webhooks/paypal/:connectionKey`, route-scoped raw Buffer parser, 256 KiB body limit enforcement (rejects > 256 KiB with 413), raw quarantine storage in `webhook_deliveries`, asynchronous verification & out-of-order deduplication |
+| **W7** | Refunds | **VERIFIED** | `POST /v1/captures/:captureId/refunds`, PostgreSQL row-level lock (`FOR UPDATE`) on `payment_captures`, strictly enforces `requested <= captured - (completed + pending + unknown)` preventing over-refunds |
+| **W8** | Financial Journal & Invoicing | **VERIFIED** | Append-only double-entry ledger (`financial_journal_entries`, `financial_journal_lines`), zero-sum balanced debit/credit per currency, non-authoritative PayPal Invoicing v2 balance projection for completed appointments (`POST /v1/bookings/:bookingId/balance-invoice`) |
+| **W9** | Tests & Fault Injection | **VERIFIED** | Deterministic mock adapter test suite, fault injection (timeout, socket drop, duplicate webhook, refund balance exhaustion), clean opt-in skip when sandbox credentials absent (`PAYPAL_SANDBOX_LIVE=true`) |
+| **W10** | Documentation & Runbook | **VERIFIED** | ADR 0006 written & committed, environment variable documentation, implementation progress canonical record updated |
+
+---
+
 ## Full Workspace Verification Summary
 
 | Verification Check | Command | Exit Code | Result |
 |---|---|---|---|
-| **Linter** | `pnpm lint` | 0 | 12 packages: 0 errors, 0 warnings |
-| **Typecheck** | `pnpm typecheck` | 0 | 12 packages: Strict TypeScript: 0 errors |
-| **Test Suite** | `pnpm test` | 0 | 17 tasks: 100% passed across all packages |
+| **Linter** | `pnpm lint` | 0 | 18 tasks: 12 packages: 0 errors, 0 warnings |
+| **Typecheck** | `pnpm typecheck` | 0 | 18 tasks: 12 packages: Strict TypeScript: 0 errors |
+| **Test Suite** | `pnpm test` | 0 | 18 tasks: 100% passed across all packages (0 failures) |
 | **Production Build** | `pnpm build` | 0 | 12 packages: All packages & apps built cleanly |
 | **Git Whitespace** | `git diff --check` | 0 | Clean diff, 0 trailing whitespace / blank lines |
-| **Git Status** | `git status --short` | 0 | Canonical records synchronized, duplicates removed |
+| **Git Status** | `git status --short` | 0 | Ready for clean Epic 3 commit |
 
 ---
 
-## Commitments
-- Acceptance verification complete.
-- Zero PayPal side effects added.
-- Sprint Epic 3 implementation has not commenced.
+## Commitments & Invariants
+- Baseline clean reproduction confirmed before and throughout Epic 3.
+- JWS standardized exclusively on maintained `jose` library in production path.
+- ADR 0006 accepted and committed.
+- Strict PayPal sandbox environment only (`PAYPAL_ENVIRONMENT=sandbox`); startup on live configuration rejected.
+- Zero PII / secret leakage in logs, traces, or database records.
+- Financial journal balances exactly per currency and is append-only.
+- All monetary operations represented as integer minor units in PostgreSQL and validated decimal strings on the wire.

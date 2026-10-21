@@ -2,6 +2,7 @@ import { Kysely, Migration, MigrationProvider, Migrator } from "kysely";
 import { Database } from "./schema.js";
 import * as initialSchema from "./migrations/0001_initial_schema.js";
 import * as slotClaimRlsHardening from "./migrations/0002_slot_claim_rls_hardening.js";
+import * as paymentCoreLedger from "./migrations/0003_payment_core_ledger.js";
 
 class StaticMigrationProvider implements MigrationProvider {
   async getMigrations(): Promise<Record<string, Migration>> {
@@ -13,6 +14,10 @@ class StaticMigrationProvider implements MigrationProvider {
       "0002_slot_claim_rls_hardening": {
         up: slotClaimRlsHardening.up,
         down: slotClaimRlsHardening.down,
+      },
+      "0003_payment_core_ledger": {
+        up: paymentCoreLedger.up,
+        down: paymentCoreLedger.down,
       },
     };
   }

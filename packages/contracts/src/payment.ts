@@ -2,10 +2,12 @@ import { z } from "zod";
 import {
   bookingIdSchema,
   moneySchema,
+  moneyMinorSchema,
   paymentCaptureIdSchema,
   paymentIntentIdSchema,
   refundIdSchema,
   tenantIdSchema,
+  rfc3339TimestampSchema,
 } from "./primitives.js";
 
 export const paymentStateSchema = z.enum([
@@ -23,9 +25,11 @@ export const paymentStateSchema = z.enum([
 ]);
 export type PaymentState = z.infer<typeof paymentStateSchema>;
 
-export const createPaymentOrderInputSchema = z.object({
-  signedIntent: z.string().min(1),
-});
+export const createPaymentOrderInputSchema = z
+  .object({
+    signedIntent: z.string().optional(),
+  })
+  .strict();
 export type CreatePaymentOrderInput = z.infer<typeof createPaymentOrderInputSchema>;
 
 export const createPaymentOrderResponseSchema = z.object({
@@ -33,13 +37,16 @@ export const createPaymentOrderResponseSchema = z.object({
   paypalOrderId: z.string(),
   amount: moneySchema,
   status: z.literal("REQUIRES_PAYER_ACTION"),
+  paymentExpiresAt: rfc3339TimestampSchema.optional(),
 });
 export type CreatePaymentOrderResponse = z.infer<typeof createPaymentOrderResponseSchema>;
 
-export const capturePaymentInputSchema = z.object({
-  bookingId: bookingIdSchema,
-  signedIntent: z.string().min(1),
-});
+export const capturePaymentInputSchema = z
+  .object({
+    bookingId: bookingIdSchema.optional(),
+    signedIntent: z.string().optional(),
+  })
+  .strict();
 export type CapturePaymentInput = z.infer<typeof capturePaymentInputSchema>;
 
 export const definitiveCaptureResponseSchema = z.object({
@@ -59,6 +66,22 @@ export const uncertainCaptureResponseSchema = z.object({
 });
 export type UncertainCaptureResponse = z.infer<typeof uncertainCaptureResponseSchema>;
 
+export const refundInputSchema = z
+  .object({
+    reason: z.string().min(1),
+    amountMinor: moneyMinorSchema.optional(),
+  })
+  .strict();
+export type RefundInput = z.infer<typeof refundInputSchema>;
+
+export const refundResponseSchema = z.object({
+  refundId: refundIdSchema,
+  providerRefundId: z.string().nullable().optional(),
+  amount: moneySchema,
+  status: z.enum(["REQUESTED", "SUBMISSION_UNKNOWN", "PENDING", "COMPLETED", "FAILED"]),
+});
+export type RefundResponse = z.infer<typeof refundResponseSchema>;
+
 export const refundSchema = z.object({
   id: refundIdSchema,
   tenantId: tenantIdSchema,
@@ -69,3 +92,14 @@ export const refundSchema = z.object({
   requestId: z.string(),
 });
 export type RefundDTO = z.infer<typeof refundSchema>;
+
+export const balanceInvoiceResponseSchema = z.object({
+  invoiceId: z.string().uuid(),
+  providerInvoiceId: z.string().nullable().optional(),
+  providerInvoiceNumber: z.string().nullable().optional(),
+  status: z.string(),
+  total: moneySchema,
+  depositPaid: moneySchema,
+  balanceDue: moneySchema,
+});
+export type BalanceInvoiceResponse = z.infer<typeof balanceInvoiceResponseSchema>;

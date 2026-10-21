@@ -6,3 +6,4 @@ export * from "./tool-registry.js";
 export * from "./canonicalizer.js";
 export * from "./booking-intent.js";
 export * from "./booking-service.js";
+export * from "./payment-service.js";

@@ -17,6 +17,7 @@
     "@velvetai/application": "workspace:*",
     "@velvetai/contracts": "workspace:*",
     "@velvetai/db": "workspace:*",
+    "@velvetai/integrations-paypal": "workspace:*",
     "@velvetai/observability": "workspace:*",
     "fastify": "^5.2.1"
   },

@@ -17,9 +17,11 @@ import {
 export const bookingStatusSchema = z.enum([
   "HELD",
   "COMMITTING",
+  "REQUIRES_PAYER_ACTION",
   "PAYMENT_PENDING",
   "CAPTURE_UNCERTAIN",
   "CONFIRMED",
+  "PAYMENT_WINDOW_EXPIRED",
   "CHECKED_IN",
   "COMPLETED",
   "NO_SHOW",

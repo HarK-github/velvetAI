@@ -9,6 +9,7 @@ import { servicesRoutes } from "./routes/services.js";
 import { availabilityRoutes } from "./routes/availability.js";
 import { bookingsRoutes } from "./routes/bookings.js";
 import { riskRoutes } from "./routes/risk.js";
+import { paymentsRoutes, webhookRoutes } from "./routes/payments.js";
 import { registerAuth } from "./plugins/auth.js";
 import { registerIdempotency } from "./plugins/idempotency.js";
 
@@ -76,6 +77,8 @@ export function buildApp(): FastifyInstance {
   app.register(availabilityRoutes);
   app.register(bookingsRoutes);
   app.register(riskRoutes);
+  app.register(paymentsRoutes);
+  app.register(webhookRoutes);
 
   // RFC 9457 Problem Details error handler
   app.setErrorHandler((error: FastifyError | Error | unknown, request, reply) => {

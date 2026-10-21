@@ -16,11 +16,16 @@ export interface Database {
   booking_hold_snapshots: BookingHoldSnapshotTable;
   buyer_confirmations: BuyerConfirmationTable;
   committed_intents: CommittedIntentTable;
+  provider_connections: ProviderConnectionTable;
+  provider_operations: ProviderOperationTable;
   payment_intents: PaymentIntentTable;
   payment_captures: PaymentCaptureTable;
-  refunds: RefundTable;
+  refund_reservations: RefundReservationTable;
+  webhook_deliveries: WebhookDeliveryTable;
+  verified_provider_events: VerifiedProviderEventTable;
+  financial_journal_entries: FinancialJournalEntryTable;
+  financial_journal_lines: FinancialJournalLineTable;
   invoices: InvoiceTable;
-  webhook_events: WebhookEventTable;
   idempotency_records: IdempotencyRecordTable;
   outbox_events: OutboxEventTable;
   inbox_events: InboxEventTable;
@@ -138,6 +143,7 @@ export interface BookingTable {
   status: string;
   version: number;
   hold_expires_at: ColumnType<Date | null, string | Date | null, string | Date | null>;
+  payment_expires_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
   starts_at: ColumnType<Date, string | Date, never>;
   ends_at: ColumnType<Date, string | Date, never>;
   resource_id: string | null;
@@ -202,37 +208,135 @@ export interface CommittedIntentTable {
   committed_at: ColumnType<Date, string | Date | undefined, never>;
 }
 
+export interface ProviderConnectionTable {
+  id: string;
+  tenant_id: string;
+  provider: string;
+  environment: string;
+  connection_key: string;
+  client_id: string;
+  client_secret_ciphertext: string;
+  webhook_id: string | null;
+  status: string;
+  created_at: ColumnType<Date, string | Date | undefined, never>;
+  updated_at: ColumnType<Date, string | Date | undefined, string | Date>;
+}
+
+export interface ProviderOperationTable {
+  id: string;
+  tenant_id: string;
+  booking_id: string;
+  provider: string;
+  environment: string;
+  operation_type: string;
+  state: string;
+  endpoint: string;
+  paypal_request_id: string;
+  canonical_payload_hash: string;
+  provider_order_id: string | null;
+  provider_capture_id: string | null;
+  provider_refund_id: string | null;
+  attempt_count: ColumnType<number, number | undefined, number>;
+  first_dispatched_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  last_attempt_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  next_reconcile_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  last_http_status: number | null;
+  provider_debug_id: string | null;
+  error_code: string | null;
+  created_at: ColumnType<Date, string | Date | undefined, never>;
+  updated_at: ColumnType<Date, string | Date | undefined, string | Date>;
+}
+
 export interface PaymentIntentTable {
   id: string;
   tenant_id: string;
   booking_id: string;
+  provider_connection_id: string | null;
   provider_order_id: string | null;
   amount_minor: string;
   currency: string;
   state: string;
+  payment_expires_at: ColumnType<Date, string | Date, string | Date>;
   request_id: string;
   created_at: ColumnType<Date, string | Date | undefined, never>;
+  updated_at: ColumnType<Date, string | Date | undefined, string | Date>;
 }
 
 export interface PaymentCaptureTable {
   id: string;
   tenant_id: string;
   payment_intent_id: string;
+  booking_id: string;
   provider_capture_id: string;
   amount_minor: string;
+  currency: string;
   state: string;
-  captured_at: ColumnType<Date | null, string | Date | null, string | Date | null>;
+  captured_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
   created_at: ColumnType<Date, string | Date | undefined, never>;
 }
 
-export interface RefundTable {
+export interface RefundReservationTable {
   id: string;
   tenant_id: string;
   capture_id: string;
+  booking_id: string;
   provider_refund_id: string | null;
   amount_minor: string;
+  currency: string;
+  reason: string;
   state: string;
   request_id: string;
+  created_at: ColumnType<Date, string | Date | undefined, never>;
+  updated_at: ColumnType<Date, string | Date | undefined, string | Date>;
+}
+
+export interface WebhookDeliveryTable {
+  id: string;
+  connection_key: string;
+  environment: string;
+  transmission_id: string;
+  transmission_time: string;
+  cert_url: string;
+  auth_algo: string;
+  transmission_sig: string;
+  raw_payload: string;
+  body_bytes_length: number;
+  verification_state: string;
+  received_at: ColumnType<Date, string | Date | undefined, never>;
+}
+
+export interface VerifiedProviderEventTable {
+  id: string;
+  tenant_id: string;
+  provider_connection_id: string | null;
+  environment: string;
+  provider_event_id: string;
+  event_type: string;
+  transmission_id: string;
+  resource_id: string | null;
+  resource_type: string | null;
+  reconciliation_state: string;
+  verified_at: ColumnType<Date, string | Date | undefined, never>;
+}
+
+export interface FinancialJournalEntryTable {
+  id: string;
+  tenant_id: string;
+  booking_id: string;
+  entry_type: string;
+  reference_id: string;
+  currency: string;
+  posted_at: ColumnType<Date, string | Date | undefined, never>;
+}
+
+export interface FinancialJournalLineTable {
+  id: string;
+  journal_entry_id: string;
+  tenant_id: string;
+  account: string;
+  debit_minor: string;
+  credit_minor: string;
+  currency: string;
   created_at: ColumnType<Date, string | Date | undefined, never>;
 }
 
@@ -241,21 +345,14 @@ export interface InvoiceTable {
   tenant_id: string;
   booking_id: string;
   provider_invoice_id: string | null;
-  balance_minor: string;
+  provider_invoice_number: string | null;
+  status: string;
+  total_minor: string;
+  deposit_paid_minor: string;
+  balance_due_minor: string;
   currency: string;
-  state: string;
   created_at: ColumnType<Date, string | Date | undefined, never>;
-}
-
-export interface WebhookEventTable {
-  id: string;
-  tenant_id: string | null;
-  transmission_id: string;
-  provider_event_id: string | null;
-  verification_state: string;
-  processing_state: string;
-  raw_payload: string;
-  received_at: ColumnType<Date, string | Date | undefined, never>;
+  updated_at: ColumnType<Date, string | Date | undefined, string | Date>;
 }
 
 export interface IdempotencyRecordTable {

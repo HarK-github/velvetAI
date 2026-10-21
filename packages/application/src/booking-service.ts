@@ -718,13 +718,15 @@ export class BookingService {
         .where("id", "=", confirmation.id)
         .execute();
 
-      // 8. Transition booking and claims to COMMITTING
+      // 8. Transition booking and claims to COMMITTING with 10-minute payment window
       const nextVersion = booking.version + 1;
+      const paymentExpiresAt = new Date(dbNow.getTime() + 10 * 60_000);
       await trx
         .updateTable("bookings")
         .set({
           status: "COMMITTING",
           version: nextVersion,
+          payment_expires_at: paymentExpiresAt,
         })
         .where("id", "=", booking.id)
         .execute();

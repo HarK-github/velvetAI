@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { FC } from "react";
+import { PayPalButton, PayPalPaymentSuccess } from "./PayPalButton.js";
 
 interface ServiceItem {
   id: string;
@@ -79,6 +80,7 @@ export const BookingSimulatorSection: FC = () => {
   const [isLoadingSlots, setIsLoadingSlots] = useState<boolean>(false);
   const [isLockingHold, setIsLockingHold] = useState<boolean>(false);
   const [customerEmail, setCustomerEmail] = useState<string>("agent.alex@velvetai.internal");
+  const [paymentOutcome, setPaymentOutcome] = useState<PayPalPaymentSuccess | null>(null);
 
   // Fetch published services from Fastify API
   useEffect(() => {
@@ -240,6 +242,7 @@ export const BookingSimulatorSection: FC = () => {
   const handleLockHold = async () => {
     if (!quote) return;
     setIsLockingHold(true);
+    setPaymentOutcome(null);
 
     try {
       const res = await fetch("http://localhost:3000/v1/booking-holds", {
@@ -563,22 +566,74 @@ export const BookingSimulatorSection: FC = () => {
                     </pre>
                   </div>
 
-                  <button
-                    className="button button--solid"
-                    style={{ width: "100%", background: "#0070ba", borderColor: "#0070ba" }}
-                    onClick={() =>
-                      alert(
-                        `Proceeding to PayPal Sandbox payment approval for deposit ${formatMoney(
-                          quote?.deposit.valueMinor ??
-                            quote?.deposit.minor ??
-                            selectedService.depositMinor,
-                          selectedService.currency,
-                        )}`,
-                      )
-                    }
-                  >
-                    PayPal Sandbox Checkout &rarr;
-                  </button>
+                  {paymentOutcome ? (
+                    paymentOutcome.bookingStatus === "CONFIRMED" ? (
+                      <div
+                        style={{
+                          background: "rgba(16, 185, 129, 0.12)",
+                          border: "1px solid rgba(16, 185, 129, 0.4)",
+                          padding: "20px",
+                          marginTop: "16px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                          <span className="signal-dot signal-dot--emerald"></span>
+                          <strong className="mono" style={{ color: "#059669", fontSize: "12px" }}>
+                            BOOKING CONFIRMED &bull; DEPOSIT CAPTURED
+                          </strong>
+                        </div>
+                        <p style={{ fontSize: "11px", color: "var(--secondary)", margin: "4px 0" }}>
+                          PayPal Capture ID:{" "}
+                          <code className="mono">{paymentOutcome.providerCaptureId || "CAP-COMPLETED"}</code>
+                        </p>
+                        <p style={{ fontSize: "11px", color: "var(--secondary)", margin: "4px 0" }}>
+                          Booking ID: <code className="mono">{paymentOutcome.bookingId}</code>
+                        </p>
+                        <div className="mono" style={{ fontSize: "10px", color: "var(--muted)", marginTop: "8px" }}>
+                          Double-entry journal posted &bull; Balanced ledger recorded
+                        </div>
+                        <button
+                          type="button"
+                          className="button"
+                          style={{ marginTop: "12px", width: "100%", fontSize: "11px" }}
+                          onClick={() => {
+                            setHold(null);
+                            setPaymentOutcome(null);
+                          }}
+                        >
+                          Book Another Appointment &rarr;
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          background: "rgba(245, 158, 11, 0.12)",
+                          border: "1px solid rgba(245, 158, 11, 0.4)",
+                          padding: "20px",
+                          marginTop: "16px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                          <span className="signal-dot signal-dot--amber"></span>
+                          <strong className="mono" style={{ color: "#d97706", fontSize: "12px" }}>
+                            CAPTURE PENDING &bull; RECONCILING IN BACKGROUND
+                          </strong>
+                        </div>
+                        <p style={{ fontSize: "11px", color: "var(--secondary)", margin: "4px 0" }}>
+                          Booking claim remains blocking while outbox worker reconciles provider state.
+                        </p>
+                      </div>
+                    )
+                  ) : (
+                    <PayPalButton
+                      bookingId={hold.bookingId}
+                      onPaymentOutcome={(outcome) => setPaymentOutcome(outcome)}
+                      onPaymentExpired={() => {
+                        setHold(null);
+                        setPaymentOutcome(null);
+                      }}
+                    />
+                  )}
                 </div>
               )}
             </div>

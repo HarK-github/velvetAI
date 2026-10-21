@@ -105,6 +105,60 @@ export class VelvetApiClient {
       body: JSON.stringify(params),
     });
   }
+
+  async createPaymentOrder(
+    bookingId: string,
+    idempotencyKey?: string,
+  ): Promise<{
+    paymentIntentId: string;
+    paypalOrderId: string;
+    amount: { currency: string; valueMinor: string };
+    status: "REQUIRES_PAYER_ACTION";
+    paymentExpiresAt: string;
+  }> {
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) {
+      headers["idempotency-key"] = idempotencyKey;
+    }
+    return this.request("/v1/bookings/" + bookingId + "/payment-order", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+  }
+
+  async capturePayment(
+    paymentIntentId: string,
+    idempotencyKey?: string,
+  ): Promise<{
+    bookingId: string;
+    bookingStatus: "CONFIRMED" | "CAPTURE_UNCERTAIN" | "CANCELLED";
+    paymentStatus: "CAPTURED" | "UNCERTAIN" | "FAILED";
+    providerCaptureId?: string;
+    operationId?: string;
+    statusUrl?: string;
+    version?: number;
+  }> {
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) {
+      headers["idempotency-key"] = idempotencyKey;
+    }
+    return this.request("/v1/payments/" + paymentIntentId + "/capture", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+  }
+
+  async getOperation(operationId: string): Promise<{
+    id: string;
+    operationType: string;
+    state: string;
+    providerOrderId?: string;
+    providerCaptureId?: string;
+  }> {
+    return this.request(`/v1/operations/${operationId}`);
+  }
 }
 
 export const apiClient = new VelvetApiClient();

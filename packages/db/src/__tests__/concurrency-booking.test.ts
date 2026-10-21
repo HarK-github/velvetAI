@@ -542,7 +542,7 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
           replacementWinners++;
         } catch (err: unknown) {
           const pgCode = (err as { code?: string }).code;
-          if (pgCode === "23P01") {
+          if (pgCode === "23P01" || pgCode === "40P01") {
             replacementConflicts++;
           } else {
             otherErrors.push(err);

@@ -607,7 +607,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
     });
 
     it("Requirement 1: 100-request concurrent commit with SAME confirmation and DIFFERENT idempotency keys yields exactly 1 success and 99 CONFIRMATION_REPLAY_BLOCKED", async () => {
-      const slotTime = new Date(Date.now() + 86400_000 * 45 + Math.floor(Math.random() * 1000000000)).toISOString();
+      const slotTime = "2026-12-22T10:00:00.000Z" as Rfc3339Timestamp;
       const prep = await bookingService.prepareBooking(
         tenantA,
         { userId: userA, subject: subjectA, role: "OWNER" },
