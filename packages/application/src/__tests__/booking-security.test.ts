@@ -10,8 +10,6 @@ import {
 import {
   signBookingIntent,
   verifyBookingIntent,
-  signBookingIntentWithJose,
-  verifyBookingIntentWithJose,
   registerIntentKey,
   getDefaultIntentKeys,
 } from "../booking-intent.js";
@@ -168,10 +166,10 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       };
     }
 
-    it("verifies a valid ES256 intent signed with standard key", () => {
+    it("verifies a valid ES256 intent signed with standard key", async () => {
       const claims = createValidClaims();
-      const token = signBookingIntent(claims);
-      const verified = verifyBookingIntent(token, {
+      const token = await signBookingIntent(claims);
+      const verified = await verifyBookingIntent(token, {
         expectedIssuer: "https://api.velvetai.example",
         expectedAudience: "velvetai-booking",
       });
@@ -179,17 +177,17 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       expect(verified.tenant_id).toBe(tenantA);
     });
 
-    it("rejects JWS with alg 'none'", () => {
+    it("rejects JWS with alg 'none'", async () => {
       const claims = createValidClaims();
       const header = { alg: "none", typ: "velvetai-intent+jwt", kid: defaultKeys.kid };
       const hB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
       const pB64 = Buffer.from(JSON.stringify(claims)).toString("base64url");
       const forgedNoneJws = `${hB64}.${pB64}.`;
 
-      expect(() => verifyBookingIntent(forgedNoneJws)).toThrow(/only 'ES256' is permitted/);
+      await expect(verifyBookingIntent(forgedNoneJws)).rejects.toThrow(/only 'ES256' is permitted/);
     });
 
-    it("rejects algorithm confusion (e.g. HS256 with EC public key as secret)", () => {
+    it("rejects algorithm confusion (e.g. HS256 with EC public key as secret)", async () => {
       const claims = createValidClaims();
       const header = { alg: "HS256", typ: "velvetai-intent+jwt", kid: defaultKeys.kid };
       const hB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
@@ -198,16 +196,16 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       const forgedSig = crypto.createHmac("sha256", defaultKeys.publicKeyPem).update(signingInput).digest("base64url");
       const forgedHs256 = `${signingInput}.${forgedSig}`;
 
-      expect(() => verifyBookingIntent(forgedHs256)).toThrow(/only 'ES256' is permitted/);
+      await expect(verifyBookingIntent(forgedHs256)).rejects.toThrow(/only 'ES256' is permitted/);
     });
 
-    it("rejects unknown kid", () => {
+    it("rejects unknown kid", async () => {
       const claims = createValidClaims();
-      const token = signBookingIntent(claims, { kid: "unknown-kid-999" });
-      expect(() => verifyBookingIntent(token)).toThrow(/Unknown kid/);
+      const token = await signBookingIntent(claims, { kid: "unknown-kid-999" });
+      await expect(verifyBookingIntent(token)).rejects.toThrow(/Unknown kid/);
     });
 
-    it("rejects remote jku or x5u in header", () => {
+    it("rejects remote jku or x5u in header", async () => {
       const claims = createValidClaims();
       const header = {
         alg: "ES256",
@@ -222,10 +220,10 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
         dsaEncoding: "ieee-p1363",
       }).toString("base64url");
 
-      expect(() => verifyBookingIntent(`${hB64}.${pB64}.${sig}`)).toThrow(/Remote jku or x5u headers are prohibited/);
+      await expect(verifyBookingIntent(`${hB64}.${pB64}.${sig}`)).rejects.toThrow(/Remote jku or x5u headers are prohibited/);
     });
 
-    it("rejects wrong typ (e.g. standard JWT)", () => {
+    it("rejects wrong typ (e.g. standard JWT)", async () => {
       const claims = createValidClaims();
       const header = { alg: "ES256", typ: "JWT", kid: defaultKeys.kid };
       const hB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
@@ -235,40 +233,40 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
         dsaEncoding: "ieee-p1363",
       }).toString("base64url");
 
-      expect(() => verifyBookingIntent(`${hB64}.${pB64}.${sig}`)).toThrow(/Invalid JWS typ/);
+      await expect(verifyBookingIntent(`${hB64}.${pB64}.${sig}`)).rejects.toThrow(/Invalid JWS typ/);
     });
 
-    it("rejects issuer mismatch and audience mismatch", () => {
+    it("rejects issuer mismatch and audience mismatch", async () => {
       const claims = createValidClaims();
-      const token = signBookingIntent(claims);
+      const token = await signBookingIntent(claims);
 
-      expect(() =>
+      await expect(
         verifyBookingIntent(token, { expectedIssuer: "https://different-issuer.example" }),
-      ).toThrow(/Intent issuer mismatch/);
+      ).rejects.toThrow(/Intent issuer mismatch/);
 
-      expect(() =>
+      await expect(
         verifyBookingIntent(token, { expectedAudience: "wrong-audience" }),
-      ).toThrow(/Intent audience mismatch/);
+      ).rejects.toThrow(/Intent audience mismatch/);
     });
 
-    it("rejects expired intent and not-yet-valid intent", () => {
+    it("rejects expired intent and not-yet-valid intent", async () => {
       const claims = createValidClaims();
-      const token = signBookingIntent(claims);
+      const token = await signBookingIntent(claims);
 
       // Future time beyond exp
-      expect(() =>
+      await expect(
         verifyBookingIntent(token, { asOfSeconds: claims.exp + 10 }),
-      ).toThrow(/Intent has expired/);
+      ).rejects.toThrow(/Intent has expired/);
 
       // Past time before nbf
-      expect(() =>
+      await expect(
         verifyBookingIntent(token, { asOfSeconds: claims.nbf - 10 }),
-      ).toThrow(/Intent is not yet valid/);
+      ).rejects.toThrow(/Intent is not yet valid/);
     });
 
-    it("rejects tampered payload content", () => {
+    it("rejects tampered payload content", async () => {
       const claims = createValidClaims();
-      const token = signBookingIntent(claims);
+      const token = await signBookingIntent(claims);
       const [h, p, s] = token.split(".");
 
       // Tamper with payload by changing total_minor
@@ -276,7 +274,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       payloadObj.total_minor = "999999";
       const tamperedP = Buffer.from(JSON.stringify(payloadObj)).toString("base64url");
 
-      expect(() => verifyBookingIntent(`${h}.${tamperedP}.${s}`)).toThrow(/signature verification failed/);
+      await expect(verifyBookingIntent(`${h}.${tamperedP}.${s}`)).rejects.toThrow(/signature verification failed/);
     });
   });
 
@@ -840,20 +838,34 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
         allowed_surfaces: ["web", "mcp_streamable_http"],
       };
 
-      // 1. velvetAI signs -> verify signature is raw IEEE-P1363 64 bytes
-      const velvetToken = signBookingIntent(claims);
+      const defaultKeys = getDefaultIntentKeys();
+
+      // 1. velvetAI production (jose) signs -> verify signature is raw IEEE-P1363 64 bytes
+      const velvetToken = await signBookingIntent(claims);
       const signatureB64 = velvetToken.split(".")[2]!;
       const rawSignature = Buffer.from(signatureB64, "base64url");
       expect(rawSignature.length).toBe(64); // Exactly 64 bytes (32 bytes R || 32 bytes S)
 
-      // 2. Verified independently using standard jose package
-      const joseVerified = await verifyBookingIntentWithJose(velvetToken);
-      expect(joseVerified.jti).toBe(claims.jti);
-      expect(joseVerified.hold_id).toBe(claims.hold_id);
+      // 2. Verified independently using Node crypto.verify (explicit interop proof)
+      const [hB64, pB64] = velvetToken.split(".");
+      const signingInput = `${hB64}.${pB64}`;
+      const cryptoVerified = crypto.verify(
+        "SHA256",
+        Buffer.from(signingInput),
+        { key: defaultKeys.publicKeyPem, dsaEncoding: "ieee-p1363" },
+        rawSignature,
+      );
+      expect(cryptoVerified).toBe(true);
 
-      // 3. jose signs -> verified independently using velvetAI verifier
-      const joseToken = await signBookingIntentWithJose(claims);
-      const velvetVerified = verifyBookingIntent(joseToken, {
+      // 3. Node crypto.sign signs -> verified independently using production verifyBookingIntent (jose)
+      const cryptoSig = crypto.sign(
+        "SHA256",
+        Buffer.from(signingInput),
+        { key: defaultKeys.privateKeyPem, dsaEncoding: "ieee-p1363" },
+      ).toString("base64url");
+      const cryptoToken = `${signingInput}.${cryptoSig}`;
+
+      const velvetVerified = await verifyBookingIntent(cryptoToken, {
         expectedIssuer: "https://api.velvetai.example",
         expectedAudience: "velvetai-booking",
       });
@@ -903,13 +915,13 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       };
 
       // Sign with rotated key kid: key-velvetai-2
-      const rotatedToken = signBookingIntent(claims, { keyConfig: rotatedKey, kid: "key-velvetai-2" });
-      const verified = verifyBookingIntent(rotatedToken);
+      const rotatedToken = await signBookingIntent(claims, { keyConfig: rotatedKey, kid: "key-velvetai-2" });
+      const verified = await verifyBookingIntent(rotatedToken);
       expect(verified.jti).toBe(claims.jti);
 
       // Attempt to verify with unknown kid
-      const unknownKidToken = signBookingIntent(claims, { keyConfig: rotatedKey, kid: "unknown-rotated-kid" });
-      expect(() => verifyBookingIntent(unknownKidToken)).toThrow(/Unknown kid 'unknown-rotated-kid'/);
+      const unknownKidToken = await signBookingIntent(claims, { keyConfig: rotatedKey, kid: "unknown-rotated-kid" });
+      await expect(verifyBookingIntent(unknownKidToken)).rejects.toThrow(/Unknown kid 'unknown-rotated-kid'/);
     });
   });
 });

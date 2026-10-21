@@ -67,83 +67,77 @@ export class IntentVerificationError extends Error {
   }
 }
 
+type JoseKey = Awaited<ReturnType<typeof jose.importPKCS8>>;
+
+const joseKeyCache = new WeakMap<IntentKeyConfig, { privateKey?: JoseKey; publicKey?: JoseKey }>();
+
+async function getJosePrivateKey(keyConfig: IntentKeyConfig): Promise<JoseKey> {
+  let cached = joseKeyCache.get(keyConfig);
+  if (!cached) {
+    cached = {};
+    joseKeyCache.set(keyConfig, cached);
+  }
+  if (!cached.privateKey) {
+    cached.privateKey = await jose.importPKCS8(keyConfig.privateKeyPem, "ES256");
+  }
+  return cached.privateKey;
+}
+
+async function getJosePublicKey(keyConfig: IntentKeyConfig): Promise<JoseKey> {
+  let cached = joseKeyCache.get(keyConfig);
+  if (!cached) {
+    cached = {};
+    joseKeyCache.set(keyConfig, cached);
+  }
+  if (!cached.publicKey) {
+    cached.publicKey = await jose.importSPKI(keyConfig.publicKeyPem, "ES256");
+  }
+  return cached.publicKey;
+}
+
 /**
  * Creates an ES256 JWS signed booking intent matching Specification v1.1 Amendment Section D.3.
- * Uses P-256 curve (prime256v1) and IEEE P1363 (R || S) 64-byte signature formatting.
+ * Authoritative production implementation using the maintained `jose` library.
+ * Signs canonical RFC 8785 JSON payload using P-256 (ES256) and IEEE P1363 signature.
  */
-export function signBookingIntent(
+export async function signBookingIntent(
   claims: SignedBookingIntentClaims,
   options?: SignIntentOptions,
-): string {
+): Promise<string> {
   const keyConfig = options?.keyConfig ?? getDefaultIntentKeys();
   const kid = options?.kid ?? keyConfig.kid;
 
   // Validate claims schema
   const parsedClaims = signedBookingIntentClaimsSchema.parse(claims);
 
-  const header = {
-    alg: "ES256",
-    typ: "velvetai-intent+jwt",
-    kid,
-  };
-
-  const headerB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
-  // Payload canonicalized per RFC 8785
-  const payloadB64 = Buffer.from(canonicalJson(parsedClaims)).toString("base64url");
-  const signingInput = `${headerB64}.${payloadB64}`;
-
-  // Sign using ES256 (ECDSA with P-256 and SHA-256, IEEE P1363 encoding = 64 bytes)
-  const signature = crypto.sign(
-    "SHA256",
-    Buffer.from(signingInput),
-    {
-      key: keyConfig.privateKeyPem,
-      dsaEncoding: "ieee-p1363",
-    },
-  );
-
-  if (signature.length !== 64) {
-    throw new Error(`Invalid signature length: expected 64 bytes for IEEE P1363, got ${signature.length}`);
-  }
-
-  const signatureB64 = signature.toString("base64url");
-  return `${signingInput}.${signatureB64}`;
-}
-
-/**
- * Asynchronous signing using standard `jose` package for interoperability proof.
- */
-export async function signBookingIntentWithJose(
-  claims: SignedBookingIntentClaims,
-  options?: SignIntentOptions,
-): Promise<string> {
-  const keyConfig = options?.keyConfig ?? getDefaultIntentKeys();
-  const kid = options?.kid ?? keyConfig.kid;
-  const parsedClaims = signedBookingIntentClaimsSchema.parse(claims);
-
-  const privateKey = await jose.importPKCS8(keyConfig.privateKeyPem, "ES256");
+  const privateKey = await getJosePrivateKey(keyConfig);
   const canonicalPayload = new TextEncoder().encode(canonicalJson(parsedClaims));
 
   return await new jose.CompactSign(canonicalPayload)
-    .setProtectedHeader({ alg: "ES256", typ: "velvetai-intent+jwt", kid })
+    .setProtectedHeader({
+      alg: "ES256",
+      typ: "velvetai-intent+jwt",
+      kid,
+    })
     .sign(privateKey);
 }
 
 /**
- * Verifies an ES256 JWS signed booking intent strictly enforcing:
+ * Verifies an ES256 JWS signed booking intent using `jose` as the authoritative verifier,
+ * strictly enforcing:
  * - alg: ES256 allowlist only (rejects 'none', HS256, RSA)
  * - typ: velvetai-intent+jwt
  * - kid: known configured key ID in keyStore (supports rotation)
  * - Signature: exactly 64-byte raw IEEE-P1363 (32 bytes R || 32 bytes S)
  * - No remote jku or x5u allowed
  * - Pinned issuer and audience
- * - Cryptographic signature
+ * - Cryptographic signature verified by `jose`
  * - Time bounds (nbf, exp)
  */
-export function verifyBookingIntent(
+export async function verifyBookingIntent(
   jws: string,
   options?: VerifyIntentOptions,
-): SignedBookingIntentClaims {
+): Promise<SignedBookingIntentClaims> {
   if (typeof jws !== "string") {
     throw new IntentVerificationError("Intent must be a string", "INVALID_INTENT_FORMAT");
   }
@@ -161,9 +155,9 @@ export function verifyBookingIntent(
     throw new IntentVerificationError("Malformed JWS segments", "MALFORMED_JWS_SEGMENT");
   }
 
-  let header: Record<string, unknown>;
+  let header: jose.ProtectedHeaderParameters;
   try {
-    header = JSON.parse(Buffer.from(headerB64, "base64url").toString("utf8"));
+    header = jose.decodeProtectedHeader(jws);
   } catch {
     throw new IntentVerificationError("Failed to parse JWS header JSON", "INVALID_HEADER_JSON");
   }
@@ -227,31 +221,21 @@ export function verifyBookingIntent(
     );
   }
 
-  // Verify cryptographic signature
-  const signingInput = `${headerB64}.${payloadB64}`;
-  let isValidSignature = false;
+  // Verify cryptographic signature with jose
+  const publicKey = await getJosePublicKey(keyConfig);
+  let verifyResult: jose.CompactVerifyResult;
   try {
-    isValidSignature = crypto.verify(
-      "SHA256",
-      Buffer.from(signingInput),
-      {
-        key: keyConfig.publicKeyPem,
-        dsaEncoding: "ieee-p1363",
-      },
-      signature,
-    );
+    verifyResult = await jose.compactVerify(jws, publicKey, {
+      algorithms: ["ES256"],
+    });
   } catch {
-    isValidSignature = false;
-  }
-
-  if (!isValidSignature) {
     throw new IntentVerificationError("Cryptographic signature verification failed", "INVALID_SIGNATURE");
   }
 
   // Parse claims
   let rawClaims: unknown;
   try {
-    rawClaims = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+    rawClaims = JSON.parse(new TextDecoder().decode(verifyResult.payload));
   } catch {
     throw new IntentVerificationError("Failed to parse JWS payload JSON", "INVALID_PAYLOAD_JSON");
   }
@@ -290,27 +274,4 @@ export function verifyBookingIntent(
   }
 
   return claims;
-}
-
-/**
- * Asynchronous verification using standard `jose` package for interoperability proof.
- */
-export async function verifyBookingIntentWithJose(
-  jws: string,
-  options?: VerifyIntentOptions,
-): Promise<SignedBookingIntentClaims> {
-  const keyConfig = options?.keyConfig ?? getDefaultIntentKeys();
-  const publicKey = await jose.importSPKI(keyConfig.publicKeyPem, "ES256");
-
-  const { payload, protectedHeader } = await jose.compactVerify(jws, publicKey);
-
-  if (protectedHeader.typ !== "velvetai-intent+jwt") {
-    throw new IntentVerificationError("Invalid JWS typ in jose verification", "WRONG_TYP");
-  }
-  if (protectedHeader.alg !== "ES256") {
-    throw new IntentVerificationError("Invalid JWS alg in jose verification", "ALGORITHM_NOT_PERMITTED");
-  }
-
-  const rawClaims = JSON.parse(new TextDecoder().decode(payload));
-  return signedBookingIntentClaimsSchema.parse(rawClaims);
 }

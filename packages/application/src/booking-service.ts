@@ -300,7 +300,7 @@ export class BookingService {
       const nowSec = Math.floor(Date.now() / 1000);
       const expSec = Math.floor(holdExpiresAt.getTime() / 1000);
 
-      const signedIntent = signBookingIntent({
+      const signedIntent = await signBookingIntent({
         iss: "https://api.velvetai.example",
         aud: "velvetai-booking",
         sub: actor.subject,
@@ -567,7 +567,7 @@ export class BookingService {
       // 2. Verify ES256 Signed Intent integrity & bindings per Section D.3
       let claims;
       try {
-        claims = verifyBookingIntent(input.intent, {
+        claims = await verifyBookingIntent(input.intent, {
           expectedIssuer: "https://api.velvetai.example",
           expectedAudience: "velvetai-booking",
         });

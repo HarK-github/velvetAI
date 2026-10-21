@@ -314,7 +314,7 @@ export const deterministicScenarios: AbuseScenario[] = [
       try {
         const h = Buffer.from(JSON.stringify({ alg: "none", typ: "velvetai-intent+jwt", kid: keys.kid })).toString("base64url");
         const p = Buffer.from(JSON.stringify({ iss: "test" })).toString("base64url");
-        verifyBookingIntent(`${h}.${p}.dummy`);
+        await verifyBookingIntent(`${h}.${p}.dummy`);
       } catch (err: unknown) {
         if ((err as Error).message.includes("only 'ES256' is permitted")) algNoneBlocked = true;
       }
@@ -323,7 +323,7 @@ export const deterministicScenarios: AbuseScenario[] = [
       try {
         const h = Buffer.from(JSON.stringify({ alg: "ES256", typ: "JWT", kid: keys.kid })).toString("base64url");
         const p = Buffer.from(JSON.stringify({ iss: "test" })).toString("base64url");
-        verifyBookingIntent(`${h}.${p}.${dummySig64}`);
+        await verifyBookingIntent(`${h}.${p}.${dummySig64}`);
       } catch (err: unknown) {
         if ((err as Error).message.includes("Invalid JWS typ")) wrongTypBlocked = true;
       }
@@ -332,7 +332,7 @@ export const deterministicScenarios: AbuseScenario[] = [
       try {
         const h = Buffer.from(JSON.stringify({ alg: "ES256", typ: "velvetai-intent+jwt", kid: keys.kid, jku: "https://evil.example" })).toString("base64url");
         const p = Buffer.from(JSON.stringify({ iss: "test" })).toString("base64url");
-        verifyBookingIntent(`${h}.${p}.${dummySig64}`);
+        await verifyBookingIntent(`${h}.${p}.${dummySig64}`);
       } catch (err: unknown) {
         if ((err as Error).message.includes("Remote jku or x5u headers are prohibited")) remoteJkuBlocked = true;
       }
@@ -341,7 +341,7 @@ export const deterministicScenarios: AbuseScenario[] = [
       try {
         const h = Buffer.from(JSON.stringify({ alg: "ES256", typ: "velvetai-intent+jwt", kid: "unknown-kid-xyz" })).toString("base64url");
         const p = Buffer.from(JSON.stringify({ iss: "test" })).toString("base64url");
-        verifyBookingIntent(`${h}.${p}.${dummySig64}`);
+        await verifyBookingIntent(`${h}.${p}.${dummySig64}`);
       } catch (err: unknown) {
         if ((err as Error).message.includes("Unknown kid 'unknown-kid-xyz'")) unknownKidBlocked = true;
       }
