@@ -49,6 +49,12 @@ import {
 } from "../ports.js";
 import { PaymentService } from "../payment-service.js";
 
+try {
+  process.loadEnvFile?.();
+} catch {
+  // .env may not exist in CI or offline test runs
+}
+
 const TEST_DB_URL =
   process.env.DATABASE_URL ||
   "postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable";

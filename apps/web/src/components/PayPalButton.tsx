@@ -87,7 +87,9 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
   onPaymentOutcome,
   onPaymentExpired,
   onCancel,
-  clientId = "placeholder_paypal_sandbox_client_id",
+  clientId =
+    (typeof import.meta !== "undefined" && (import.meta.env?.VITE_PAYPAL_CLIENT_ID as string | undefined)) ||
+    "placeholder_paypal_sandbox_client_id",
   environment = "sandbox",
 }) => {
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
