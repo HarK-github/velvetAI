@@ -292,6 +292,9 @@ importers:
       '@velvetai/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      kysely:
+        specifier: ^0.27.6
+        version: 0.27.6
     devDependencies:
       '@types/node':
         specifier: ^22.13.9
@@ -308,6 +311,18 @@ importers:
       '@velvetai/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@velvetai/db':
+        specifier: workspace:*
+        version: link:../db
+      canonicalize:
+        specifier: ^5.1.0
+        version: 5.1.0
+      jose:
+        specifier: ^6.2.13
+        version: 6.2.13
+      kysely:
+        specifier: ^0.27.6
+        version: 0.27.6
       zod:
         specifier: ^3.24.2
         version: 3.25.76
@@ -1345,6 +1360,11 @@ packages:
   caniuse-lite@1.0.30001816:
     resolution: {integrity: sha512-+8Yx7BXCoqk6IF8yTicjfUR6D/ldJzdlsodlEOiOSPmhK844WIgk67/zIQaGAOxNkZyyvBlrRFnLvqKIoqbAFw==}
 
+  canonicalize@5.1.0:
+    resolution: {integrity: sha512-bab9+WefZljqQ8jT0qRwVmTyzAUU63K97QIQD3agynIBrb6sa5M2eAy8Hv8K3p4V9+ONVYZKtGYl4Dg+/5Gumw==}
+    engines: {node: '>=22'}
+    hasBin: true
+
   chai@5.3.3:
     resolution: {integrity: sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==}
     engines: {node: '>=18'}
@@ -1613,6 +1633,9 @@ packages:
 
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
+
+  jose@6.2.13:
+    resolution: {integrity: sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -2900,6 +2923,8 @@ snapshots:
 
   caniuse-lite@1.0.30001816: {}
 
+  canonicalize@5.1.0: {}
+
   chai@5.3.3:
     dependencies:
       assertion-error: 2.0.1
@@ -3213,6 +3238,8 @@ snapshots:
       is-extglob: 2.1.1
 
   isexe@2.0.0: {}
+
+  jose@6.2.13: {}
 
   js-tokens@4.0.0: {}
 

@@ -14,6 +14,7 @@ declare module "fastify" {
   interface FastifyRequest {
     principal?: AuthenticatedPrincipal;
     tenantId?: TenantId;
+    clientId?: string;
   }
 }
 
@@ -57,6 +58,7 @@ export function registerAuth(app: FastifyInstance): void {
 
   app.decorateRequest("principal", undefined);
   app.decorateRequest("tenantId", undefined);
+  app.decorateRequest("clientId", undefined);
 
   app.addHook("preHandler", async (request: FastifyRequest, reply) => {
     // Skip public paths
@@ -66,6 +68,10 @@ export function registerAuth(app: FastifyInstance): void {
     ) {
       return;
     }
+
+    request.clientId = typeof request.headers["x-client-id"] === "string"
+      ? request.headers["x-client-id"]
+      : "default-client";
 
     const authHeader = request.headers.authorization;
     const token = authHeader?.startsWith("Bearer ")

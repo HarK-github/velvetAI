@@ -75,13 +75,15 @@ export class ServiceVersion {
         `Buffer after must be between 0 and 240 minutes, got ${props.bufferAfterMinutes}`,
       );
     }
-    if (props.priceMinor < 0n) {
+    const price = BigInt(props.priceMinor);
+    const deposit = BigInt(props.baseDepositMinor);
+    if (price < 0n) {
       throw new InvariantViolationError("Price minor cannot be negative");
     }
-    if (props.baseDepositMinor < 0n) {
+    if (deposit < 0n) {
       throw new InvariantViolationError("Base deposit minor cannot be negative");
     }
-    if (props.baseDepositMinor > props.priceMinor) {
+    if (deposit > price) {
       throw new InvariantViolationError("Base deposit cannot exceed total service price");
     }
 

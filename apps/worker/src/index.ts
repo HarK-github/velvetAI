@@ -2,6 +2,7 @@ import { createLogger, validateEnv } from "@velvetai/observability";
 import { OutboxProcessor, InMemoryOutboxStore, OutboxStore } from "./outbox-processor.js";
 
 export * from "./outbox-processor.js";
+export * from "./hold-reaper.js";
 
 export class OutboxWorker {
   private isRunning = false;

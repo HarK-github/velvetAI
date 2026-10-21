@@ -15,7 +15,8 @@
     "@velvetai/application": "workspace:*",
     "@velvetai/contracts": "workspace:*",
     "@velvetai/db": "workspace:*",
-    "@velvetai/observability": "workspace:*"
+    "@velvetai/observability": "workspace:*",
+    "kysely": "^0.27.6"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",

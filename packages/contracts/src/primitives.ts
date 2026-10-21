@@ -79,10 +79,13 @@ export const currencyCodeSchema = z
   .brand<"CurrencyCode">();
 export type CurrencyCode = z.infer<typeof currencyCodeSchema>;
 
+/**
+ * Represents money minor units as an explicit, validated integer decimal string.
+ * Transmitted over wire (REST, JWS, audit, events) as a decimal string to avoid JSON BigInt issues.
+ */
 export const moneyMinorSchema = z
-  .bigint()
-  .or(z.number().int().safe())
-  .transform((val) => (typeof val === "number" ? BigInt(val) : val))
+  .string()
+  .regex(/^-?\d+$/, "Money minor must be an integer decimal string")
   .brand<"MoneyMinor">();
 export type MoneyMinor = z.infer<typeof moneyMinorSchema>;
 
@@ -91,6 +94,37 @@ export const moneySchema = z.object({
   valueMinor: moneyMinorSchema,
 });
 export type Money = z.infer<typeof moneySchema>;
+
+/**
+ * Known currency minor unit scales (ISO 4217).
+ * Zero-decimal: JPY, KRW, VND, CLF, etc.
+ * Three-decimal: BHD, KWD, OMR, JOD, TND.
+ * Two-decimal: default for all other currencies (USD, EUR, GBP, etc.).
+ */
+export function getCurrencyScale(currency: string): number {
+  const zeroDecimal = ["BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF"];
+  const threeDecimal = ["BHD", "IQD", "JOD", "KWD", "OMR", "TND"];
+  const upper = currency.toUpperCase();
+  if (zeroDecimal.includes(upper)) return 0;
+  if (threeDecimal.includes(upper)) return 3;
+  return 2;
+}
+
+/**
+ * Validates whether an amount decimal string fits within signed 64-bit integer limits:
+ * -9223372036854775808 <= x <= 9223372036854775807
+ */
+export function isSafeMoneyMinor(valueStr: string): boolean {
+  if (!/^-?\d+$/.test(valueStr)) return false;
+  try {
+    const val = BigInt(valueStr);
+    const min = -9223372036854775808n;
+    const max = 9223372036854775807n;
+    return val >= min && val <= max;
+  } catch {
+    return false;
+  }
+}
 
 // Time and date formats
 export const rfc3339TimestampSchema = z

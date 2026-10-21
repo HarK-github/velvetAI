@@ -54,11 +54,11 @@ export const availabilityRoutes: FastifyPluginAsync = async (app) => {
         timeZone,
         resourceId: `01932b10-0004-7000-8000-00000000000${(idx % 2) + 1}` as ResourceId,
         price: {
-          valueMinor: BigInt(servicePricing.price) as MoneyMinor,
+          valueMinor: String(servicePricing.price) as MoneyMinor,
           currency: "USD" as CurrencyCode,
         },
         depositPreview: {
-          valueMinor: BigInt(servicePricing.deposit) as MoneyMinor,
+          valueMinor: String(servicePricing.deposit) as MoneyMinor,
           currency: "USD" as CurrencyCode,
         },
         fillProbability: Math.round((0.65 + (idx % 3) * 0.12) * 100) / 100,
@@ -72,22 +72,6 @@ export const availabilityRoutes: FastifyPluginAsync = async (app) => {
       slots,
     };
 
-    // Serialize bigints for JSON
-    const serialized = {
-      ...response,
-      slots: response.slots.map((s) => ({
-        ...s,
-        price: {
-          valueMinor: Number(s.price.valueMinor),
-          currency: s.price.currency,
-        },
-        depositPreview: {
-          valueMinor: Number(s.depositPreview.valueMinor),
-          currency: s.depositPreview.currency,
-        },
-      })),
-    };
-
-    return reply.status(200).send(serialized);
+    return reply.status(200).send(response);
   });
 };

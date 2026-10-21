@@ -28,11 +28,11 @@ describe("Contracts and Branded Primitives", () => {
     expect(() => currencyCodeSchema.parse("US")).toThrow();
   });
 
-  it("handles money minor units as bigint without floating point loss", () => {
-    const val = moneyMinorSchema.parse(5000);
-    expect(val).toBe(5000n);
-    const bigVal = moneyMinorSchema.parse(10000000000n);
-    expect(bigVal).toBe(10000000000n);
+  it("handles money minor units as validated decimal strings without floating point loss", () => {
+    const val = moneyMinorSchema.parse("5000");
+    expect(val).toBe("5000");
+    const bigVal = moneyMinorSchema.parse("10000000000");
+    expect(bigVal).toBe("10000000000");
   });
 
   it("validates IANA time zones", () => {

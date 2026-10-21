@@ -13,6 +13,9 @@ export interface Database {
   booking_quotes: BookingQuoteTable;
   bookings: BookingTable;
   resource_claims: ResourceClaimTable;
+  booking_hold_snapshots: BookingHoldSnapshotTable;
+  buyer_confirmations: BuyerConfirmationTable;
+  committed_intents: CommittedIntentTable;
   payment_intents: PaymentIntentTable;
   payment_captures: PaymentCaptureTable;
   refunds: RefundTable;
@@ -147,9 +150,56 @@ export interface ResourceClaimTable {
   booking_id: string;
   resource_id: string;
   blocked_during: unknown; // tstzrange in PostgreSQL
+  starts_at: ColumnType<Date, string | Date, never>;
+  ends_at: ColumnType<Date, string | Date, never>;
+  blocking: boolean;
   state: string;
-  expires_at: ColumnType<Date | null, string | Date | null, string | Date | null>;
+  hold_expires_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  expires_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
   created_at: ColumnType<Date, string | Date | undefined, never>;
+}
+
+export interface BookingHoldSnapshotTable {
+  id: string;
+  tenant_id: string;
+  booking_id: string;
+  service_version_id: string;
+  resource_id: string;
+  starts_at: ColumnType<Date, string | Date, never>;
+  ends_at: ColumnType<Date, string | Date, never>;
+  total_minor: string;
+  deposit_minor: string;
+  currency: string;
+  currency_scale: number;
+  cancellation_policy_id: string;
+  cancellation_policy_version: number;
+  cancellation_policy_hash: string;
+  merchant_id: string;
+  client_id: string;
+  actor_id: string;
+  canonical_hash: string;
+  created_at: ColumnType<Date, string | Date | undefined, never>;
+}
+
+export interface BuyerConfirmationTable {
+  id: string;
+  tenant_id: string;
+  booking_id: string;
+  confirmation_jti: string;
+  token_hash: string;
+  buyer_user_id: string;
+  interaction_locator: string;
+  consumed_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  expires_at: ColumnType<Date, string | Date, never>;
+  created_at: ColumnType<Date, string | Date | undefined, never>;
+}
+
+export interface CommittedIntentTable {
+  id: string;
+  tenant_id: string;
+  intent_jti: string;
+  booking_id: string;
+  committed_at: ColumnType<Date, string | Date | undefined, never>;
 }
 
 export interface PaymentIntentTable {
@@ -212,6 +262,7 @@ export interface IdempotencyRecordTable {
   id: string;
   tenant_id: string;
   actor_id: string;
+  client_id: string;
   operation: string;
   idempotency_key: string;
   request_hash: string;

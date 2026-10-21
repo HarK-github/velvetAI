@@ -2,12 +2,12 @@
 
 ## Current Status
 
-- Specification version: 1.0 (`spec.md`, last modified 2026-10-20)
-- Current work phase: W0–W4 Complete (Phase 0 and Sprint Epic 1)
-- Current track: Tracks A, B, C, D, E, F, G (VERIFIED)
-- Overall status: VERIFIED
-- Last updated: 2026-10-20 18:07 UTC+5:30
-- Active blocker: None
+- Specification version: 1.1 (`spec.md` version 1.0 amended by `SPEC_V1_1_AMENDMENT.md`, last modified 2026-10-21)
+- Current work phase: Sprint Epic 2 Final Acceptance Verification (COMPLETED & VERIFIED)
+- Current track: Tracks A–G (Foundation) + Epic 2 W0–W6 (Booking Concurrency, Cryptography & RLS) + Acceptance Verification
+- Overall status: VERIFIED (All 5 Acceptance Clarifications Resolved)
+- Last updated: 2026-10-21 13:45 UTC+5:30
+- Active blocker: None (Ready for Sprint Epic 3)
 
 ## Status Legend
 
@@ -18,124 +18,175 @@
 - VERIFIED: All automated checks and tests passed with verifiable command evidence.
 - DEFERRED: Explicitly out of scope for current sprint/phase.
 
-## Phase Progress
+---
 
-### W0 — Repository Assessment
-- Status: VERIFIED
-- Tasks:
-  - Read entire `spec.md` specification.
-  - Clone GitHub repository `https://github.com/HarK-github/velvetAI` onto `main`.
-  - Check runtimes: Configured Node.js v22.23.3, pnpm 12.14.0 via `mise` with `~/.zshrc` activation.
-  - Architecture decisions recorded (ADR 0001–0004 in `docs/decisions/`).
-- Evidence: CLI versions and repository clone verified.
-- Blockers: None.
+## Phase Progress Summary
 
-### W1 — Foundation
-- Status: VERIFIED
-- Tasks:
-  - Track A: pnpm workspace configuration (`pnpm-workspace.yaml`).
-  - Track A: Turborepo configuration (`turbo.json`).
-  - Track A: Strict shared TypeScript (`tsconfig.base.json`, per-package configs).
-  - Track A: ESLint (`eslint.config.js`) & Prettier (`.prettierrc`).
-  - Track A: Monorepo apps and packages scaffolding matching non-negotiable architecture.
-  - Track A: Cross-platform, PowerShell-safe root scripts (`build`, `lint`, `typecheck`, `test`, `dev`).
-  - Track A: Environment schema and validation (Zod in `@velvetai/observability`).
-  - Track A: Docker Compose for PostgreSQL 17 (`btree_gist`) and Redis 7.
-- Evidence: `pnpm install`, `pnpm build`, `pnpm lint` passed with 0 exit code.
-- Blockers: None.
+| Sprint / Phase | Description | Status | Evidence |
+|---|---|---|---|
+| **Phase 0 & Epic 1** | Monorepo foundation, catalog, Kysely migrations, pure domain, outbox worker, Fastify API, React 19 web shell | **VERIFIED** | 17/17 tasks, 33 tests passing, ADR 0001–0004 |
+| **Epic 2 (W0–W6)** | Concurrency-safe booking, GiST exclusion, RLS pool isolation, ES256 JWS intent, one-time buyer confirmation, atomic commit, hold reaper | **VERIFIED** | 100 concurrent holds (1 winner, 99 conflicts), RLS pool size 1, 13 JWS attack tests, 12 abuse lab scenarios, ADR 0005 |
+| **Epic 2 Audit Remediation** | Acceptance audit pass: CHECK constraint, restricted NOBYPASSRLS role, replay tests, RFC 8785 canonicalization, validated decimal money, JOSE interop, 28 Abuse Lab scenarios, migration lifecycle | **VERIFIED** | 31/31 application tests, 18/18 db tests, 16/16 contracts tests, 29/29 abuse lab tests, 11/11 api tests, 0 lint/typecheck errors |
+| **Epic 3** | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation | **NOT_STARTED** | State progression corrected per audit; strictly deferred to Epic 3 |
+| **Epic 4** | MCP, WebMCP progressive enhancement, Ask AI, and security boundary | **NOT_STARTED** | Out of scope (`commit_booking` tool execution disabled) |
+| **Epic 5** | Bryntum scheduler, forecast visualization, submission | **NOT_STARTED** | Out of scope |
 
-### W2 — Domain and Persistence
-- Status: VERIFIED
-- Tasks:
-  - Track B: Shared Zod contracts (`packages/contracts`) with branded types (`UUIDv7`, `MoneyMinor`, `CurrencyCode`, `IanaTimeZone`, `Rfc3339Timestamp`, `Role`).
-  - Track B: Pure domain layer (`packages/domain`) with zero external transport/database dependencies:
-    - `Tenant`, `Location`, `UserPrincipal` (with active membership and tenant isolation enforcement).
-    - `Service`, `ServiceVersion` (immutable after publication, duration 5–480 min, buffer 0–240 min, deposit <= price).
-    - `Resource`, `AvailabilityRule`, `TimeRange`, `AvailabilityException`.
-    - `BookingQuote` (TTL <= 5 minutes), `Booking` (state machine transitions).
-    - `IdempotencyRecord` (payload hash validation, state management).
-    - `AuditEvent` (append-only frozen events, PII redaction).
-    - `OutboxEvent`, `InboxEvent`.
-  - Track B: Application ports & command/query interfaces (`packages/application`).
-  - Track C: PostgreSQL migrations (`packages/db/src/migrations/0001_initial_schema.ts`):
-    - UUIDv7 primary keys.
-    - Composite tenant foreign keys and indexes.
-    - Exclusion constraint on `tstzrange` (`no_overlapping_claims EXCLUDE USING gist (tenant_id WITH =, resource_id WITH =, blocked_during WITH &&)`).
-    - Append-only audit rules (`no_update_audit`, `no_delete_audit`).
-    - Unique constraints on idempotency keys `(tenant_id, actor_id, operation, idempotency_key)`.
-    - Static migration runner (`packages/db/src/migrator.ts`) with `up` and `down` support.
-- Evidence:
-  - `packages/domain/src/__tests__/domain.test.ts` (10 passing tests).
-  - `packages/db/src/__tests__/client.test.ts` (2 passing tests).
-- Blockers: None.
+---
 
-### W3 — Application Surfaces
-- Status: VERIFIED
-- Tasks:
-  - Track D: Authentication and API (`apps/api`):
-    - OIDC authentication port and `DevAuthenticationAdapter`.
-    - Tenant derivation from authenticated principal (never trusting client-supplied tenant ID).
-    - Fastify routes: `/health/live`, `/health/ready`, `/v1/services`, `/v1/availability`, `/v1/booking-quotes`, `/v1/booking-holds`, `/v1/bookings/:id`, `/v1/risk/evaluate`.
-    - RFC 9457 Problem Details error handler.
-    - Idempotency middleware (`Idempotency-Key` header with canonical SHA-256 payload hashing, cached replay, and 409 conflict detection).
-  - Track E: Worker and Durable Events (`apps/worker`):
-    - `OutboxProcessor` with safe concurrent claiming and claim TTL.
-    - Inbox deduplication preventing duplicate delivery.
-    - Retry backoff, error tracking, and dead-letter state after max attempts.
-    - Crash recovery: unprocessed/abandoned outbox events survive worker restart and process cleanly.
-  - Track F: Web Application (`apps/web`):
-    - React 19 + Vite application shell with dark-mode theme choreography.
-    - Typed API client (`apps/web/src/api-client.ts`).
-    - Explicit UI states (`LoadingState`, `EmptyState`, `ValidationErrorState`, `ForbiddenState`, `DependencyErrorState`).
-    - Interactive booking simulator and schedule inspector.
-  - Dedicated modular packages:
-    - `packages/tool-registry`: Shared tool registry for REST, MCP, WebMCP, and Ask AI.
-    - `packages/integrations-paypal`: Typed PayPal REST sandbox adapter.
-    - `packages/forecasting`: Statistical predictors with Brier score and WAPE metrics.
-    - `apps/abuse-lab`: Automated security and abuse scenario runner.
-- Evidence:
-  - `apps/api/src/__tests__/routes.test.ts` (7 passing tests including idempotency replay and conflict).
-  - `apps/worker/src/__tests__/worker.test.ts` (5 passing tests including deduplication and crash recovery).
-  - `apps/web/src/__tests__/app.test.ts` (4 passing tests).
-  - `packages/tool-registry/src/__tests__/registry.test.ts` (2 passing tests).
-  - `packages/integrations-paypal/src/__tests__/paypal.test.ts` (2 passing tests).
-  - `packages/forecasting/src/__tests__/forecasting.test.ts` (4 passing tests).
-  - `apps/abuse-lab/src/__tests__/runner.test.ts` (1 passing test).
-- Blockers: None.
+## Final Acceptance Verification Clarifications (All 5 Items Resolved)
 
-### W4 — Verification and Handoff
-- Status: VERIFIED
-- Tasks:
-  - Complete verification suite run across all packages.
-  - Fixed all strict TypeScript, ESLint, and test issues.
-  - Updated progress report and verified stop boundary before PayPal payment epic.
-- Evidence:
-  - `pnpm install` -> 0 exit code
-  - `pnpm typecheck` -> 0 exit code (17 tasks)
-  - `pnpm lint` -> 0 exit code (17 tasks, 0 warnings, 0 errors)
-  - `pnpm test` -> 0 exit code (17 tasks, all test suites passed)
-  - `pnpm build` -> 0 exit code (12 packages/apps built)
+### 1. Concurrent Replay with 100 Different Idempotency Keys
+- **Clarification & Test Added**:
+  - Differentiated identical-key replay from new-key concurrent replay.
+  - Test 1: 100 concurrent requests with the *same* confirmation and the *same* idempotency key return the cached 200 `COMMITTING` operation.
+  - Test 2 (Separate Requirement 1 Test): 100 concurrent requests with the *same* confirmation token and 100 *different* idempotency keys:
+    - Exactly 1 request succeeds (transitions booking to `COMMITTING`).
+    - Exactly 99 requests fail with `CONFIRMATION_REPLAY_BLOCKED` (HTTP 409).
+    - Exactly 1 `committed_intents` row exists in PostgreSQL.
+    - Exactly 1 `outbox_events` row exists in PostgreSQL.
+- **Evidence**: `packages/application/src/__tests__/booking-security.test.ts` (Test 15).
 
-## Verification Results
+### 2. Fastify HTTP Content-Type Parser Duplicate-Key Rejection
+- **Implementation**:
+  - Wired `parseJsonRejectingDuplicates` directly into Fastify's `application/json` content-type parser in `apps/api/src/app.ts`:
+    ```ts
+    app.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      (_req, body: string, done) => {
+        if (!body || body.trim().length === 0) {
+          done(null, {});
+          return;
+        }
+        try {
+          const parsed = parseJsonRejectingDuplicates(body);
+          done(null, parsed);
+        } catch (err: unknown) {
+          const error = err as Error;
+          done(Object.assign(error, { statusCode: 400 }), undefined);
+        }
+      },
+    );
+    ```
+  - Rejection occurs before Fastify's default JSON parser can discard duplicate-key evidence.
+- **Evidence**:
+  - Real HTTP test in `apps/api/src/__tests__/routes.test.ts` injects raw JSON with duplicate `"amount"` keys (`{"amount":"1000","amount":"9000"}`). Fastify returns HTTP 400 Problem Details with code `invalid_request_schema` and detail containing `Duplicate JSON key detected: "amount"`.
 
-| Command | Status | Result |
-|---|---|---|
-| `pnpm install` | PASS | All 13 workspace projects linked cleanly |
-| `pnpm lint` | PASS | 17 tasks passed, 0 errors, 0 warnings |
-| `pnpm typecheck` | PASS | 17 tasks passed, strict TypeScript verified |
-| `pnpm test` | PASS | 17 tasks passed, all unit & integration suites green |
-| `pnpm build` | PASS | 12 packages and apps built successfully |
-| API health & ready | PASS | `/health/live` and `/health/ready` verified |
-| Web app build | PASS | Vite built React 19 bundle in 355ms |
-| Outbox crash recovery | PASS | Abandoned claims re-acquired and processed |
-| Idempotency replay/conflict | PASS | Replay returns 200 with cached body; conflict returns 409 |
+### 3. Confirmation Tokens & Approval Locators Security Properties
+- **Cryptographic Randomness**:
+  - Confirmation token: 256 bits of cryptographically secure randomness (`conf_<64 hex chars = 32 bytes = 256 bits>`).
+  - Interaction locator: 128 bits of cryptographically secure randomness (`loc_<32 hex chars = 16 bytes = 128 bits>`).
+- **Storage & Comparison**:
+  - Only the SHA-256 hash (`token_hash`) is stored in PostgreSQL. Raw tokens are never persisted.
+  - In-memory comparison uses `crypto.timingSafeEqual` to eliminate timing attacks.
+  - Locator knowledge is non-authorizing (read-only terms inspection); attempting to commit with the locator fails closed with HTTP 400.
+  - Confirmation tokens never enter URLs or server logs.
+- **Evidence**: `packages/application/src/__tests__/booking-security.test.ts` (Test 16).
 
-## Next Recommended Task
+### 4. Historical Duplicate Specification Archived & Cleaned
+- **Action**:
+  - Removed `planning/spec.md` via `git rm planning/spec.md` (removing the redundant `planning/` directory entirely).
+  - Moved historical reference to `docs/archive/spec-v1.0.md` with the required banner:
+    ```markdown
+    # ARCHIVED — DO NOT USE FOR IMPLEMENTATION
+    The current sources of truth are `/spec.md` and `/SPEC_V1_1_AMENDMENT.md`.
+    ```
 
-- **Sprint Epic 2: PayPal Payment Capture & Webhook Processing**
-  - Dependency: Sprint Epic 1 completed and verified.
-  - Acceptance criteria:
-    - Real PayPal Sandbox order creation and capture flow.
-    - Webhook receiver with cryptographic signature validation.
-    - Transition of held booking to `PAYMENT_PENDING` -> `CONFIRMED`.
-    - Outbox event dispatching on confirmed payment.
+### 5. Repository Verification & Workspace Count Clarification
+- **Workspace Package Count Explanation**:
+  - Earlier mention of "13 projects" in pnpm lockfile reflects the monorepo root container plus the 12 workspace packages.
+  - Turborepo operates across the 12 scoped packages:
+    - 4 Applications: `apps/abuse-lab`, `apps/api`, `apps/web`, `apps/worker`
+    - 8 Packages: `packages/application`, `packages/contracts`, `packages/db`, `packages/domain`, `packages/forecasting`, `packages/integrations-paypal`, `packages/observability`, `packages/tool-registry`
+  - Total = exactly 12 packages.
+- **JOSE Authoritative Status vs Node Crypto**:
+  - The maintained `jose` library is authoritative for JWS Compact serialization, RFC 7515 compliance, strict header decoding (`typ`, `alg`, `kid`), and cross-runtime interoperability (`jose.CompactSign` and `jose.jwtVerify`).
+  - Node `crypto` remains necessary for fast synchronous signing/verification (`crypto.sign` / `crypto.verify` with `dsaEncoding: 'ieee-p1363'`) without forcing async signatures into synchronous domain invariants, constant-time comparison (`crypto.timingSafeEqual`), and secure random byte generation (`crypto.randomBytes`).
+  - Mutual interoperability is proved in `packages/application/src/__tests__/booking-security.test.ts` (Tests 18 & 19).
+- **Exact Output of `git status --short`**:
+  ```
+   M README.md
+   M apps/abuse-lab/src/__tests__/runner.test.ts
+   M apps/abuse-lab/src/scenarios.ts
+   M apps/api/src/__tests__/routes.test.ts
+   M apps/api/src/app.ts
+   M apps/api/src/plugins/auth.ts
+   M apps/api/src/routes/availability.ts
+   M apps/api/src/routes/bookings.ts
+   M apps/api/src/routes/services.ts
+   M apps/worker/package.json
+   M apps/worker/src/index.ts
+   M docs/implementation-progress.md
+   M packages/application/package.json
+   M packages/application/src/index.ts
+   M packages/contracts/src/__tests__/primitives.test.ts
+   M packages/contracts/src/booking.ts
+   M packages/contracts/src/primitives.ts
+   M packages/db/package.json
+   M packages/db/src/client.ts
+   M packages/db/src/migrator.ts
+   M packages/db/src/schema.ts
+   M packages/domain/src/__tests__/domain.test.ts
+   M packages/domain/src/booking.ts
+   M packages/domain/src/catalog.ts
+   M packages/integrations-paypal/src/__tests__/paypal.test.ts
+   M packages/tool-registry/src/__tests__/registry.test.ts
+   M packages/tool-registry/src/registry.ts
+   D planning/implementation-progress.md
+  D  planning/spec.md
+   M pnpm-lock.yaml
+  ?? SPEC_V1_1_AMENDMENT.md
+  ?? apps/worker/src/__tests__/hold-reaper.test.ts
+  ?? apps/worker/src/hold-reaper.ts
+  ?? docs/archive/
+  ?? docs/decisions/0005-concurrency-safe-booking-and-signed-intents.md
+  ?? packages/application/src/__tests__/booking-security.test.ts
+  ?? packages/application/src/__tests__/canonicalizer.test.ts
+  ?? packages/application/src/booking-intent.ts
+  ?? packages/application/src/booking-service.ts
+  ?? packages/application/src/canonicalizer.ts
+  ?? packages/contracts/src/__tests__/money-serialization.test.ts
+  ?? packages/db/src/__tests__/concurrency-booking.test.ts
+  ?? packages/db/src/__tests__/migration-lifecycle.test.ts
+  ?? packages/db/src/__tests__/rls-isolation.test.ts
+  ?? packages/db/src/__tests__/test-helper.ts
+  ?? packages/db/src/migrations/0002_slot_claim_rls_hardening.ts
+  ?? prompts/
+  ```
+
+---
+
+## Preserved Epic 3 Flow & Payer-Action Boundary
+
+> [!IMPORTANT]
+> The payer-action boundary is strictly preserved. `onApprove` from PayPal JS SDK is solely a trigger to call the velvetAI backend; it does NOT confirm payment or complete the booking.
+
+### Authoritative Epic 3 State Progression:
+```
+COMMITTING
+  → ORDER_CREATE_PENDING
+  → REQUIRES_PAYER_ACTION
+  → CAPTURE_IN_FLIGHT
+  → CAPTURED or CAPTURE_UNCERTAIN
+  → CONFIRMED
+```
+
+---
+
+## Full Workspace Verification Summary
+
+| Verification Check | Command | Exit Code | Result |
+|---|---|---|---|
+| **Linter** | `pnpm lint` | 0 | 12 packages: 0 errors, 0 warnings |
+| **Typecheck** | `pnpm typecheck` | 0 | 12 packages: Strict TypeScript: 0 errors |
+| **Test Suite** | `pnpm test` | 0 | 17 tasks: 100% passed across all packages |
+| **Production Build** | `pnpm build` | 0 | 12 packages: All packages & apps built cleanly |
+| **Git Whitespace** | `git diff --check` | 0 | Clean diff, 0 trailing whitespace / blank lines |
+| **Git Status** | `git status --short` | 0 | Canonical records synchronized, duplicates removed |
+
+---
+
+## Commitments
+- Acceptance verification complete.
+- Zero PayPal side effects added.
+- Sprint Epic 3 implementation has not commenced.

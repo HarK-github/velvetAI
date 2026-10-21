@@ -3,6 +3,7 @@ import {
   bookingIdSchema,
   bookingQuoteIdSchema,
   cancellationPolicyIdSchema,
+  currencyCodeSchema,
   ianaTimeZoneSchema,
   locationIdSchema,
   moneySchema,
@@ -15,6 +16,7 @@ import {
 
 export const bookingStatusSchema = z.enum([
   "HELD",
+  "COMMITTING",
   "PAYMENT_PENDING",
   "CAPTURE_UNCERTAIN",
   "CONFIRMED",
@@ -27,12 +29,25 @@ export const bookingStatusSchema = z.enum([
 ]);
 export type BookingStatus = z.infer<typeof bookingStatusSchema>;
 
-export const createBookingQuoteInputSchema = z.object({
-  serviceId: serviceIdSchema,
-  locationId: locationIdSchema,
-  startsAt: rfc3339TimestampSchema,
-  timeZone: ianaTimeZoneSchema,
-});
+export const resourceClaimStateSchema = z.enum([
+  "HELD",
+  "COMMITTING",
+  "CAPTURE_UNCERTAIN",
+  "CONFIRMED",
+  "EXPIRED",
+  "CANCELLED",
+  "RELEASED",
+]);
+export type ResourceClaimState = z.infer<typeof resourceClaimStateSchema>;
+
+export const createBookingQuoteInputSchema = z
+  .object({
+    serviceId: serviceIdSchema,
+    locationId: locationIdSchema,
+    startsAt: rfc3339TimestampSchema,
+    timeZone: ianaTimeZoneSchema,
+  })
+  .strict();
 export type CreateBookingQuoteInput = z.infer<typeof createBookingQuoteInputSchema>;
 
 export const bookingQuoteSchema = z.object({
@@ -58,16 +73,20 @@ export const bookingQuoteSchema = z.object({
 });
 export type BookingQuoteDTO = z.infer<typeof bookingQuoteSchema>;
 
-export const customerInputSchema = z.object({
-  email: z.string().email(),
-  displayName: z.string().max(100).optional(),
-});
+export const customerInputSchema = z
+  .object({
+    email: z.string().email(),
+    displayName: z.string().max(100).optional(),
+  })
+  .strict();
 
-export const createBookingHoldInputSchema = z.object({
-  quoteId: bookingQuoteIdSchema,
-  customer: customerInputSchema,
-  note: z.string().max(1024, "Customer note must not exceed 1 KiB").optional(),
-});
+export const createBookingHoldInputSchema = z
+  .object({
+    quoteId: bookingQuoteIdSchema,
+    customer: customerInputSchema,
+    note: z.string().max(1024, "Customer note must not exceed 1 KiB").optional(),
+  })
+  .strict();
 export type CreateBookingHoldInput = z.infer<typeof createBookingHoldInputSchema>;
 
 export const bookingHoldResponseSchema = z.object({
@@ -92,3 +111,112 @@ export const bookingSchema = z.object({
   resourceId: resourceIdSchema.nullable().optional(),
 });
 export type BookingDTO = z.infer<typeof bookingSchema>;
+
+export const signedBookingIntentClaimsSchema = z.object({
+  iss: z.string(),
+  aud: z.string(),
+  sub: z.string(), // actor subject
+  client_id: z.string(),
+  tenant_id: tenantIdSchema,
+  jti: z.string(),
+  iat: z.number().int(),
+  nbf: z.number().int(),
+  exp: z.number().int(),
+  purpose: z.literal("booking_commit"),
+  hold_id: bookingIdSchema,
+  hold_version: z.number().int().positive(),
+  tool_name: z.string(),
+  tool_version: z.string(),
+  schema_hash: z.string(),
+  canonical_argument_hash: z.string(),
+  merchant_id: z.string(),
+  total_minor: z.string(),
+  deposit_minor: z.string(),
+  currency: currencyCodeSchema,
+  currency_scale: z.number().int().default(2),
+  price_version: z.number().int().positive(),
+  cancellation_policy_id: cancellationPolicyIdSchema,
+  cancellation_policy_version: z.number().int().positive(),
+  cancellation_policy_hash: z.string(),
+  allowed_surfaces: z.array(z.string()),
+});
+export type SignedBookingIntentClaims = z.infer<typeof signedBookingIntentClaimsSchema>;
+
+export const prepareBookingInputSchema = z
+  .object({
+    serviceId: serviceIdSchema,
+    locationId: locationIdSchema,
+    startsAt: rfc3339TimestampSchema,
+    timeZone: ianaTimeZoneSchema,
+    customer: customerInputSchema,
+    note: z.string().max(1024, "Customer note must not exceed 1 KiB").optional(),
+  })
+  .strict();
+export type PrepareBookingInput = z.infer<typeof prepareBookingInputSchema>;
+
+export const prepareBookingResponseSchema = z.object({
+  bookingId: bookingIdSchema,
+  status: z.literal("HELD"),
+  holdExpiresAt: rfc3339TimestampSchema,
+  version: z.number().int().positive(),
+  intent: z.string(),
+  approvalLocator: z.string(),
+  interactionToken: z.string(),
+});
+export type PrepareBookingResponse = z.infer<typeof prepareBookingResponseSchema>;
+
+export const bookingApprovalDetailsSchema = z.object({
+  bookingId: bookingIdSchema,
+  tenantId: tenantIdSchema,
+  serviceName: z.string(),
+  serviceVersion: z.number().int().positive(),
+  startsAt: rfc3339TimestampSchema,
+  endsAt: rfc3339TimestampSchema,
+  timeZone: ianaTimeZoneSchema,
+  allInPriceMinor: z.string(),
+  depositMinor: z.string(),
+  currency: currencyCodeSchema,
+  cancellationSummary: z.string(),
+  requestingAgent: z.string(),
+  expiresAt: rfc3339TimestampSchema,
+});
+export type BookingApprovalDetails = z.infer<typeof bookingApprovalDetailsSchema>;
+
+export const confirmBookingApprovalResponseSchema = z.object({
+  confirmation: z.string(),
+  expiresAt: rfc3339TimestampSchema,
+});
+export type ConfirmBookingApprovalResponse = z.infer<typeof confirmBookingApprovalResponseSchema>;
+
+export const commitBookingInputSchema = z
+  .object({
+    intent: z.string().min(10),
+    confirmation: z.string().min(10),
+    idempotency_key: z.string().min(1),
+  })
+  .strict();
+export type CommitBookingInput = z.infer<typeof commitBookingInputSchema>;
+
+export const commitBookingResponseSchema = z.object({
+  bookingId: bookingIdSchema,
+  status: z.literal("COMMITTING"),
+  version: z.number().int().positive(),
+  committedAt: rfc3339TimestampSchema,
+});
+export type CommitBookingResponse = z.infer<typeof commitBookingResponseSchema>;
+
+export const prepareCancellationInputSchema = z
+  .object({
+    reason: z.string().max(500).optional(),
+  })
+  .strict();
+export type PrepareCancellationInput = z.infer<typeof prepareCancellationInputSchema>;
+
+export const prepareCancellationResponseSchema = z.object({
+  bookingId: bookingIdSchema,
+  cancellationAllowed: z.boolean(),
+  refundEligibleMinor: z.string(),
+  currency: currencyCodeSchema,
+  policySummary: z.string(),
+});
+export type PrepareCancellationResponse = z.infer<typeof prepareCancellationResponseSchema>;

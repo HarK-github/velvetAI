@@ -8,6 +8,7 @@ import {
   CurrencyCode,
   MoneyMinor,
   BookingStatus,
+  ResourceClaimState,
 } from "@velvetai/contracts";
 import {
   InvariantViolationError,
@@ -95,7 +96,8 @@ export interface BookingProps {
 }
 
 const ALLOWED_TRANSITIONS: Record<BookingStatus, readonly BookingStatus[]> = {
-  HELD: ["PAYMENT_PENDING", "EXPIRED", "CANCELLED"],
+  HELD: ["COMMITTING", "PAYMENT_PENDING", "EXPIRED", "CANCELLED"],
+  COMMITTING: ["CONFIRMED", "PAYMENT_PENDING", "EXPIRED", "CANCELLED"],
   PAYMENT_PENDING: ["CONFIRMED", "CAPTURE_UNCERTAIN", "EXPIRED"],
   CAPTURE_UNCERTAIN: ["CONFIRMED", "EXPIRED", "CANCELLED"],
   CONFIRMED: ["CHECKED_IN", "NO_SHOW", "CANCEL_REQUESTED", "CANCELLED"],
@@ -174,5 +176,74 @@ export class Booking {
     }
     this._resourceId = resourceId;
     this._version += 1;
+  }
+}
+
+export const BLOCKING_CLAIM_STATES: readonly ResourceClaimState[] = [
+  "HELD",
+  "COMMITTING",
+  "CAPTURE_UNCERTAIN",
+  "CONFIRMED",
+];
+
+export interface ResourceClaimProps {
+  id: string;
+  tenantId: TenantId;
+  bookingId: BookingId;
+  resourceId: ResourceId;
+  startsAt: Date;
+  endsAt: Date;
+  state: ResourceClaimState;
+  blocking?: boolean;
+  holdExpiresAt?: Date | null;
+}
+
+export class ResourceClaim {
+  readonly id: string;
+  readonly tenantId: TenantId;
+  readonly bookingId: BookingId;
+  readonly resourceId: ResourceId;
+  readonly startsAt: Date;
+  readonly endsAt: Date;
+  private _state: ResourceClaimState;
+  private _blocking: boolean;
+  private _holdExpiresAt: Date | null;
+
+  constructor(props: ResourceClaimProps) {
+    if (!props.tenantId) {
+      throw new InvariantViolationError("Resource claim must belong to a tenant");
+    }
+    if (props.startsAt.getTime() >= props.endsAt.getTime()) {
+      throw new InvariantViolationError("Resource claim appointment start must precede end");
+    }
+    this.id = props.id;
+    this.tenantId = props.tenantId;
+    this.bookingId = props.bookingId;
+    this.resourceId = props.resourceId;
+    this.startsAt = props.startsAt;
+    this.endsAt = props.endsAt;
+    this._state = props.state;
+    this._blocking = props.blocking ?? BLOCKING_CLAIM_STATES.includes(props.state);
+    this._holdExpiresAt = props.holdExpiresAt ?? null;
+  }
+
+  get state(): ResourceClaimState {
+    return this._state;
+  }
+
+  get blocking(): boolean {
+    return this._blocking;
+  }
+
+  get holdExpiresAt(): Date | null {
+    return this._holdExpiresAt;
+  }
+
+  transitionTo(nextState: ResourceClaimState): void {
+    this._state = nextState;
+    this._blocking = BLOCKING_CLAIM_STATES.includes(nextState);
+    if (!this._blocking) {
+      this._holdExpiresAt = null;
+    }
   }
 }

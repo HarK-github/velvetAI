@@ -3,3 +3,6 @@ export * from "./commands.js";
 export * from "./queries.js";
 export * from "./forecasting.js";
 export * from "./tool-registry.js";
+export * from "./canonicalizer.js";
+export * from "./booking-intent.js";
+export * from "./booking-service.js";

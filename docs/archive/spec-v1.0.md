@@ -1,3 +1,7 @@
+# ARCHIVED — DO NOT USE FOR IMPLEMENTATION
+The current sources of truth are `/spec.md` and `/SPEC_V1_1_AMENDMENT.md`.
+
+---
 ---
 name: velvetAI Software Specification
 overview: Production-grade software specification and workflow documentation for velvetAI, the selected PayPal AI Hackathon project. velvetAI makes local services bookable by AI assistants, secures appointments with forecast-sized PayPal deposits, and validates agent safety through an automated Abuse Lab.

@@ -20,7 +20,7 @@ describe("PayPalSandboxAdapter", () => {
       bookingId: bookingIdSchema.parse(generateUUIDv7()),
       amount: {
         currency: currencyCodeSchema.parse("USD"),
-        valueMinor: moneyMinorSchema.parse(2500n),
+        valueMinor: moneyMinorSchema.parse("2500"),
       },
       requestId: "req-123",
     });

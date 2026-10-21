@@ -4,6 +4,7 @@ import { createLogger, validateEnv } from "@velvetai/observability";
 import { createProblemDetails, DomainError } from "@velvetai/contracts";
 import crypto from "node:crypto";
 
+import { parseJsonRejectingDuplicates } from "@velvetai/application";
 import { servicesRoutes } from "./routes/services.js";
 import { availabilityRoutes } from "./routes/availability.js";
 import { bookingsRoutes } from "./routes/bookings.js";
@@ -22,6 +23,25 @@ export function buildApp(): FastifyInstance {
       return typeof headerReqId === "string" ? headerReqId : crypto.randomUUID();
     },
   });
+
+  // Secure Content-Type Parser: Reject duplicate JSON keys before standard object parsing
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (_req, body: string, done) => {
+      if (!body || body.trim().length === 0) {
+        done(null, {});
+        return;
+      }
+      try {
+        const parsed = parseJsonRejectingDuplicates(body);
+        done(null, parsed);
+      } catch (err: unknown) {
+        const error = err as Error;
+        done(Object.assign(error, { statusCode: 400 }), undefined);
+      }
+    },
+  );
 
   app.register(cors, {
     origin: [env.WEB_BASE_URL, "http://localhost:5173"],
@@ -77,7 +97,7 @@ export function buildApp(): FastifyInstance {
 
     const err = error as { validation?: unknown; message?: string; statusCode?: number };
 
-    if (err.validation) {
+    if (err.validation || (err.message && err.message.includes("Duplicate JSON key"))) {
       const problem = createProblemDetails({
         title: "Validation Error",
         status: 400,

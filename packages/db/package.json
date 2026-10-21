@@ -14,7 +14,7 @@
     "build": "tsc -b",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --fileParallelism=false"
   },
   "dependencies": {
     "@velvetai/contracts": "workspace:*",
