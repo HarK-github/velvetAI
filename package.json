@@ -12,6 +12,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test --concurrency=1",
+    "test:sandbox:e2e": "vitest run packages/application/src/__tests__/payment-lifecycle.test.ts -t \"Opt-in sandbox test\"",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
     "dev": "turbo run dev",

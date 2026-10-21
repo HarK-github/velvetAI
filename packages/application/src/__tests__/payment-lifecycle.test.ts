@@ -794,7 +794,8 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
   });
 
   it("11. Opt-in sandbox test: skips cleanly when credentials absent, executes when present", async () => {
-    const isLiveOptIn = process.env.PAYPAL_SANDBOX_LIVE === "true" || process.env.RUN_PAYPAL_SANDBOX_E2E === "1";
+    // Canonical test flag per docs/runbooks/paypal-sandbox-e2e.md (PAYPAL_SANDBOX_LIVE is deprecated alias)
+    const isLiveOptIn = process.env.RUN_PAYPAL_SANDBOX_E2E === "1" || process.env.PAYPAL_SANDBOX_LIVE === "true";
     const clientId = process.env.PAYPAL_CLIENT_ID;
     const isPlaceholder = !clientId || clientId.startsWith("placeholder_");
 

@@ -3,11 +3,15 @@
 ## Current Status
 
 - Specification version: 1.1 (`spec.md` version 1.0 amended by `SPEC_V1_1_AMENDMENT.md`, last modified 2026-10-21)
-- Current work phase: Sprint Epic 3 — PayPal Integration & Financial Reconciliation (VERIFIED)
-- Current track: Tracks A–G (Foundation) + Epic 2 (Booking Concurrency & RLS) + Epic 3 (W0–W10 Complete & Verified)
-- Overall status: READY_FOR_HANDOFF
-- Last updated: 2026-10-21 17:45 UTC+5:30
-- Active blocker: None
+- Current work phase: Sprint Epic 3 — PayPal Integration & Financial Reconciliation
+- Current track: Tracks A–G (Foundation) + Epic 2 (Booking Concurrency & RLS) + Epic 3
+- Epic 3 code status: IMPLEMENTED
+- Automated verification: VERIFIED
+- Real PayPal Sandbox E2E: BLOCKED / NOT_RUN
+- Epic 3 acceptance: CONDITIONAL
+- Overall status: CONDITIONAL_ACCEPTANCE_PENDING_SANDBOX_E2E
+- Last updated: 2026-10-21 19:00 UTC+5:30
+- Active blocker: Sandbox credentials, manual buyer approval, and public webhook ingress required
 
 ## Status Legend
 
@@ -27,7 +31,7 @@
 | **Phase 0 & Epic 1** | Monorepo foundation, catalog, Kysely migrations, pure domain, outbox worker, Fastify API, React 19 web shell | **VERIFIED** | 17/17 tasks, 33 tests passing, ADR 0001–0004 |
 | **Epic 2 (W0–W6)** | Concurrency-safe booking, GiST exclusion, RLS pool isolation, ES256 JWS intent, one-time buyer confirmation, atomic commit, hold reaper | **VERIFIED** | 100 concurrent holds (1 winner, 99 conflicts), RLS pool size 1, 13 JWS attack tests, 12 abuse lab scenarios, ADR 0005 |
 | **Epic 2 Audit Remediation** | Acceptance audit pass: CHECK constraint, restricted NOBYPASSRLS role, replay tests, RFC 8785 canonicalization, validated decimal money, JOSE interop, 28 Abuse Lab scenarios, migration lifecycle | **VERIFIED** | Checkpoint commit `539d177`, JWS jose standardization `191ca98`, all test suites passing |
-| **Epic 3** | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation | **VERIFIED** | All 6 audit blockers resolved, 48 automated test suite passing across monorepo, ADR 0006 accepted |
+| **Epic 3** | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation | **CONDITIONAL** | Code IMPLEMENTED; Automated verification VERIFIED; Real PayPal Sandbox E2E BLOCKED / NOT_RUN |
 | **Epic 4** | Agent Interfaces and Security Boundary | **NOT_STARTED** | Out of scope (`commit_booking` tool execution disabled) |
 | **Epic 5** | Bryntum scheduler, forecast visualization, submission | **NOT_STARTED** | Out of scope |
 
@@ -186,7 +190,7 @@ COMMITTING
 | **W6** | Webhook Ingress | **VERIFIED** | `POST /v1/webhooks/paypal/:connectionKey`, route-scoped raw Buffer parser, 256 KiB body limit enforcement (rejects > 256 KiB with 413), raw quarantine storage in `webhook_quarantine`, asynchronous verification & out-of-order deduplication |
 | **W7** | Refunds | **VERIFIED** | `POST /v1/captures/:captureId/refunds`, PostgreSQL row-level lock (`FOR UPDATE`) on `payment_captures`, strictly enforces `requested <= captured - (completed + pending + unknown)` preventing over-refunds |
 | **W8** | Financial Journal & Invoicing | **VERIFIED** | Append-only double-entry ledger (`financial_journal_entries`, `financial_journal_lines`), zero-sum balanced debit/credit per currency, non-authoritative PayPal Invoicing v2 balance projection for completed appointments (`POST /v1/bookings/:bookingId/balance-invoice`) |
-| **W9** | Tests & Fault Injection | **VERIFIED** | Deterministic mock adapter test suite, fault injection (timeout, socket drop, duplicate webhook, refund balance exhaustion), clean opt-in skip when sandbox credentials absent (`PAYPAL_SANDBOX_LIVE=true`) |
+| **W9** | Tests & Fault Injection | **VERIFIED** | Deterministic mock adapter test suite, fault injection (timeout, socket drop, duplicate webhook, refund balance exhaustion), clean opt-in skip when sandbox credentials absent (`RUN_PAYPAL_SANDBOX_E2E=1`) |
 | **W10** | Documentation & Runbook | **VERIFIED** | ADR 0006 written & committed, environment variable documentation, implementation progress canonical record updated |
 
 ---
