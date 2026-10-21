@@ -59,6 +59,11 @@ interface PayPalApiCapture {
     currency_code: string;
     value: string;
   };
+  seller_receivable_breakdown?: {
+    gross_amount?: { currency_code: string; value: string };
+    paypal_fee?: { currency_code: string; value: string };
+    net_amount?: { currency_code: string; value: string };
+  };
 }
 
 interface PayPalApiRefund {
@@ -67,6 +72,12 @@ interface PayPalApiRefund {
   amount?: {
     currency_code: string;
     value: string;
+  };
+  seller_payable_breakdown?: {
+    gross_amount?: { currency_code: string; value: string };
+    paypal_fee?: { currency_code: string; value: string };
+    net_amount?: { currency_code: string; value: string };
+    total_refunded_amount?: { currency_code: string; value: string };
   };
 }
 
@@ -231,6 +242,28 @@ export class PayPalSandboxAdapter implements PaymentPort {
     const currency = data.amount?.currency_code ?? "USD";
     const value = data.amount?.value ?? "0.00";
 
+    let sellerReceivableBreakdown: PayPalCaptureDetails["sellerReceivableBreakdown"] | undefined;
+    if (
+      data.seller_receivable_breakdown?.gross_amount &&
+      data.seller_receivable_breakdown.paypal_fee &&
+      data.seller_receivable_breakdown.net_amount
+    ) {
+      sellerReceivableBreakdown = {
+        grossAmount: {
+          currency: currencyCodeSchema.parse(data.seller_receivable_breakdown.gross_amount.currency_code),
+          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_receivable_breakdown.gross_amount.value)),
+        },
+        paypalFee: {
+          currency: currencyCodeSchema.parse(data.seller_receivable_breakdown.paypal_fee.currency_code),
+          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_receivable_breakdown.paypal_fee.value)),
+        },
+        netAmount: {
+          currency: currencyCodeSchema.parse(data.seller_receivable_breakdown.net_amount.currency_code),
+          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_receivable_breakdown.net_amount.value)),
+        },
+      };
+    }
+
     return {
       id: data.id,
       status: data.status as PayPalCaptureDetails["status"],
@@ -239,6 +272,7 @@ export class PayPalSandboxAdapter implements PaymentPort {
         currency: currencyCodeSchema.parse(currency),
         valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(value)),
       },
+      sellerReceivableBreakdown,
     };
   }
 
@@ -286,6 +320,40 @@ export class PayPalSandboxAdapter implements PaymentPort {
     const currency = data.amount?.currency_code ?? "USD";
     const value = data.amount?.value ?? "0.00";
 
+    let sellerPayableBreakdown: PayPalRefundDetails["sellerPayableBreakdown"] | undefined;
+    if (
+      data.seller_payable_breakdown?.gross_amount &&
+      data.seller_payable_breakdown.paypal_fee &&
+      data.seller_payable_breakdown.net_amount
+    ) {
+      sellerPayableBreakdown = {
+        grossAmount: {
+          currency: currencyCodeSchema.parse(data.seller_payable_breakdown.gross_amount.currency_code),
+          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_payable_breakdown.gross_amount.value)),
+        },
+        paypalFee: {
+          currency: currencyCodeSchema.parse(data.seller_payable_breakdown.paypal_fee.currency_code),
+          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_payable_breakdown.paypal_fee.value)),
+        },
+        netAmount: {
+          currency: currencyCodeSchema.parse(data.seller_payable_breakdown.net_amount.currency_code),
+          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_payable_breakdown.net_amount.value)),
+        },
+        ...(data.seller_payable_breakdown.total_refunded_amount
+          ? {
+              totalRefundedAmount: {
+                currency: currencyCodeSchema.parse(
+                  data.seller_payable_breakdown.total_refunded_amount.currency_code,
+                ),
+                valueMinor: moneyMinorSchema.parse(
+                  decimalToMinorUnits(data.seller_payable_breakdown.total_refunded_amount.value),
+                ),
+              },
+            }
+          : {}),
+      };
+    }
+
     return {
       id: data.id,
       status: data.status as PayPalRefundDetails["status"],
@@ -293,6 +361,7 @@ export class PayPalSandboxAdapter implements PaymentPort {
         currency: currencyCodeSchema.parse(currency),
         valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(value)),
       },
+      sellerPayableBreakdown,
     };
   }
 

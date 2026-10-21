@@ -81,6 +81,11 @@ export interface PayPalCaptureDetails {
   status: "COMPLETED" | "DECLINED" | "FAILED" | "PENDING";
   amount: Money;
   customId?: string;
+  sellerReceivableBreakdown?: {
+    grossAmount: Money;
+    paypalFee: Money;
+    netAmount: Money;
+  };
 }
 
 export interface PayPalRefundDetails {
@@ -88,6 +93,12 @@ export interface PayPalRefundDetails {
   status: "COMPLETED" | "CANCELLED" | "FAILED" | "PENDING";
   amount: Money;
   captureId?: string;
+  sellerPayableBreakdown?: {
+    grossAmount: Money;
+    paypalFee: Money;
+    netAmount: Money;
+    totalRefundedAmount?: Money;
+  };
 }
 
 export interface VerifyWebhookParams {

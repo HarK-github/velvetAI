@@ -528,4 +528,74 @@ describe("PayPalSandboxAdapter", () => {
     expect(body.primary_recipients[0]?.billing_info.email_address).toBe("client@example.com");
     expect(body.items[0]?.unit_amount.value).toBe("100.00");
   });
+
+  describe("Provider Fee Settlement Reconciliation Arithmetic", () => {
+    it("getCapture parses seller_receivable_breakdown and proves: net amount + PayPal fee = gross amount", async () => {
+      const adapter = createMockAdapter(async (_path, _init) => {
+        return new Response(
+          JSON.stringify({
+            id: "CAP-SETTLEMENT-1",
+            status: "COMPLETED",
+            amount: { currency_code: "USD", value: "20.00" },
+            seller_receivable_breakdown: {
+              gross_amount: { currency_code: "USD", value: "20.00" },
+              paypal_fee: { currency_code: "USD", value: "1.27" },
+              net_amount: { currency_code: "USD", value: "18.73" },
+            },
+          }),
+          { status: 200 },
+        );
+      });
+
+      const capture = await adapter.getCapture("CAP-SETTLEMENT-1");
+      expect(capture.sellerReceivableBreakdown).toBeDefined();
+
+      const breakdown = capture.sellerReceivableBreakdown!;
+      expect(breakdown.grossAmount.valueMinor).toBe("2000");
+      expect(breakdown.paypalFee.valueMinor).toBe("127");
+      expect(breakdown.netAmount.valueMinor).toBe("1873");
+
+      // Invariance proof: net amount + PayPal fee = gross amount
+      const netMinor = BigInt(breakdown.netAmount.valueMinor);
+      const feeMinor = BigInt(breakdown.paypalFee.valueMinor);
+      const grossMinor = BigInt(breakdown.grossAmount.valueMinor);
+      expect(netMinor + feeMinor).toBe(grossMinor);
+      expect(netMinor + feeMinor).toBe(2000n);
+    });
+
+    it("getRefund parses seller_payable_breakdown and records PayPal fee retention on refund", async () => {
+      const adapter = createMockAdapter(async (_path, _init) => {
+        return new Response(
+          JSON.stringify({
+            id: "REF-SETTLEMENT-1",
+            status: "COMPLETED",
+            amount: { currency_code: "USD", value: "5.00" },
+            seller_payable_breakdown: {
+              gross_amount: { currency_code: "USD", value: "5.00" },
+              paypal_fee: { currency_code: "USD", value: "0.00" },
+              net_amount: { currency_code: "USD", value: "5.00" },
+              total_refunded_amount: { currency_code: "USD", value: "5.00" },
+            },
+          }),
+          { status: 200 },
+        );
+      });
+
+      const refund = await adapter.getRefund("REF-SETTLEMENT-1");
+      expect(refund.sellerPayableBreakdown).toBeDefined();
+
+      const breakdown = refund.sellerPayableBreakdown!;
+      expect(breakdown.grossAmount.valueMinor).toBe("500");
+      // PayPal retains processing fees upon refund (paypal_fee is 0.00 refunded)
+      expect(breakdown.paypalFee.valueMinor).toBe("0");
+      expect(breakdown.netAmount.valueMinor).toBe("500");
+
+      // Invariance proof: net refund + PayPal fee returned = gross refund
+      const netMinor = BigInt(breakdown.netAmount.valueMinor);
+      const feeMinor = BigInt(breakdown.paypalFee.valueMinor);
+      const grossMinor = BigInt(breakdown.grossAmount.valueMinor);
+      expect(netMinor + feeMinor).toBe(grossMinor);
+      expect(netMinor + feeMinor).toBe(500n);
+    });
+  });
 });

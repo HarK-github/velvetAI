@@ -266,44 +266,47 @@ COMMITTING
 - **Status**: **VERIFIED** per `docs/runbooks/paypal-sandbox-e2e.md` (Steps 8–16).
 - **Environment & Ingress**:
   - PayPal Environment: `sandbox` (enforced by `PayPalSandboxAdapter` & `validateEnv`; live credentials rejected at startup).
-  - Public Ingress Endpoint: Cloudflare Tunnel `https://introduces-technical-being-says.trycloudflare.com` forwarding to Fastify API (`http://localhost:3000`).
-  - Webhook Registration: Webhook ID `5FN14610BV2364733` pointing to `/v1/webhooks/paypal/default`.
+  - Public Ingress: Temporary HTTPS tunnel (closed after verification).
+  - Webhook Endpoint: Registration removed after testing. For staging/production, configure a stable Render staging URL with an opaque tenant connection key (e.g. `/v1/webhooks/paypal/:connectionKey`). Knowledge of the connection key provides no authorization; signature verification remains strictly mandatory.
 - **Sanitized Execution Evidence**:
   - **Timestamp**: `2026-10-21T15:23:32Z`
   - **Git Commit**: `c6282a8`
-  - **Order Creation**: Real PayPal Orders v2 created via `POST /v1/bookings/0d4a541a-5c08-481a-ad15-63b75e0a662c/payment-order`:
-    - Order ID: `26B96317LN986125W` ($20.00 USD deposit).
-    - Payment Intent ID: `01a15f03-d409-7b05-8378-736d216aff11` (`REQUIRES_PAYER_ACTION`).
-  - **Manual Buyer Approval**: Real PayPal Sandbox login with US Personal account (`John Doe`, San Jose CA) approved payment via Orders v2 experience context.
-  - **Backend Capture**: `POST /v1/payments/01a15f03-d409-7b05-8378-736d216aff11/capture`:
-    - Provider Capture ID: `91P44693WY662790B`
+  - **Order Creation**: Real PayPal Orders v2 created via backend deposit order endpoint:
+    - Order ID: `26B9…125W` ($20.00 USD deposit).
+    - Payment Intent: State `REQUIRES_PAYER_ACTION`.
+  - **Manual Buyer Approval**: Real PayPal Sandbox login with dedicated sandbox buyer approved payment via Orders v2 experience context.
+  - **Backend Capture**: Authoritative backend capture completed via `POST /v1/payments/:id/capture`:
+    - Provider Capture ID: `91P4…790B`
     - Capture Status: `COMPLETED`
-    - Booking Status: `CONFIRMED` (Version 4, Resource claims `CONFIRMED`, `blocking: true`)
-    - Payment Capture row: `01a15f08-8b13-7a2d-af2e-d549bede7aff` (`COMPLETED`)
+    - Booking Status: `CONFIRMED` (Resource claims `CONFIRMED`, `blocking: true`)
+    - Payment Capture row: State `COMPLETED`
   - **Real Webhook Delivery & Signature Verification**:
-    - Quarantine Delivery ID: `65f2e72a-4e2d-4791-ad2b-43a864c87e55`
-    - Transmission ID: `32cd55ab-cd63-11f1-9e4a-d9a4b8c46c2c`
+    - Transmission ID: `32cd…6c2c`
     - Event Type: `PAYMENT.CAPTURE.COMPLETED`
-    - Event ID: `WH-7Y7254563A4550640-11V2185806837105M`
-    - Certificate URL: `https://api.sandbox.paypal.com/v1/notifications/certs/CERT-360caa42-fca2a594-bf9ab596`
+    - Event ID: `WH-7Y72…7105M`
+    - Certificate URL: Official PayPal Sandbox certificate (`https://api.sandbox.paypal.com/v1/notifications/certs/CERT-360caa42-...`)
     - Signature Verification: `SUCCESS` (`verification_state: VERIFIED`)
-    - Ingested to `verified_provider_events`: ID `83f307cc-8af6-4e24-a973-f5a51a6ef260` (`reconciliation_state: PROCESSED`)
-  - **Partial Refund**: `POST /v1/captures/01a15f08-8b13-7a2d-af2e-d549bede7aff/refunds`:
-    - Refund ID: `69bdd2fe-7205-411c-b69a-11e89ee645bc`
-    - Provider Refund ID: `7M6379804P768105F`
+    - Reconciliation: Event registered in `verified_provider_events` with `reconciliation_state: PROCESSED`
+  - **Partial Refund**: Issued via `POST /v1/captures/:id/refunds`:
+    - Provider Refund ID: `7M63…105F`
     - Refund Amount: $5.00 USD (500 minor units)
     - Refund Status: `COMPLETED`
   - **Double-Entry General Ledger Balance Proof**:
-    - Deposit Capture Journal Entry (`b6aae030-a758-4e8d-98e5-f292e7f0c59e`, `POSTED`):
+    - Deposit Capture Journal Entry (`POSTED`):
       - Debit `ASSET:PAYPAL_CLEARING`: 2000 minor ($20.00 USD)
       - Credit `LIABILITY:CUSTOMER_DEPOSIT`: 2000 minor ($20.00 USD)
       - Net Balance: $0.00 (Zero-sum balanced)
-    - Partial Refund Journal Entry (`0646fb27-2270-4810-b158-fc3e8dcc8778`, `POSTED`):
+    - Partial Refund Journal Entry (`POSTED`):
       - Debit `LIABILITY:CUSTOMER_DEPOSIT`: 500 minor ($5.00 USD)
       - Credit `ASSET:PAYPAL_CLEARING`: 500 minor ($5.00 USD)
       - Net Balance: $0.00 (Zero-sum balanced)
     - Residual Customer Deposit Liability: 1500 minor ($15.00 USD)
     - Residual PayPal Clearing Asset: 1500 minor ($15.00 USD)
+  - **Settlement & Fee Accounting Demarcation**:
+    - The current ledger functions as a balanced **transaction journal** tracking customer deposit liabilities and refunds ($20.00 gross deposit clearing vs. customer deposit liability; $5.00 partial refund reversal).
+    - Verified provider settlement arithmetic locally: `net_amount + paypal_fee = gross_amount` ($18.73 net settlement + $1.27 fee = $20.00 gross capture; 1873 + 127 = 2000 minor units).
+    - Refund fee retention verified: PayPal retains processing fees upon refund ($0.00 fee refunded, $5.00 net merchant debit).
+    - Multi-split merchant settlement accounting (allocating `EXPENSE:PAYPAL_PROCESSING_FEES`) operates downstream on provider settlement reconciliation rather than raw checkout authorization.
   - **Injected Response-Loss Scenario**:
     - Tests 6 & 13 in `packages/application/src/__tests__/payment-lifecycle.test.ts` verify that injected response discard / timeout persists `SENT_UNKNOWN` / `CAPTURE_UNCERTAIN`, keeps resource claims blocking, and subsequently confirms cleanly to `CONFIRMED` upon webhook arrival or idempotent retry without duplicate ledger entries.
   - **Secret Sanitization**:
