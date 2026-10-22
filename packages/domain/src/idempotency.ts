@@ -1,8 +1,4 @@
-import {
-  TenantId,
-  UserId,
-  UUID,
-} from "@velvetai/contracts";
+import { TenantId, UserId, UUID } from "@velvetai/contracts";
 import {
   InvariantViolationError,
   IdempotencyConflictError,

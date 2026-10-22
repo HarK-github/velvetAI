@@ -9,10 +9,7 @@ import {
   MoneyMinor,
   ResourceType,
 } from "@velvetai/contracts";
-import {
-  InvariantViolationError,
-  ImmutableVersionModificationError,
-} from "./errors.js";
+import { InvariantViolationError, ImmutableVersionModificationError } from "./errors.js";
 
 export interface ServiceVersionProps {
   id: ServiceVersionId;

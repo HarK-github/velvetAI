@@ -63,10 +63,7 @@ describe("ToolRegistry", () => {
     expect(commitTool?.requiresConfirmation).toBe(true);
 
     await expect(
-      commitTool?.execute(
-        { intent: "mock", confirmation: "mock", idempotency_key: "mock" },
-        {},
-      ),
+      commitTool?.execute({ intent: "mock", confirmation: "mock", idempotency_key: "mock" }, {}),
     ).rejects.toThrow(/Direct MCP execution of commit_booking is disabled until Epic 4/);
   });
 });

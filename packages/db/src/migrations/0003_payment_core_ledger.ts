@@ -422,13 +422,29 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   for (const table of tenantTables) {
     await sql.raw(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`).execute(db);
     await sql.raw(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`).execute(db);
-    await sql.raw(`
+    await sql
+      .raw(
+        `
       CREATE POLICY tenant_isolation_policy ON ${table}
       FOR ALL
       USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
       WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
-    `).execute(db);
+    `,
+      )
+      .execute(db);
   }
+
+  await sql`GRANT USAGE ON SCHEMA public TO velvet_runtime;`.execute(db);
+  await sql`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO velvet_runtime;`.execute(db);
+  await sql`GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO velvet_runtime;`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'velvet') THEN
+        GRANT velvet_runtime TO velvet WITH INHERIT TRUE, SET TRUE;
+      END IF;
+    END $$;
+  `.execute(db);
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
@@ -448,17 +464,29 @@ export async function down(db: Kysely<unknown>): Promise<void> {
     await sql.raw(`DROP POLICY IF EXISTS tenant_isolation_policy ON ${table}`).execute(db);
   }
 
-  await sql`DROP TRIGGER IF EXISTS trg_validate_journal_balance ON financial_journal_entries`.execute(db);
+  await sql`DROP TRIGGER IF EXISTS trg_validate_journal_balance ON financial_journal_entries`.execute(
+    db,
+  );
   await sql`DROP FUNCTION IF EXISTS fn_validate_journal_entry_balance CASCADE`.execute(db);
 
-  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_lines_insert ON financial_journal_lines`.execute(db);
-  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_lines_update ON financial_journal_lines`.execute(db);
-  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_lines_delete ON financial_journal_lines`.execute(db);
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_lines_insert ON financial_journal_lines`.execute(
+    db,
+  );
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_lines_update ON financial_journal_lines`.execute(
+    db,
+  );
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_lines_delete ON financial_journal_lines`.execute(
+    db,
+  );
   await sql`DROP FUNCTION IF EXISTS fn_protect_financial_journal_lines CASCADE`.execute(db);
   await sql`DROP TABLE IF EXISTS financial_journal_lines CASCADE`.execute(db);
 
-  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_entries_update ON financial_journal_entries`.execute(db);
-  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_entries_delete ON financial_journal_entries`.execute(db);
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_entries_update ON financial_journal_entries`.execute(
+    db,
+  );
+  await sql`DROP TRIGGER IF EXISTS trg_protect_financial_journal_entries_delete ON financial_journal_entries`.execute(
+    db,
+  );
   await sql`DROP FUNCTION IF EXISTS fn_protect_financial_journal_entries CASCADE`.execute(db);
   await sql`DROP TABLE IF EXISTS financial_journal_entries CASCADE`.execute(db);
 

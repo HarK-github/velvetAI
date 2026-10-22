@@ -9,7 +9,7 @@ export const envSchema = z.object({
   // PostgreSQL
   DATABASE_URL: z
     .string()
-    .default("postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable"),
+    .default(process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable"),
   DATABASE_POOL_MIN: z.coerce.number().default(2),
   DATABASE_POOL_MAX: z.coerce.number().default(10),
 
@@ -41,7 +41,14 @@ export const envSchema = z.object({
   // PayPal Sandbox
   PAYPAL_CLIENT_ID: z.string().default("mock_paypal_client_id"),
   PAYPAL_CLIENT_SECRET: z.string().default("mock_paypal_client_secret"),
-  PAYPAL_ENVIRONMENT: z.enum(["sandbox", "live"]).default("sandbox"),
+  PAYPAL_ENVIRONMENT: z
+    .literal("sandbox", {
+      errorMap: () => ({
+        message:
+          "Only PayPal sandbox environment is permitted; live environment is strictly prohibited",
+      }),
+    })
+    .default("sandbox"),
   PAYPAL_WEBHOOK_ID: z.string().default("mock_webhook_id"),
 
   // App URLs

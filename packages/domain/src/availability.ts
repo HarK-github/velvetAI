@@ -1,9 +1,4 @@
-import {
-  TenantId,
-  ResourceId,
-  IanaTimeZone,
-  UUID,
-} from "@velvetai/contracts";
+import { TenantId, ResourceId, IanaTimeZone, UUID } from "@velvetai/contracts";
 import { InvariantViolationError } from "./errors.js";
 
 export class TimeRange {
@@ -24,8 +19,10 @@ export class TimeRange {
   }
 
   overlaps(other: TimeRange): boolean {
-    return this.startsAt.getTime() < other.endsAt.getTime() &&
-           other.startsAt.getTime() < this.endsAt.getTime();
+    return (
+      this.startsAt.getTime() < other.endsAt.getTime() &&
+      other.startsAt.getTime() < this.endsAt.getTime()
+    );
   }
 
   contains(date: Date): boolean {

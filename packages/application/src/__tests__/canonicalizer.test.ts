@@ -69,21 +69,32 @@ describe("Canonicalizer & RFC 8785 JCS (Acceptance Audit Requirement 5)", () => 
   it("rejects duplicate JSON keys before normal object parsing", () => {
     // Top-level duplicate key
     const duplicateTop = '{"serviceId":"s1","amount":100,"amount":200}';
-    expect(() => validateNoDuplicateKeys(duplicateTop)).toThrow(/Duplicate JSON key detected: "amount"/);
-    expect(() => parseJsonRejectingDuplicates(duplicateTop)).toThrow(/Duplicate JSON key detected: "amount"/);
+    expect(() => validateNoDuplicateKeys(duplicateTop)).toThrow(
+      /Duplicate JSON key detected: "amount"/,
+    );
+    expect(() => parseJsonRejectingDuplicates(duplicateTop)).toThrow(
+      /Duplicate JSON key detected: "amount"/,
+    );
 
     // Nested duplicate key
     const duplicateNested = '{"customer":{"email":"a@b.com","email":"c@d.com"}}';
-    expect(() => validateNoDuplicateKeys(duplicateNested)).toThrow(/Duplicate JSON key detected: "email"/);
+    expect(() => validateNoDuplicateKeys(duplicateNested)).toThrow(
+      /Duplicate JSON key detected: "email"/,
+    );
 
     // Duplicate key in array of objects
     const duplicateInArray = '[{"id":"1"},{"id":"2","id":"3"}]';
-    expect(() => validateNoDuplicateKeys(duplicateInArray)).toThrow(/Duplicate JSON key detected: "id"/);
+    expect(() => validateNoDuplicateKeys(duplicateInArray)).toThrow(
+      /Duplicate JSON key detected: "id"/,
+    );
 
     // Valid JSON with identical key in DIFFERENT objects succeeds
     const validMultiObj = '{"slotA":{"time":"10:00"},"slotB":{"time":"10:00"}}';
     expect(() => validateNoDuplicateKeys(validMultiObj)).not.toThrow();
-    const parsed = parseJsonRejectingDuplicates<{ slotA: { time: string }; slotB: { time: string } }>(validMultiObj);
+    const parsed = parseJsonRejectingDuplicates<{
+      slotA: { time: string };
+      slotB: { time: string };
+    }>(validMultiObj);
     expect(parsed.slotA.time).toBe("10:00");
     expect(parsed.slotB.time).toBe("10:00");
   });
@@ -99,7 +110,8 @@ describe("Canonicalizer & RFC 8785 JCS (Acceptance Audit Requirement 5)", () => 
       },
     };
 
-    const expected = '{"active":true,"deleted":null,"nested":{"x":1,"y":2},"tags":["alpha","beta"]}';
+    const expected =
+      '{"active":true,"deleted":null,"nested":{"x":1,"y":2},"tags":["alpha","beta"]}';
     expect(canonicalJson(complex)).toBe(expected);
     expect(canonicalHash(complex)).toBe(sha256Hex(expected));
   });

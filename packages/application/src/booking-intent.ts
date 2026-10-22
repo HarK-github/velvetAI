@@ -1,9 +1,6 @@
 import crypto from "node:crypto";
 import * as jose from "jose";
-import {
-  SignedBookingIntentClaims,
-  signedBookingIntentClaimsSchema,
-} from "@velvetai/contracts";
+import { SignedBookingIntentClaims, signedBookingIntentClaimsSchema } from "@velvetai/contracts";
 import { canonicalJson } from "./canonicalizer.js";
 
 export interface IntentKeyConfig {
@@ -61,7 +58,10 @@ export interface VerifyIntentOptions {
 }
 
 export class IntentVerificationError extends Error {
-  constructor(message: string, public readonly code: string = "INTENT_VERIFICATION_FAILED") {
+  constructor(
+    message: string,
+    public readonly code: string = "INTENT_VERIFICATION_FAILED",
+  ) {
     super(message);
     this.name = "IntentVerificationError";
   }
@@ -179,7 +179,10 @@ export async function verifyBookingIntent(
   }
 
   if (!signatureB64) {
-    throw new IntentVerificationError("Malformed JWS segments: missing signature", "MALFORMED_JWS_SEGMENT");
+    throw new IntentVerificationError(
+      "Malformed JWS segments: missing signature",
+      "MALFORMED_JWS_SEGMENT",
+    );
   }
 
   // JWS Rule: Reject remote jku / x5u
@@ -229,7 +232,10 @@ export async function verifyBookingIntent(
       algorithms: ["ES256"],
     });
   } catch {
-    throw new IntentVerificationError("Cryptographic signature verification failed", "INVALID_SIGNATURE");
+    throw new IntentVerificationError(
+      "Cryptographic signature verification failed",
+      "INVALID_SIGNATURE",
+    );
   }
 
   // Parse claims
@@ -256,7 +262,10 @@ export async function verifyBookingIntent(
     throw new IntentVerificationError("Intent has expired", "INTENT_EXPIRED");
   }
   if (nowSec < claims.nbf) {
-    throw new IntentVerificationError("Intent is not yet valid (nbf in future)", "INTENT_NOT_YET_VALID");
+    throw new IntentVerificationError(
+      "Intent is not yet valid (nbf in future)",
+      "INTENT_NOT_YET_VALID",
+    );
   }
 
   // Pinned issuer and audience checks

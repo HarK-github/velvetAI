@@ -54,19 +54,29 @@ export function validateNoDuplicateKeys(rawJson: string): void {
         i++;
         return str;
       }
-      if (ch === '\\') {
+      if (ch === "\\") {
         i++;
         if (i >= len) throw new Error("Unterminated string escape in JSON");
         const esc = rawJson[i];
-        if (esc === '"' || esc === '\\' || esc === '/') {
+        if (esc === '"' || esc === "\\" || esc === "/") {
           str += esc;
           i++;
-        } else if (esc === 'b') { str += '\b'; i++; }
-        else if (esc === 'f') { str += '\f'; i++; }
-        else if (esc === 'n') { str += '\n'; i++; }
-        else if (esc === 'r') { str += '\r'; i++; }
-        else if (esc === 't') { str += '\t'; i++; }
-        else if (esc === 'u') {
+        } else if (esc === "b") {
+          str += "\b";
+          i++;
+        } else if (esc === "f") {
+          str += "\f";
+          i++;
+        } else if (esc === "n") {
+          str += "\n";
+          i++;
+        } else if (esc === "r") {
+          str += "\r";
+          i++;
+        } else if (esc === "t") {
+          str += "\t";
+          i++;
+        } else if (esc === "u") {
           i++;
           const hex = rawJson.slice(i, i + 4);
           if (hex.length < 4 || !/^[0-9a-fA-F]{4}$/.test(hex)) {
@@ -89,13 +99,13 @@ export function validateNoDuplicateKeys(rawJson: string): void {
     skipWhitespace();
     if (i >= len) return;
     const ch = rawJson[i];
-    if (ch === '{') {
+    if (ch === "{") {
       parseObject();
-    } else if (ch === '[') {
+    } else if (ch === "[") {
       parseArray();
     } else if (ch === '"') {
       parseString();
-    } else if (ch === '-' || (ch !== undefined && ch >= '0' && ch <= '9')) {
+    } else if (ch === "-" || (ch !== undefined && ch >= "0" && ch <= "9")) {
       parseNumber();
     } else if (rawJson.startsWith("true", i)) {
       i += 4;
@@ -112,12 +122,12 @@ export function validateNoDuplicateKeys(rawJson: string): void {
     while (i < len) {
       const ch = rawJson[i];
       if (
-        (ch !== undefined && ch >= '0' && ch <= '9') ||
-        ch === '-' ||
-        ch === '+' ||
-        ch === '.' ||
-        ch === 'e' ||
-        ch === 'E'
+        (ch !== undefined && ch >= "0" && ch <= "9") ||
+        ch === "-" ||
+        ch === "+" ||
+        ch === "." ||
+        ch === "e" ||
+        ch === "E"
       ) {
         i++;
       } else {
@@ -129,17 +139,17 @@ export function validateNoDuplicateKeys(rawJson: string): void {
   function parseArray(): void {
     i++; // skip '['
     skipWhitespace();
-    if (i < len && rawJson[i] === ']') {
+    if (i < len && rawJson[i] === "]") {
       i++;
       return;
     }
     while (i < len) {
       parseValue();
       skipWhitespace();
-      if (i < len && rawJson[i] === ',') {
+      if (i < len && rawJson[i] === ",") {
         i++;
         skipWhitespace();
-      } else if (i < len && rawJson[i] === ']') {
+      } else if (i < len && rawJson[i] === "]") {
         i++;
         return;
       } else {
@@ -151,7 +161,7 @@ export function validateNoDuplicateKeys(rawJson: string): void {
   function parseObject(): void {
     i++; // skip '{'
     skipWhitespace();
-    if (i < len && rawJson[i] === '}') {
+    if (i < len && rawJson[i] === "}") {
       i++;
       return;
     }
@@ -168,17 +178,17 @@ export function validateNoDuplicateKeys(rawJson: string): void {
       seenKeys.add(key);
 
       skipWhitespace();
-      if (i >= len || rawJson[i] !== ':') {
+      if (i >= len || rawJson[i] !== ":") {
         throw new Error(`Expected ':' after key at offset ${i}`);
       }
       i++; // skip ':'
       parseValue();
 
       skipWhitespace();
-      if (i < len && rawJson[i] === ',') {
+      if (i < len && rawJson[i] === ",") {
         i++;
         skipWhitespace();
-      } else if (i < len && rawJson[i] === '}') {
+      } else if (i < len && rawJson[i] === "}") {
         i++;
         return;
       } else {

@@ -1,18 +1,60 @@
 import { createLogger, validateEnv } from "@velvetai/observability";
+import { createDatabaseClient, Database } from "@velvetai/db";
+import { Kysely } from "kysely";
 import { OutboxProcessor, InMemoryOutboxStore, OutboxStore } from "./outbox-processor.js";
+import { PostgreSqlOutboxStore } from "./postgres-outbox-store.js";
+import { HoldReaperProcessor } from "./hold-reaper.js";
+import { ReconciliationProcessor } from "./reconciliation-processor.js";
 
 export * from "./outbox-processor.js";
 export * from "./hold-reaper.js";
+export * from "./postgres-outbox-store.js";
+export * from "./reconciliation-processor.js";
 
 export class OutboxWorker {
   private isRunning = false;
+  private timer: NodeJS.Timeout | null = null;
   private readonly logger = createLogger({ name: "outbox-worker" });
   readonly processor: OutboxProcessor;
+  readonly holdReaper?: HoldReaperProcessor;
+  readonly reconciliation?: ReconciliationProcessor;
 
-  constructor(store?: OutboxStore) {
+  constructor(store?: OutboxStore, db?: Kysely<Database>) {
     validateEnv();
-    const effectiveStore = store ?? new InMemoryOutboxStore();
+
+    const isProduction = process.env.NODE_ENV === "production";
+
+    // Requirement 10: Production worker startup must fail if configured with in-memory storage
+    if (isProduction && store instanceof InMemoryOutboxStore) {
+      throw new Error(
+        "InMemoryOutboxStore is prohibited in production; PostgreSqlOutboxStore is required",
+      );
+    }
+
+    let effectiveStore: OutboxStore;
+    if (store) {
+      effectiveStore = store;
+    } else if (isProduction || process.env.DATABASE_URL) {
+      const dbClient =
+        db ||
+        createDatabaseClient(
+          process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable",
+        );
+      effectiveStore = new PostgreSqlOutboxStore(dbClient);
+    } else {
+      effectiveStore = new InMemoryOutboxStore();
+    }
+
     this.processor = new OutboxProcessor(effectiveStore);
+
+    if (db || process.env.DATABASE_URL) {
+      const dbClient =
+        db ||
+        createDatabaseClient(
+          process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable",
+        );
+      this.holdReaper = new HoldReaperProcessor(dbClient);
+    }
   }
 
   async start(): Promise<void> {
@@ -22,6 +64,10 @@ export class OutboxWorker {
 
   async stop(): Promise<void> {
     this.isRunning = false;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
     this.logger.info("Outbox worker stopped");
   }
 

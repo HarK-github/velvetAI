@@ -164,12 +164,24 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   `.execute(db);
 
   // 6. Composite Unique Constraints to support composite foreign keys
-  await sql`ALTER TABLE locations ADD CONSTRAINT uq_locations_tenant_id UNIQUE (tenant_id, id);`.execute(db);
-  await sql`ALTER TABLE services ADD CONSTRAINT uq_services_tenant_id UNIQUE (tenant_id, id);`.execute(db);
-  await sql`ALTER TABLE service_versions ADD CONSTRAINT uq_service_versions_tenant_id UNIQUE (tenant_id, id);`.execute(db);
-  await sql`ALTER TABLE resources ADD CONSTRAINT uq_resources_tenant_id UNIQUE (tenant_id, id);`.execute(db);
-  await sql`ALTER TABLE booking_quotes ADD CONSTRAINT uq_booking_quotes_tenant_id UNIQUE (tenant_id, id);`.execute(db);
-  await sql`ALTER TABLE bookings ADD CONSTRAINT uq_bookings_tenant_id UNIQUE (tenant_id, id);`.execute(db);
+  await sql`ALTER TABLE locations ADD CONSTRAINT uq_locations_tenant_id UNIQUE (tenant_id, id);`.execute(
+    db,
+  );
+  await sql`ALTER TABLE services ADD CONSTRAINT uq_services_tenant_id UNIQUE (tenant_id, id);`.execute(
+    db,
+  );
+  await sql`ALTER TABLE service_versions ADD CONSTRAINT uq_service_versions_tenant_id UNIQUE (tenant_id, id);`.execute(
+    db,
+  );
+  await sql`ALTER TABLE resources ADD CONSTRAINT uq_resources_tenant_id UNIQUE (tenant_id, id);`.execute(
+    db,
+  );
+  await sql`ALTER TABLE booking_quotes ADD CONSTRAINT uq_booking_quotes_tenant_id UNIQUE (tenant_id, id);`.execute(
+    db,
+  );
+  await sql`ALTER TABLE bookings ADD CONSTRAINT uq_bookings_tenant_id UNIQUE (tenant_id, id);`.execute(
+    db,
+  );
 
   // 7. Composite Foreign Keys
   await sql`
@@ -219,12 +231,16 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     await sql.raw(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`).execute(db);
     await sql.raw(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`).execute(db);
     await sql.raw(`DROP POLICY IF EXISTS tenant_isolation_policy ON ${table};`).execute(db);
-    await sql.raw(`
+    await sql
+      .raw(
+        `
       CREATE POLICY tenant_isolation_policy ON ${table}
       FOR ALL
       USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
       WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
-    `).execute(db);
+    `,
+      )
+      .execute(db);
   }
 
   // 9. Create runtime database role (NOBYPASSRLS is default in PostgreSQL)
@@ -232,7 +248,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     DO $$
     BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'velvet_runtime') THEN
-        CREATE ROLE velvet_runtime WITH LOGIN PASSWORD 'velvet_runtime_pass';
+        CREATE ROLE velvet_runtime NOLOGIN NOBYPASSRLS;
+      END IF;
+      IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'velvet') THEN
+        GRANT velvet_runtime TO velvet WITH INHERIT TRUE, SET TRUE;
       END IF;
     END $$;
   `.execute(db);
@@ -240,7 +259,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`GRANT USAGE ON SCHEMA public TO velvet_runtime;`.execute(db);
   await sql`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO velvet_runtime;`.execute(db);
   await sql`GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO velvet_runtime;`.execute(db);
-  await sql`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO velvet_runtime;`.execute(db);
+  await sql`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO velvet_runtime;`.execute(
+    db,
+  );
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
@@ -252,18 +273,32 @@ export async function down(db: Kysely<unknown>): Promise<void> {
   }
 
   // Drop composite FKs
-  await sql`ALTER TABLE committed_intents DROP CONSTRAINT IF EXISTS fk_intents_tenant_booking;`.execute(db);
-  await sql`ALTER TABLE booking_hold_snapshots DROP CONSTRAINT IF EXISTS fk_snapshots_tenant_booking;`.execute(db);
-  await sql`ALTER TABLE buyer_confirmations DROP CONSTRAINT IF EXISTS fk_confirmations_tenant_booking;`.execute(db);
-  await sql`ALTER TABLE resource_claims DROP CONSTRAINT IF EXISTS fk_claims_tenant_resource;`.execute(db);
-  await sql`ALTER TABLE resource_claims DROP CONSTRAINT IF EXISTS fk_claims_tenant_booking;`.execute(db);
+  await sql`ALTER TABLE committed_intents DROP CONSTRAINT IF EXISTS fk_intents_tenant_booking;`.execute(
+    db,
+  );
+  await sql`ALTER TABLE booking_hold_snapshots DROP CONSTRAINT IF EXISTS fk_snapshots_tenant_booking;`.execute(
+    db,
+  );
+  await sql`ALTER TABLE buyer_confirmations DROP CONSTRAINT IF EXISTS fk_confirmations_tenant_booking;`.execute(
+    db,
+  );
+  await sql`ALTER TABLE resource_claims DROP CONSTRAINT IF EXISTS fk_claims_tenant_resource;`.execute(
+    db,
+  );
+  await sql`ALTER TABLE resource_claims DROP CONSTRAINT IF EXISTS fk_claims_tenant_booking;`.execute(
+    db,
+  );
   await sql`ALTER TABLE bookings DROP CONSTRAINT IF EXISTS fk_bookings_tenant_quote;`.execute(db);
 
   // Drop composite UQs
   await sql`ALTER TABLE bookings DROP CONSTRAINT IF EXISTS uq_bookings_tenant_id;`.execute(db);
-  await sql`ALTER TABLE booking_quotes DROP CONSTRAINT IF EXISTS uq_booking_quotes_tenant_id;`.execute(db);
+  await sql`ALTER TABLE booking_quotes DROP CONSTRAINT IF EXISTS uq_booking_quotes_tenant_id;`.execute(
+    db,
+  );
   await sql`ALTER TABLE resources DROP CONSTRAINT IF EXISTS uq_resources_tenant_id;`.execute(db);
-  await sql`ALTER TABLE service_versions DROP CONSTRAINT IF EXISTS uq_service_versions_tenant_id;`.execute(db);
+  await sql`ALTER TABLE service_versions DROP CONSTRAINT IF EXISTS uq_service_versions_tenant_id;`.execute(
+    db,
+  );
   await sql`ALTER TABLE services DROP CONSTRAINT IF EXISTS uq_services_tenant_id;`.execute(db);
   await sql`ALTER TABLE locations DROP CONSTRAINT IF EXISTS uq_locations_tenant_id;`.execute(db);
 
@@ -272,8 +307,12 @@ export async function down(db: Kysely<unknown>): Promise<void> {
   await sql`DROP INDEX IF EXISTS resource_claim_calendar_idx;`.execute(db);
 
   // Restore old exclusion constraint
-  await sql`ALTER TABLE resource_claims DROP CONSTRAINT IF EXISTS chk_resource_claim_blocking_state;`.execute(db);
-  await sql`ALTER TABLE resource_claims DROP CONSTRAINT IF EXISTS no_overlapping_claims;`.execute(db);
+  await sql`ALTER TABLE resource_claims DROP CONSTRAINT IF EXISTS chk_resource_claim_blocking_state;`.execute(
+    db,
+  );
+  await sql`ALTER TABLE resource_claims DROP CONSTRAINT IF EXISTS no_overlapping_claims;`.execute(
+    db,
+  );
   await sql`
     ALTER TABLE resource_claims
     ADD CONSTRAINT no_overlapping_claims EXCLUDE USING gist (
@@ -293,7 +332,9 @@ export async function down(db: Kysely<unknown>): Promise<void> {
   `.execute(db);
 
   // Restore idempotency uniqueness
-  await sql`ALTER TABLE idempotency_records DROP CONSTRAINT IF EXISTS uq_tenant_client_idempotency;`.execute(db);
+  await sql`ALTER TABLE idempotency_records DROP CONSTRAINT IF EXISTS uq_tenant_client_idempotency;`.execute(
+    db,
+  );
   await sql`
     ALTER TABLE idempotency_records
     ADD CONSTRAINT uq_idempotency UNIQUE (tenant_id, actor_id, operation, idempotency_key);

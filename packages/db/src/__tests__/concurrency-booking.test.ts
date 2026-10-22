@@ -3,11 +3,7 @@ import crypto from "node:crypto";
 import { sql, Kysely } from "kysely";
 import { Database } from "../schema.js";
 import { withTenantTransaction } from "../index.js";
-import {
-  setupTestDatabase,
-  seedTenantContext,
-  SeededTenantContext,
-} from "./test-helper.js";
+import { setupTestDatabase, seedTenantContext, SeededTenantContext } from "./test-helper.js";
 
 describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
   let db: Kysely<Database>;
@@ -146,45 +142,54 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
     await db.transaction().execute(async (trx) => {
       await sql`SELECT set_config('app.tenant_id', ${seedA.tenantId}, true)`.execute(trx);
 
-      await trx.insertInto("booking_quotes").values({
-        id: quoteA,
-        tenant_id: seedA.tenantId,
-        service_version_id: seedA.serviceVersionId,
-        customer_id: seedA.actorUserId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        total_minor: "5000",
-        deposit_minor: "1500",
-        currency: "USD",
-        canonical_hash: "hash-tenant-a",
-        expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("booking_quotes")
+        .values({
+          id: quoteA,
+          tenant_id: seedA.tenantId,
+          service_version_id: seedA.serviceVersionId,
+          customer_id: seedA.actorUserId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          total_minor: "5000",
+          deposit_minor: "1500",
+          currency: "USD",
+          canonical_hash: "hash-tenant-a",
+          expires_at: holdExpiry,
+        })
+        .execute();
 
-      await trx.insertInto("bookings").values({
-        id: bookingA,
-        tenant_id: seedA.tenantId,
-        customer_id: seedA.actorUserId,
-        quote_id: quoteA,
-        status: "HELD",
-        version: 1,
-        hold_expires_at: holdExpiry,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        resource_id: seedA.resourceId,
-      }).execute();
+      await trx
+        .insertInto("bookings")
+        .values({
+          id: bookingA,
+          tenant_id: seedA.tenantId,
+          customer_id: seedA.actorUserId,
+          quote_id: quoteA,
+          status: "HELD",
+          version: 1,
+          hold_expires_at: holdExpiry,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          resource_id: seedA.resourceId,
+        })
+        .execute();
 
-      await trx.insertInto("resource_claims").values({
-        id: claimA,
-        tenant_id: seedA.tenantId,
-        booking_id: bookingA,
-        resource_id: seedA.resourceId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-        state: "HELD",
-        blocking: true,
-        hold_expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("resource_claims")
+        .values({
+          id: claimA,
+          tenant_id: seedA.tenantId,
+          booking_id: bookingA,
+          resource_id: seedA.resourceId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+          state: "HELD",
+          blocking: true,
+          hold_expires_at: holdExpiry,
+        })
+        .execute();
     });
 
     // 2b. Insert IDENTICAL slot interval on Tenant B
@@ -195,61 +200,62 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
     await db.transaction().execute(async (trx) => {
       await sql`SELECT set_config('app.tenant_id', ${seedB.tenantId}, true)`.execute(trx);
 
-      await trx.insertInto("booking_quotes").values({
-        id: quoteB,
-        tenant_id: seedB.tenantId,
-        service_version_id: seedB.serviceVersionId,
-        customer_id: seedB.actorUserId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        total_minor: "5000",
-        deposit_minor: "1500",
-        currency: "USD",
-        canonical_hash: "hash-tenant-b",
-        expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("booking_quotes")
+        .values({
+          id: quoteB,
+          tenant_id: seedB.tenantId,
+          service_version_id: seedB.serviceVersionId,
+          customer_id: seedB.actorUserId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          total_minor: "5000",
+          deposit_minor: "1500",
+          currency: "USD",
+          canonical_hash: "hash-tenant-b",
+          expires_at: holdExpiry,
+        })
+        .execute();
 
-      await trx.insertInto("bookings").values({
-        id: bookingB,
-        tenant_id: seedB.tenantId,
-        customer_id: seedB.actorUserId,
-        quote_id: quoteB,
-        status: "HELD",
-        version: 1,
-        hold_expires_at: holdExpiry,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        resource_id: seedB.resourceId,
-      }).execute();
+      await trx
+        .insertInto("bookings")
+        .values({
+          id: bookingB,
+          tenant_id: seedB.tenantId,
+          customer_id: seedB.actorUserId,
+          quote_id: quoteB,
+          status: "HELD",
+          version: 1,
+          hold_expires_at: holdExpiry,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          resource_id: seedB.resourceId,
+        })
+        .execute();
 
-      await trx.insertInto("resource_claims").values({
-        id: claimB,
-        tenant_id: seedB.tenantId,
-        booking_id: bookingB,
-        resource_id: seedB.resourceId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-        state: "HELD",
-        blocking: true,
-        hold_expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("resource_claims")
+        .values({
+          id: claimB,
+          tenant_id: seedB.tenantId,
+          booking_id: bookingB,
+          resource_id: seedB.resourceId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+          state: "HELD",
+          blocking: true,
+          hold_expires_at: holdExpiry,
+        })
+        .execute();
     });
 
     // Both succeeded because they belong to separate tenants
     const countA = await withTenantTransaction(db, seedA.tenantId, async (trx) => {
-      return await trx
-        .selectFrom("resource_claims")
-        .where("id", "=", claimA)
-        .selectAll()
-        .execute();
+      return await trx.selectFrom("resource_claims").where("id", "=", claimA).selectAll().execute();
     });
     const countB = await withTenantTransaction(db, seedB.tenantId, async (trx) => {
-      return await trx
-        .selectFrom("resource_claims")
-        .where("id", "=", claimB)
-        .selectAll()
-        .execute();
+      return await trx.selectFrom("resource_claims").where("id", "=", claimB).selectAll().execute();
     });
 
     expect(countA.length).toBe(1);
@@ -270,44 +276,53 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
     await db.transaction().execute(async (trx) => {
       await sql`SELECT set_config('app.tenant_id', ${seedA.tenantId}, true)`.execute(trx);
 
-      await trx.insertInto("booking_quotes").values({
-        id: quote1,
-        tenant_id: seedA.tenantId,
-        service_version_id: seedA.serviceVersionId,
-        customer_id: seedA.actorUserId,
-        starts_at: t1,
-        ends_at: t2,
-        total_minor: "5000",
-        deposit_minor: "1500",
-        currency: "USD",
-        canonical_hash: "hash-slot-1",
-        expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("booking_quotes")
+        .values({
+          id: quote1,
+          tenant_id: seedA.tenantId,
+          service_version_id: seedA.serviceVersionId,
+          customer_id: seedA.actorUserId,
+          starts_at: t1,
+          ends_at: t2,
+          total_minor: "5000",
+          deposit_minor: "1500",
+          currency: "USD",
+          canonical_hash: "hash-slot-1",
+          expires_at: holdExpiry,
+        })
+        .execute();
 
-      await trx.insertInto("bookings").values({
-        id: booking1,
-        tenant_id: seedA.tenantId,
-        customer_id: seedA.actorUserId,
-        quote_id: quote1,
-        status: "HELD",
-        version: 1,
-        starts_at: t1,
-        ends_at: t2,
-        resource_id: seedA.resourceId,
-      }).execute();
+      await trx
+        .insertInto("bookings")
+        .values({
+          id: booking1,
+          tenant_id: seedA.tenantId,
+          customer_id: seedA.actorUserId,
+          quote_id: quote1,
+          status: "HELD",
+          version: 1,
+          starts_at: t1,
+          ends_at: t2,
+          resource_id: seedA.resourceId,
+        })
+        .execute();
 
-      await trx.insertInto("resource_claims").values({
-        id: claim1,
-        tenant_id: seedA.tenantId,
-        booking_id: booking1,
-        resource_id: seedA.resourceId,
-        starts_at: t1,
-        ends_at: t2,
-        blocked_during: sql`tstzrange(${t1.toISOString()}::timestamptz, ${t2.toISOString()}::timestamptz, '[)')`,
-        state: "HELD",
-        blocking: true,
-        hold_expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("resource_claims")
+        .values({
+          id: claim1,
+          tenant_id: seedA.tenantId,
+          booking_id: booking1,
+          resource_id: seedA.resourceId,
+          starts_at: t1,
+          ends_at: t2,
+          blocked_during: sql`tstzrange(${t1.toISOString()}::timestamptz, ${t2.toISOString()}::timestamptz, '[)')`,
+          state: "HELD",
+          blocking: true,
+          hold_expires_at: holdExpiry,
+        })
+        .execute();
     });
 
     // Slot 2: [09:30, 10:00) adjacent back-to-back MUST succeed
@@ -318,44 +333,53 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
     await db.transaction().execute(async (trx) => {
       await sql`SELECT set_config('app.tenant_id', ${seedA.tenantId}, true)`.execute(trx);
 
-      await trx.insertInto("booking_quotes").values({
-        id: quote2,
-        tenant_id: seedA.tenantId,
-        service_version_id: seedA.serviceVersionId,
-        customer_id: seedA.actorUserId,
-        starts_at: t2,
-        ends_at: t3,
-        total_minor: "5000",
-        deposit_minor: "1500",
-        currency: "USD",
-        canonical_hash: "hash-slot-2",
-        expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("booking_quotes")
+        .values({
+          id: quote2,
+          tenant_id: seedA.tenantId,
+          service_version_id: seedA.serviceVersionId,
+          customer_id: seedA.actorUserId,
+          starts_at: t2,
+          ends_at: t3,
+          total_minor: "5000",
+          deposit_minor: "1500",
+          currency: "USD",
+          canonical_hash: "hash-slot-2",
+          expires_at: holdExpiry,
+        })
+        .execute();
 
-      await trx.insertInto("bookings").values({
-        id: booking2,
-        tenant_id: seedA.tenantId,
-        customer_id: seedA.actorUserId,
-        quote_id: quote2,
-        status: "HELD",
-        version: 1,
-        starts_at: t2,
-        ends_at: t3,
-        resource_id: seedA.resourceId,
-      }).execute();
+      await trx
+        .insertInto("bookings")
+        .values({
+          id: booking2,
+          tenant_id: seedA.tenantId,
+          customer_id: seedA.actorUserId,
+          quote_id: quote2,
+          status: "HELD",
+          version: 1,
+          starts_at: t2,
+          ends_at: t3,
+          resource_id: seedA.resourceId,
+        })
+        .execute();
 
-      await trx.insertInto("resource_claims").values({
-        id: claim2,
-        tenant_id: seedA.tenantId,
-        booking_id: booking2,
-        resource_id: seedA.resourceId,
-        starts_at: t2,
-        ends_at: t3,
-        blocked_during: sql`tstzrange(${t2.toISOString()}::timestamptz, ${t3.toISOString()}::timestamptz, '[)')`,
-        state: "HELD",
-        blocking: true,
-        hold_expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("resource_claims")
+        .values({
+          id: claim2,
+          tenant_id: seedA.tenantId,
+          booking_id: booking2,
+          resource_id: seedA.resourceId,
+          starts_at: t2,
+          ends_at: t3,
+          blocked_during: sql`tstzrange(${t2.toISOString()}::timestamptz, ${t3.toISOString()}::timestamptz, '[)')`,
+          state: "HELD",
+          blocking: true,
+          hold_expires_at: holdExpiry,
+        })
+        .execute();
     });
 
     // Slot 3: Overlapping interval [09:15, 09:45) MUST FAIL with exclusion conflict
@@ -367,18 +391,21 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
       await db.transaction().execute(async (trx) => {
         await sql`SELECT set_config('app.tenant_id', ${seedA.tenantId}, true)`.execute(trx);
 
-        await trx.insertInto("resource_claims").values({
-          id: crypto.randomUUID(),
-          tenant_id: seedA.tenantId,
-          booking_id: booking1,
-          resource_id: seedA.resourceId,
-          starts_at: tOverlapStart,
-          ends_at: tOverlapEnd,
-          blocked_during: sql`tstzrange(${tOverlapStart.toISOString()}::timestamptz, ${tOverlapEnd.toISOString()}::timestamptz, '[)')`,
-          state: "HELD",
-          blocking: true,
-          hold_expires_at: holdExpiry,
-        }).execute();
+        await trx
+          .insertInto("resource_claims")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: seedA.tenantId,
+            booking_id: booking1,
+            resource_id: seedA.resourceId,
+            starts_at: tOverlapStart,
+            ends_at: tOverlapEnd,
+            blocked_during: sql`tstzrange(${tOverlapStart.toISOString()}::timestamptz, ${tOverlapEnd.toISOString()}::timestamptz, '[)')`,
+            state: "HELD",
+            blocking: true,
+            hold_expires_at: holdExpiry,
+          })
+          .execute();
       });
     } catch (err: unknown) {
       const pgErr = err as { code?: string };
@@ -401,44 +428,53 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
 
     // 4a. Create hold
     await withTenantTransaction(db, seedA.tenantId, async (trx) => {
-      await trx.insertInto("booking_quotes").values({
-        id: quoteOld,
-        tenant_id: seedA.tenantId,
-        service_version_id: seedA.serviceVersionId,
-        customer_id: seedA.actorUserId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        total_minor: "5000",
-        deposit_minor: "1500",
-        currency: "USD",
-        canonical_hash: "hash-old",
-        expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("booking_quotes")
+        .values({
+          id: quoteOld,
+          tenant_id: seedA.tenantId,
+          service_version_id: seedA.serviceVersionId,
+          customer_id: seedA.actorUserId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          total_minor: "5000",
+          deposit_minor: "1500",
+          currency: "USD",
+          canonical_hash: "hash-old",
+          expires_at: holdExpiry,
+        })
+        .execute();
 
-      await trx.insertInto("bookings").values({
-        id: bookingOld,
-        tenant_id: seedA.tenantId,
-        customer_id: seedA.actorUserId,
-        quote_id: quoteOld,
-        status: "HELD",
-        version: 1,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        resource_id: seedA.resourceId,
-      }).execute();
+      await trx
+        .insertInto("bookings")
+        .values({
+          id: bookingOld,
+          tenant_id: seedA.tenantId,
+          customer_id: seedA.actorUserId,
+          quote_id: quoteOld,
+          status: "HELD",
+          version: 1,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          resource_id: seedA.resourceId,
+        })
+        .execute();
 
-      await trx.insertInto("resource_claims").values({
-        id: claimOld,
-        tenant_id: seedA.tenantId,
-        booking_id: bookingOld,
-        resource_id: seedA.resourceId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-        state: "HELD",
-        blocking: true,
-        hold_expires_at: holdExpiry,
-      }).execute();
+      await trx
+        .insertInto("resource_claims")
+        .values({
+          id: claimOld,
+          tenant_id: seedA.tenantId,
+          booking_id: bookingOld,
+          resource_id: seedA.resourceId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+          state: "HELD",
+          blocking: true,
+          hold_expires_at: holdExpiry,
+        })
+        .execute();
     });
 
     // 4b. Confirm the hold: state becomes COMMITTED, blocking remains true
@@ -459,18 +495,21 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
     let replacementWhileConfirmedFailed = false;
     try {
       await withTenantTransaction(db, seedA.tenantId, async (trx) => {
-        await trx.insertInto("resource_claims").values({
-          id: crypto.randomUUID(),
-          tenant_id: seedA.tenantId,
-          booking_id: crypto.randomUUID(),
-          resource_id: seedA.resourceId,
-          starts_at: slotStart,
-          ends_at: slotEnd,
-          blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-          state: "HELD",
-          blocking: true,
-          hold_expires_at: holdExpiry,
-        }).execute();
+        await trx
+          .insertInto("resource_claims")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: seedA.tenantId,
+            booking_id: crypto.randomUUID(),
+            resource_id: seedA.resourceId,
+            starts_at: slotStart,
+            ends_at: slotEnd,
+            blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+            state: "HELD",
+            blocking: true,
+            hold_expires_at: holdExpiry,
+          })
+          .execute();
       });
     } catch (err: unknown) {
       if ((err as { code?: string }).code === "23P01") {
@@ -499,45 +538,54 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
         const repQuoteId = crypto.randomUUID();
         try {
           await withTenantTransaction(db, seedA.tenantId, async (trx) => {
-            await trx.insertInto("booking_quotes").values({
-              id: repQuoteId,
-              tenant_id: seedA.tenantId,
-              service_version_id: seedA.serviceVersionId,
-              customer_id: seedA.actorUserId,
-              starts_at: slotStart,
-              ends_at: slotEnd,
-              total_minor: "5000",
-              deposit_minor: "1500",
-              currency: "USD",
-              canonical_hash: `hash-rep-${repBookingId}`,
-              expires_at: holdExpiry,
-            }).execute();
+            await trx
+              .insertInto("booking_quotes")
+              .values({
+                id: repQuoteId,
+                tenant_id: seedA.tenantId,
+                service_version_id: seedA.serviceVersionId,
+                customer_id: seedA.actorUserId,
+                starts_at: slotStart,
+                ends_at: slotEnd,
+                total_minor: "5000",
+                deposit_minor: "1500",
+                currency: "USD",
+                canonical_hash: `hash-rep-${repBookingId}`,
+                expires_at: holdExpiry,
+              })
+              .execute();
 
-            await trx.insertInto("bookings").values({
-              id: repBookingId,
-              tenant_id: seedA.tenantId,
-              customer_id: seedA.actorUserId,
-              quote_id: repQuoteId,
-              status: "HELD",
-              version: 1,
-              hold_expires_at: holdExpiry,
-              starts_at: slotStart,
-              ends_at: slotEnd,
-              resource_id: seedA.resourceId,
-            }).execute();
+            await trx
+              .insertInto("bookings")
+              .values({
+                id: repBookingId,
+                tenant_id: seedA.tenantId,
+                customer_id: seedA.actorUserId,
+                quote_id: repQuoteId,
+                status: "HELD",
+                version: 1,
+                hold_expires_at: holdExpiry,
+                starts_at: slotStart,
+                ends_at: slotEnd,
+                resource_id: seedA.resourceId,
+              })
+              .execute();
 
-            await trx.insertInto("resource_claims").values({
-              id: crypto.randomUUID(),
-              tenant_id: seedA.tenantId,
-              booking_id: repBookingId,
-              resource_id: seedA.resourceId,
-              starts_at: slotStart,
-              ends_at: slotEnd,
-              blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-              state: "HELD",
-              blocking: true,
-              hold_expires_at: holdExpiry,
-            }).execute();
+            await trx
+              .insertInto("resource_claims")
+              .values({
+                id: crypto.randomUUID(),
+                tenant_id: seedA.tenantId,
+                booking_id: repBookingId,
+                resource_id: seedA.resourceId,
+                starts_at: slotStart,
+                ends_at: slotEnd,
+                blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+                state: "HELD",
+                blocking: true,
+                hold_expires_at: holdExpiry,
+              })
+              .execute();
           });
           replacementWinners++;
         } catch (err: unknown) {
@@ -552,7 +600,10 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
     );
 
     if (otherErrors.length > 0) {
-      console.error("Replacement other errors:", otherErrors.map((e) => e?.code || e?.message));
+      console.error(
+        "Replacement other errors:",
+        otherErrors.map((e) => e?.code || e?.message),
+      );
     }
     expect(replacementWinners).toBe(1);
     expect(replacementConflicts).toBe(9);
@@ -581,45 +632,54 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
     const quoteId = crypto.randomUUID();
 
     await withTenantTransaction(db, seedA.tenantId, async (trx) => {
-      await trx.insertInto("booking_quotes").values({
-        id: quoteId,
-        tenant_id: seedA.tenantId,
-        service_version_id: seedA.serviceVersionId,
-        customer_id: seedA.actorUserId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        total_minor: "5000",
-        deposit_minor: "1500",
-        currency: "USD",
-        canonical_hash: "hash-long-tx",
-        expires_at: shortExpiry,
-      }).execute();
+      await trx
+        .insertInto("booking_quotes")
+        .values({
+          id: quoteId,
+          tenant_id: seedA.tenantId,
+          service_version_id: seedA.serviceVersionId,
+          customer_id: seedA.actorUserId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          total_minor: "5000",
+          deposit_minor: "1500",
+          currency: "USD",
+          canonical_hash: "hash-long-tx",
+          expires_at: shortExpiry,
+        })
+        .execute();
 
-      await trx.insertInto("bookings").values({
-        id: bookingId,
-        tenant_id: seedA.tenantId,
-        customer_id: seedA.actorUserId,
-        quote_id: quoteId,
-        status: "HELD",
-        version: 1,
-        hold_expires_at: shortExpiry,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        resource_id: seedA.resourceId,
-      }).execute();
+      await trx
+        .insertInto("bookings")
+        .values({
+          id: bookingId,
+          tenant_id: seedA.tenantId,
+          customer_id: seedA.actorUserId,
+          quote_id: quoteId,
+          status: "HELD",
+          version: 1,
+          hold_expires_at: shortExpiry,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          resource_id: seedA.resourceId,
+        })
+        .execute();
 
-      await trx.insertInto("resource_claims").values({
-        id: claimId,
-        tenant_id: seedA.tenantId,
-        booking_id: bookingId,
-        resource_id: seedA.resourceId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-        state: "HELD",
-        blocking: true,
-        hold_expires_at: shortExpiry,
-      }).execute();
+      await trx
+        .insertInto("resource_claims")
+        .values({
+          id: claimId,
+          tenant_id: seedA.tenantId,
+          booking_id: bookingId,
+          resource_id: seedA.resourceId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+          state: "HELD",
+          blocking: true,
+          hold_expires_at: shortExpiry,
+        })
+        .execute();
     });
 
     let commitFailedDueToExpiry = false;
@@ -660,19 +720,22 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
     let rangeError = false;
     try {
       await withTenantTransaction(db, seedA.tenantId, async (trx) => {
-        await trx.insertInto("resource_claims").values({
-          id: crypto.randomUUID(),
-          tenant_id: seedA.tenantId,
-          booking_id: crypto.randomUUID(),
-          resource_id: seedA.resourceId,
-          starts_at: tStart,
-          ends_at: tEndEarlier,
-          // Negative range: lower bound > upper bound
-          blocked_during: sql`tstzrange(${tStart.toISOString()}::timestamptz, ${tEndEarlier.toISOString()}::timestamptz, '[)')`,
-          state: "HELD",
-          blocking: true,
-          hold_expires_at: holdExpiry,
-        }).execute();
+        await trx
+          .insertInto("resource_claims")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: seedA.tenantId,
+            booking_id: crypto.randomUUID(),
+            resource_id: seedA.resourceId,
+            starts_at: tStart,
+            ends_at: tEndEarlier,
+            // Negative range: lower bound > upper bound
+            blocked_during: sql`tstzrange(${tStart.toISOString()}::timestamptz, ${tEndEarlier.toISOString()}::timestamptz, '[)')`,
+            state: "HELD",
+            blocking: true,
+            hold_expires_at: holdExpiry,
+          })
+          .execute();
       });
     } catch (err: unknown) {
       const pgErr = err as { code?: string; message?: string };

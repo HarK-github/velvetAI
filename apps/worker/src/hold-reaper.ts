@@ -40,6 +40,7 @@ export class HoldReaperProcessor {
         // Use clock_timestamp() rather than transaction-start now() per Amendment B.4
         const expiredClaims = await trx
           .selectFrom("resource_claims")
+          .where("tenant_id", "=", tid)
           .where("state", "=", "HELD")
           .where(sql<boolean>`hold_expires_at <= clock_timestamp()`)
           .select(["id", "booking_id", "tenant_id"])
@@ -59,6 +60,7 @@ export class HoldReaperProcessor {
               state: "EXPIRED",
               blocking: false,
             })
+            .where("tenant_id", "=", tid)
             .where("id", "=", claim.id)
             .execute();
 
@@ -69,6 +71,7 @@ export class HoldReaperProcessor {
               version: eb("version", "+", 1),
               hold_expires_at: null,
             }))
+            .where("tenant_id", "=", tid)
             .where("id", "=", claim.booking_id)
             .where("status", "=", "HELD")
             .execute();

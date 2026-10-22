@@ -1,18 +1,12 @@
 import "../env-loader.js";
 import { FastifyPluginAsync } from "fastify";
-import {
-  BookingId,
-  PaymentIntentId,
-  PaymentCaptureId,
-  TenantId,
-} from "@velvetai/contracts";
+import { BookingId, PaymentIntentId, PaymentCaptureId, TenantId } from "@velvetai/contracts";
 import { PaymentService } from "@velvetai/application";
 import { PayPalSandboxAdapter } from "@velvetai/integrations-paypal";
 import { createDatabaseClient } from "@velvetai/db";
 
 const databaseUrl =
-  process.env.DATABASE_URL ||
-  "postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable";
+  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
 const db = createDatabaseClient(databaseUrl);
 
 // Instantiate PayPal sandbox adapter with explicit sandbox validation
@@ -22,7 +16,9 @@ const paypalWebhookId = process.env.PAYPAL_WEBHOOK_ID || "WH-SANDBOX-DEFAULT";
 const paypalEnv = process.env.PAYPAL_ENVIRONMENT || "sandbox";
 
 if (paypalEnv !== "sandbox") {
-  throw new Error("Only PayPal sandbox environment is permitted in Epic 3; live configuration is rejected");
+  throw new Error(
+    "Only PayPal sandbox environment is permitted in Epic 3; live configuration is rejected",
+  );
 }
 
 const paypalAdapter = new PayPalSandboxAdapter({

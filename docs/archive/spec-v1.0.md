@@ -1,36 +1,41 @@
 # ARCHIVED — DO NOT USE FOR IMPLEMENTATION
+
 The current sources of truth are `/spec.md` and `/SPEC_V1_1_AMENDMENT.md`.
 
 ---
+
 ---
+
 name: velvetAI Software Specification
 overview: Production-grade software specification and workflow documentation for velvetAI, the selected PayPal AI Hackathon project. velvetAI makes local services bookable by AI assistants, secures appointments with forecast-sized PayPal deposits, and validates agent safety through an automated Abuse Lab.
 todos:
-  - id: approve-spec
-    content: Review and approve the velvetAI product boundaries, architecture decisions, and MVP acceptance criteria
-    status: pending
-  - id: foundation
-    content: Build the monorepo, tenant/auth foundation, PostgreSQL schema, idempotency layer, outbox, and observability
-    status: pending
-  - id: scheduling-core
-    content: Build service catalog, resource availability, quotes, concurrency-safe holds, bookings, cancellations, rescheduling, and waitlist
-    status: pending
-  - id: paypal-core
-    content: Integrate PayPal sandbox order capture, refunds, invoices, verified webhooks, and reconciliation
-    status: pending
-  - id: agent-surfaces
-    content: Expose the shared booking tools through MCP, WebMCP progressive enhancement, and the in-page Ask AI experience
-    status: pending
-  - id: forecasting-ui
-    content: Build no-show, fill, and cash forecasts plus the Bryntum scheduler and quality metrics
-    status: pending
-  - id: abuse-lab
-    content: Implement at least 20 deterministic abuse scenarios and enforce zero critical or high-severity failures
-    status: pending
-  - id: deploy-submit
-    content: Deploy on Render, complete documentation and threat model, record the demo, and submit by Nov 11
-    status: pending
-isProject: false
+
+- id: approve-spec
+  content: Review and approve the velvetAI product boundaries, architecture decisions, and MVP acceptance criteria
+  status: pending
+- id: foundation
+  content: Build the monorepo, tenant/auth foundation, PostgreSQL schema, idempotency layer, outbox, and observability
+  status: pending
+- id: scheduling-core
+  content: Build service catalog, resource availability, quotes, concurrency-safe holds, bookings, cancellations, rescheduling, and waitlist
+  status: pending
+- id: paypal-core
+  content: Integrate PayPal sandbox order capture, refunds, invoices, verified webhooks, and reconciliation
+  status: pending
+- id: agent-surfaces
+  content: Expose the shared booking tools through MCP, WebMCP progressive enhancement, and the in-page Ask AI experience
+  status: pending
+- id: forecasting-ui
+  content: Build no-show, fill, and cash forecasts plus the Bryntum scheduler and quality metrics
+  status: pending
+- id: abuse-lab
+  content: Implement at least 20 deterministic abuse scenarios and enforce zero critical or high-severity failures
+  status: pending
+- id: deploy-submit
+  content: Deploy on Render, complete documentation and threat model, record the demo, and submit by Nov 11
+  status: pending
+  isProject: false
+
 ---
 
 # velvetAI Software Specification and Workflow Documentation

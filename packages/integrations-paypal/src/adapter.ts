@@ -250,16 +250,28 @@ export class PayPalSandboxAdapter implements PaymentPort {
     ) {
       sellerReceivableBreakdown = {
         grossAmount: {
-          currency: currencyCodeSchema.parse(data.seller_receivable_breakdown.gross_amount.currency_code),
-          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_receivable_breakdown.gross_amount.value)),
+          currency: currencyCodeSchema.parse(
+            data.seller_receivable_breakdown.gross_amount.currency_code,
+          ),
+          valueMinor: moneyMinorSchema.parse(
+            decimalToMinorUnits(data.seller_receivable_breakdown.gross_amount.value),
+          ),
         },
         paypalFee: {
-          currency: currencyCodeSchema.parse(data.seller_receivable_breakdown.paypal_fee.currency_code),
-          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_receivable_breakdown.paypal_fee.value)),
+          currency: currencyCodeSchema.parse(
+            data.seller_receivable_breakdown.paypal_fee.currency_code,
+          ),
+          valueMinor: moneyMinorSchema.parse(
+            decimalToMinorUnits(data.seller_receivable_breakdown.paypal_fee.value),
+          ),
         },
         netAmount: {
-          currency: currencyCodeSchema.parse(data.seller_receivable_breakdown.net_amount.currency_code),
-          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_receivable_breakdown.net_amount.value)),
+          currency: currencyCodeSchema.parse(
+            data.seller_receivable_breakdown.net_amount.currency_code,
+          ),
+          valueMinor: moneyMinorSchema.parse(
+            decimalToMinorUnits(data.seller_receivable_breakdown.net_amount.value),
+          ),
         },
       };
     }
@@ -328,16 +340,28 @@ export class PayPalSandboxAdapter implements PaymentPort {
     ) {
       sellerPayableBreakdown = {
         grossAmount: {
-          currency: currencyCodeSchema.parse(data.seller_payable_breakdown.gross_amount.currency_code),
-          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_payable_breakdown.gross_amount.value)),
+          currency: currencyCodeSchema.parse(
+            data.seller_payable_breakdown.gross_amount.currency_code,
+          ),
+          valueMinor: moneyMinorSchema.parse(
+            decimalToMinorUnits(data.seller_payable_breakdown.gross_amount.value),
+          ),
         },
         paypalFee: {
-          currency: currencyCodeSchema.parse(data.seller_payable_breakdown.paypal_fee.currency_code),
-          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_payable_breakdown.paypal_fee.value)),
+          currency: currencyCodeSchema.parse(
+            data.seller_payable_breakdown.paypal_fee.currency_code,
+          ),
+          valueMinor: moneyMinorSchema.parse(
+            decimalToMinorUnits(data.seller_payable_breakdown.paypal_fee.value),
+          ),
         },
         netAmount: {
-          currency: currencyCodeSchema.parse(data.seller_payable_breakdown.net_amount.currency_code),
-          valueMinor: moneyMinorSchema.parse(decimalToMinorUnits(data.seller_payable_breakdown.net_amount.value)),
+          currency: currencyCodeSchema.parse(
+            data.seller_payable_breakdown.net_amount.currency_code,
+          ),
+          valueMinor: moneyMinorSchema.parse(
+            decimalToMinorUnits(data.seller_payable_breakdown.net_amount.value),
+          ),
         },
         ...(data.seller_payable_breakdown.total_refunded_amount
           ? {
@@ -378,7 +402,14 @@ export class PayPalSandboxAdapter implements PaymentPort {
     const transmissionSig = headers["paypal-transmission-sig"];
     const webhookId = params.webhookId ?? this.webhookId;
 
-    if (!transmissionId || !transmissionTime || !certUrl || !authAlgo || !transmissionSig || !webhookId) {
+    if (
+      !transmissionId ||
+      !transmissionTime ||
+      !certUrl ||
+      !authAlgo ||
+      !transmissionSig ||
+      !webhookId
+    ) {
       return false;
     }
 

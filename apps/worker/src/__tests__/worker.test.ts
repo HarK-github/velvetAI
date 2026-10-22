@@ -126,7 +126,9 @@ describe("OutboxWorker & OutboxProcessor", () => {
     const eventId = generateUUIDv7();
     const tenantId = tenantIdSchema.parse(generateUUIDv7());
 
-    const expiredClaimTime = new Date(Date.now() - 60_000).toISOString() as unknown as Rfc3339Timestamp;
+    const expiredClaimTime = new Date(
+      Date.now() - 60_000,
+    ).toISOString() as unknown as Rfc3339Timestamp;
     store.addEvent({
       id: eventId as unknown as UUID,
       tenantId,

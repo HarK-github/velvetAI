@@ -7,6 +7,7 @@ import {
   ianaTimeZoneSchema,
   locationIdSchema,
   moneySchema,
+  moneyMinorSchema,
   resourceIdSchema,
   rfc3339TimestampSchema,
   serviceIdSchema,
@@ -218,8 +219,39 @@ export type PrepareCancellationInput = z.infer<typeof prepareCancellationInputSc
 export const prepareCancellationResponseSchema = z.object({
   bookingId: bookingIdSchema,
   cancellationAllowed: z.boolean(),
-  refundEligibleMinor: z.string(),
+  refundEligibleMinor: moneyMinorSchema,
   currency: currencyCodeSchema,
   policySummary: z.string(),
+  cancellationConfirmationToken: z.string().optional(),
+  cutoffPassed: z.boolean().optional(),
+  hoursUntilStart: z.number().optional(),
 });
 export type PrepareCancellationResponse = z.infer<typeof prepareCancellationResponseSchema>;
+
+export const commitCancellationInputSchema = z
+  .object({
+    cancellationConfirmationToken: z.string().min(10),
+    reason: z.string().max(500).optional(),
+  })
+  .strict();
+export type CommitCancellationInput = z.infer<typeof commitCancellationInputSchema>;
+
+export const commitCancellationResponseSchema = z.object({
+  bookingId: bookingIdSchema,
+  status: z.enum(["CANCELLED", "CANCEL_REQUESTED"]),
+  refundStatus: z.enum(["COMPLETED", "NO_REFUND", "UNCERTAIN"]),
+  refundAmountMinor: moneyMinorSchema,
+  currency: currencyCodeSchema,
+  resourceClaimReleased: z.boolean(),
+  cancelledAt: rfc3339TimestampSchema,
+});
+export type CommitCancellationResponse = z.infer<typeof commitCancellationResponseSchema>;
+
+export const attendanceActionResponseSchema = z.object({
+  bookingId: bookingIdSchema,
+  status: z.enum(["CONFIRMED", "CHECKED_IN", "COMPLETED", "NO_SHOW"]),
+  previousStatus: z.string(),
+  version: z.number().int().positive(),
+  updatedAt: rfc3339TimestampSchema,
+});
+export type AttendanceActionResponse = z.infer<typeof attendanceActionResponseSchema>;

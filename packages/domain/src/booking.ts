@@ -10,10 +10,7 @@ import {
   BookingStatus,
   ResourceClaimState,
 } from "@velvetai/contracts";
-import {
-  InvariantViolationError,
-  InvalidStateTransitionError,
-} from "./errors.js";
+import { InvariantViolationError, InvalidStateTransitionError } from "./errors.js";
 
 export interface BookingQuoteProps {
   id: BookingQuoteId;
@@ -194,7 +191,9 @@ export class Booking {
 
   assignResource(resourceId: ResourceId): void {
     if (this._status !== "HELD" && this._status !== "CONFIRMED") {
-      throw new InvariantViolationError("Cannot assign resource in terminal or pending payment state");
+      throw new InvariantViolationError(
+        "Cannot assign resource in terminal or pending payment state",
+      );
     }
     this._resourceId = resourceId;
     this._version += 1;

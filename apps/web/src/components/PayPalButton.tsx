@@ -50,7 +50,8 @@ export function loadPayPalV6Script(env: "sandbox" | "production" = "sandbox"): P
       resolve();
       return;
     }
-    const targetUrl = env === "production" ? PAYPAL_V6_PROD_CORE_SCRIPT_URL : PAYPAL_V6_CORE_SCRIPT_URL;
+    const targetUrl =
+      env === "production" ? PAYPAL_V6_PROD_CORE_SCRIPT_URL : PAYPAL_V6_CORE_SCRIPT_URL;
     const existing = document.querySelector(`script[src="${targetUrl}"]`);
     if (existing) {
       resolve();
@@ -87,8 +88,8 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
   onPaymentOutcome,
   onPaymentExpired,
   onCancel,
-  clientId =
-    (typeof import.meta !== "undefined" && (import.meta.env?.VITE_PAYPAL_CLIENT_ID as string | undefined)) ||
+  clientId = (typeof import.meta !== "undefined" &&
+    (import.meta.env?.VITE_PAYPAL_CLIENT_ID as string | undefined)) ||
     "placeholder_paypal_sandbox_client_id",
   environment = "sandbox",
 }) => {
@@ -280,9 +281,7 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
             fontSize: "11px",
           }}
         >
-          <span>
-            {isExpired ? "PAYMENT WINDOW EXPIRED" : "PAYPAL PAYMENT WINDOW ACTIVE"}
-          </span>
+          <span>{isExpired ? "PAYMENT WINDOW EXPIRED" : "PAYPAL PAYMENT WINDOW ACTIVE"}</span>
           <span style={{ fontWeight: 700, color: isExpired ? "#ef4444" : "#10b981" }}>
             {formatTimer(countdownSeconds)}
           </span>

@@ -19,6 +19,12 @@ import {
   Rfc3339Timestamp,
   IanaTimeZone,
   CancellationPolicyId,
+  PrepareCancellationInput,
+  PrepareCancellationResponse,
+  CommitCancellationInput,
+  CommitCancellationResponse,
+  AttendanceActionResponse,
+  PaymentCaptureId,
 } from "@velvetai/contracts";
 import {
   SlotUnavailableError,
@@ -27,11 +33,9 @@ import {
   IdempotencyConflictError,
   DomainError,
 } from "@velvetai/contracts";
-import {
-  signBookingIntent,
-  verifyBookingIntent,
-} from "./booking-intent.js";
+import { signBookingIntent, verifyBookingIntent } from "./booking-intent.js";
 import { canonicalHash, sha256Hex } from "./canonicalizer.js";
+import type { PaymentService } from "./payment-service.js";
 
 export interface BookingActor {
   subject: string;
@@ -41,7 +45,10 @@ export interface BookingActor {
 }
 
 export class BookingService {
-  constructor(private readonly db: Kysely<Database>) {}
+  constructor(
+    private readonly db: Kysely<Database>,
+    private readonly paymentService?: PaymentService,
+  ) {}
 
   /**
    * Generates a 5-minute versioned booking quote with canonical pricing and policy snapshots.
@@ -62,7 +69,11 @@ export class BookingService {
         .executeTakeFirst();
 
       if (!service) {
-        throw new DomainError("Service not found or has no active published version", "SERVICE_NOT_FOUND", 404);
+        throw new DomainError(
+          "Service not found or has no active published version",
+          "SERVICE_NOT_FOUND",
+          404,
+        );
       }
 
       const startsAt = new Date(input.startsAt);
@@ -268,7 +279,9 @@ export class BookingService {
 
       // 6. Persist immutable server-side hold snapshot per Amendment D.1
       const snapshotId = crypto.randomUUID();
-      const cancellationHash = sha256Hex(`cancellation-policy-${service.cancellation_policy_id}-v1`);
+      const cancellationHash = sha256Hex(
+        `cancellation-policy-${service.cancellation_policy_id}-v1`,
+      );
       const canonicalInputHash = canonicalHash(input);
 
       await trx
@@ -391,10 +404,7 @@ export class BookingService {
   /**
    * Retrieves terms from the immutable server-side snapshot for buyer approval per Section D.4.
    */
-  async getApprovalDetails(
-    tenantId: TenantId,
-    locator: string,
-  ): Promise<BookingApprovalDetails> {
+  async getApprovalDetails(tenantId: TenantId, locator: string): Promise<BookingApprovalDetails> {
     const cleanLocator = locator.replace(/^\/v1\/booking-approvals\//, "");
     return await withTenantTransaction(this.db, tenantId, async (trx) => {
       const conf = await trx
@@ -405,12 +415,20 @@ export class BookingService {
         .executeTakeFirst();
 
       if (!conf) {
-        throw new DomainError("Approval interaction expired or not found", "APPROVAL_NOT_FOUND", 404);
+        throw new DomainError(
+          "Approval interaction expired or not found",
+          "APPROVAL_NOT_FOUND",
+          404,
+        );
       }
 
       const snapshot = await trx
         .selectFrom("booking_hold_snapshots")
-        .innerJoin("service_versions", "service_versions.id", "booking_hold_snapshots.service_version_id")
+        .innerJoin(
+          "service_versions",
+          "service_versions.id",
+          "booking_hold_snapshots.service_version_id",
+        )
         .where("booking_hold_snapshots.booking_id", "=", conf.booking_id)
         .where("booking_hold_snapshots.tenant_id", "=", tenantId)
         .select([
@@ -442,7 +460,8 @@ export class BookingService {
         allInPriceMinor: snapshot.total_minor,
         depositMinor: snapshot.deposit_minor,
         currency: snapshot.currency as CurrencyCode,
-        cancellationSummary: "Full deposit refund if cancelled at least 24 hours prior to appointment.",
+        cancellationSummary:
+          "Full deposit refund if cancelled at least 24 hours prior to appointment.",
         requestingAgent: snapshot.client_id,
         expiresAt: conf.expires_at.toISOString() as Rfc3339Timestamp,
       };
@@ -467,11 +486,19 @@ export class BookingService {
         .executeTakeFirst();
 
       if (!conf) {
-        throw new DomainError("Approval interaction expired or not found", "APPROVAL_NOT_FOUND", 404);
+        throw new DomainError(
+          "Approval interaction expired or not found",
+          "APPROVAL_NOT_FOUND",
+          404,
+        );
       }
 
       if (conf.consumed_at) {
-        throw new DomainError("Confirmation already consumed", "CONFIRMATION_ALREADY_CONSUMED", 409);
+        throw new DomainError(
+          "Confirmation already consumed",
+          "CONFIRMATION_ALREADY_CONSUMED",
+          409,
+        );
       }
 
       const now = new Date();
@@ -535,13 +562,17 @@ export class BookingService {
 
       if (existingIdempotency) {
         if (existingIdempotency.request_hash !== payloadHash) {
-          throw new IdempotencyConflictError("Idempotency key reused with different request payload");
+          throw new IdempotencyConflictError(
+            "Idempotency key reused with different request payload",
+          );
         }
         if (existingIdempotency.state === "COMPLETED" && existingIdempotency.response_body) {
           return existingIdempotency.response_body as CommitBookingResponse;
         }
         if (existingIdempotency.state === "EXECUTING") {
-          throw new IdempotencyConflictError("Concurrent execution with same idempotency key in progress");
+          throw new IdempotencyConflictError(
+            "Concurrent execution with same idempotency key in progress",
+          );
         }
       }
 
@@ -578,13 +609,25 @@ export class BookingService {
 
       // Tenant and actor substitution prevention
       if (claims.tenant_id !== tenantId) {
-        throw new DomainError("Tenant substitution detected in signed intent", "TENANT_MISMATCH", 403);
+        throw new DomainError(
+          "Tenant substitution detected in signed intent",
+          "TENANT_MISMATCH",
+          403,
+        );
       }
       if (claims.client_id !== clientId) {
-        throw new DomainError("OAuth client substitution detected in signed intent", "CLIENT_MISMATCH", 403);
+        throw new DomainError(
+          "OAuth client substitution detected in signed intent",
+          "CLIENT_MISMATCH",
+          403,
+        );
       }
       if (claims.sub !== actor.subject) {
-        throw new DomainError("Actor subject substitution detected in signed intent", "ACTOR_MISMATCH", 403);
+        throw new DomainError(
+          "Actor subject substitution detected in signed intent",
+          "ACTOR_MISMATCH",
+          403,
+        );
       }
 
       // 3. Lock and verify buyer confirmation record per Section D.1/D.6
@@ -612,11 +655,7 @@ export class BookingService {
         providedHashBuf.length !== storedHashBuf.length ||
         !crypto.timingSafeEqual(providedHashBuf, storedHashBuf)
       ) {
-        throw new DomainError(
-          "Invalid buyer confirmation token",
-          "INVALID_CONFIRMATION",
-          400,
-        );
+        throw new DomainError("Invalid buyer confirmation token", "INVALID_CONFIRMATION", 400);
       }
 
       if (confirmation.consumed_at) {
@@ -636,7 +675,11 @@ export class BookingService {
         .executeTakeFirst();
 
       if (existingIntentCommit) {
-        throw new DomainError("Signed intent has already been committed", "INTENT_REPLAY_DETECTED", 409);
+        throw new DomainError(
+          "Signed intent has already been committed",
+          "INTENT_REPLAY_DETECTED",
+          409,
+        );
       }
 
       // 4. Lock hold row in bookings
@@ -903,4 +946,710 @@ export class BookingService {
 
     return totalReaped;
   }
+
+  /**
+   * Prepares cancellation by validating appointment time against 24-hour cutoff policy
+   * and generating a tamper-proof signed cancellationConfirmationToken.
+   */
+  async prepareCancellation(
+    tenantId: TenantId,
+    _actor: BookingActor,
+    bookingId: BookingId,
+    _input?: PrepareCancellationInput,
+  ): Promise<PrepareCancellationResponse> {
+    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+      const booking = await trx
+        .selectFrom("bookings")
+        .innerJoin("booking_quotes", "booking_quotes.id", "bookings.quote_id")
+        .where("bookings.id", "=", bookingId)
+        .where("bookings.tenant_id", "=", tenantId)
+        .select([
+          "bookings.id",
+          "bookings.tenant_id",
+          "bookings.status",
+          "bookings.starts_at",
+          "bookings.ends_at",
+          "booking_quotes.deposit_minor",
+          "booking_quotes.currency",
+        ])
+        .executeTakeFirst();
+
+      if (!booking) {
+        throw new DomainError(`Booking ${bookingId} was not found`, "BOOKING_NOT_FOUND", 404);
+      }
+
+      if (
+        booking.status !== "CONFIRMED" &&
+        booking.status !== "HELD" &&
+        booking.status !== "CAPTURE_UNCERTAIN"
+      ) {
+        throw new DomainError(
+          `Cannot cancel booking in status ${booking.status}`,
+          "INVALID_BOOKING_STATE",
+          400,
+        );
+      }
+
+      const now = new Date();
+      const startsAt = new Date(booking.starts_at);
+      const diffMs = startsAt.getTime() - now.getTime();
+      const hoursUntilStart = Math.max(0, diffMs / (1000 * 60 * 60));
+      const cutoffHours = 24; // Standard 24-hour cutoff
+      const cutoffPassed = hoursUntilStart < cutoffHours;
+
+      const refundEligibleMinor = cutoffPassed ? "0" : booking.deposit_minor || "0";
+      const policySummary = cutoffPassed
+        ? "Late cancellation: within 24 hours of appointment start. Deposit is non-refundable."
+        : "Standard cancellation: more than 24 hours prior to appointment start. Eligible for 100% deposit refund.";
+
+      const tokenPayload: CancellationConfirmationPayload = {
+        tenantId,
+        bookingId,
+        refundEligibleMinor,
+        currency: booking.currency,
+        cutoffPassed,
+        expiresAt: Date.now() + 15 * 60_000, // 15 min TTL
+      };
+
+      const cancellationConfirmationToken = signCancellationConfirmation(tokenPayload);
+
+      return {
+        bookingId,
+        cancellationAllowed: true,
+        refundEligibleMinor: refundEligibleMinor as MoneyMinor,
+        currency: booking.currency as CurrencyCode,
+        policySummary,
+        cancellationConfirmationToken,
+        cutoffPassed,
+        hoursUntilStart: Math.round(hoursUntilStart * 10) / 10,
+      };
+    });
+  }
+
+  /**
+   * Commits cancellation under row lock.
+   * If capture is uncertain, transitions to CANCEL_REQUESTED and keeps resource claim blocking.
+   * Otherwise transitions to CANCELLED, releases resource claim, and initiates refund if eligible.
+   */
+  async commitCancellation(
+    tenantId: TenantId,
+    actor: BookingActor,
+    bookingId: BookingId,
+    input: CommitCancellationInput,
+  ): Promise<CommitCancellationResponse> {
+    const tokenPayload = verifyCancellationConfirmation(input.cancellationConfirmationToken);
+    if (tokenPayload.tenantId !== tenantId || tokenPayload.bookingId !== bookingId) {
+      throw new DomainError(
+        "Cancellation token does not match target booking",
+        "TOKEN_MISMATCH",
+        400,
+      );
+    }
+
+    const result = await withTenantTransaction(this.db, tenantId, async (trx) => {
+      // 1. Lock booking row
+      const booking = await trx
+        .selectFrom("bookings")
+        .where("id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!booking) {
+        throw new DomainError(`Booking ${bookingId} was not found`, "BOOKING_NOT_FOUND", 404);
+      }
+
+      // Idempotent re-execution
+      if (booking.status === "CANCELLED") {
+        return {
+          bookingId,
+          status: "CANCELLED" as const,
+          refundStatus:
+            BigInt(tokenPayload.refundEligibleMinor) > 0n
+              ? ("COMPLETED" as const)
+              : ("NO_REFUND" as const),
+          refundAmountMinor: tokenPayload.refundEligibleMinor as MoneyMinor,
+          currency: tokenPayload.currency as CurrencyCode,
+          resourceClaimReleased: true,
+          cancelledAt: new Date().toISOString() as Rfc3339Timestamp,
+          alreadyDone: true,
+          captureId: undefined as PaymentCaptureId | undefined,
+        };
+      }
+
+      if (booking.status === "CANCEL_REQUESTED") {
+        return {
+          bookingId,
+          status: "CANCEL_REQUESTED" as const,
+          refundStatus: "UNCERTAIN" as const,
+          refundAmountMinor: tokenPayload.refundEligibleMinor as MoneyMinor,
+          currency: tokenPayload.currency as CurrencyCode,
+          resourceClaimReleased: false,
+          cancelledAt: new Date().toISOString() as Rfc3339Timestamp,
+          alreadyDone: true,
+          captureId: undefined as PaymentCaptureId | undefined,
+        };
+      }
+
+      if (
+        booking.status !== "CONFIRMED" &&
+        booking.status !== "HELD" &&
+        booking.status !== "CAPTURE_UNCERTAIN"
+      ) {
+        throw new InvalidStateTransitionError(booking.status, "CANCELLED");
+      }
+
+      // 2. Select payment capture
+      const capture = await trx
+        .selectFrom("payment_captures")
+        .where("booking_id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .executeTakeFirst();
+
+      // 3. Lock resource claim
+      const claim = await trx
+        .selectFrom("resource_claims")
+        .where("booking_id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .forUpdate()
+        .executeTakeFirst();
+
+      // 4. If capture is uncertain, move to CANCEL_REQUESTED and keep claim blocking!
+      const isCaptureUncertain =
+        booking.status === "CAPTURE_UNCERTAIN" ||
+        (capture && (capture.state === "PENDING" || capture.state === "CAPTURE_UNCERTAIN"));
+
+      if (isCaptureUncertain) {
+        await trx
+          .updateTable("bookings")
+          .set((eb) => ({
+            status: "CANCEL_REQUESTED",
+            version: eb("version", "+", 1),
+          }))
+          .where("id", "=", bookingId)
+          .where("tenant_id", "=", tenantId)
+          .execute();
+
+        await trx
+          .insertInto("outbox_events")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: tenantId,
+            aggregate_type: "booking",
+            aggregate_id: bookingId,
+            event_type: "booking.cancel_requested",
+            payload: { bookingId, reason: input.reason },
+          })
+          .execute();
+
+        await trx
+          .insertInto("audit_events")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: tenantId,
+            actor_id: actor.userId,
+            actor_type:
+              actor.roles.includes("OWNER") || actor.roles.includes("MANAGER")
+                ? "MERCHANT"
+                : "CUSTOMER",
+            action: "booking.cancel_requested",
+            resource_type: "booking",
+            resource_id: bookingId,
+            metadata_redacted: { reason: input.reason, captureState: "CAPTURE_UNCERTAIN" },
+          })
+          .execute();
+
+        return {
+          bookingId,
+          status: "CANCEL_REQUESTED" as const,
+          refundStatus: "UNCERTAIN" as const,
+          refundAmountMinor: tokenPayload.refundEligibleMinor as MoneyMinor,
+          currency: tokenPayload.currency as CurrencyCode,
+          resourceClaimReleased: false,
+          cancelledAt: new Date().toISOString() as Rfc3339Timestamp,
+          alreadyDone: false,
+          captureId: undefined as PaymentCaptureId | undefined,
+        };
+      }
+
+      // 5. Normal cancellation: transition booking to CANCELLED
+      await trx
+        .updateTable("bookings")
+        .set((eb) => ({
+          status: "CANCELLED",
+          version: eb("version", "+", 1),
+        }))
+        .where("id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .execute();
+
+      // 6. Release resource claim
+      if (claim) {
+        await trx
+          .updateTable("resource_claims")
+          .set({
+            state: "RELEASED",
+            blocking: false,
+          })
+          .where("id", "=", claim.id)
+          .where("tenant_id", "=", tenantId)
+          .execute();
+      }
+
+      const refundEligible = BigInt(tokenPayload.refundEligibleMinor) > 0n;
+      const hasCompletedCapture =
+        capture && (capture.state === "COMPLETED" || capture.state === "PARTIALLY_REFUNDED");
+      const refundStatus =
+        refundEligible && hasCompletedCapture ? ("COMPLETED" as const) : ("NO_REFUND" as const);
+
+      await trx
+        .insertInto("outbox_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          aggregate_type: "booking",
+          aggregate_id: bookingId,
+          event_type: "booking.cancelled",
+          payload: {
+            bookingId,
+            refundEligibleMinor: tokenPayload.refundEligibleMinor,
+            refundStatus,
+            reason: input.reason,
+          },
+        })
+        .execute();
+
+      await trx
+        .insertInto("audit_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          actor_id: actor.userId,
+          actor_type:
+            actor.roles.includes("OWNER") || actor.roles.includes("MANAGER")
+              ? "MERCHANT"
+              : "CUSTOMER",
+          action: "booking.cancelled",
+          resource_type: "booking",
+          resource_id: bookingId,
+          metadata_redacted: {
+            refundEligibleMinor: tokenPayload.refundEligibleMinor,
+            refundStatus,
+          },
+        })
+        .execute();
+
+      return {
+        bookingId,
+        status: "CANCELLED" as const,
+        refundStatus,
+        refundAmountMinor: (refundStatus === "COMPLETED"
+          ? tokenPayload.refundEligibleMinor
+          : "0") as MoneyMinor,
+        currency: tokenPayload.currency as CurrencyCode,
+        resourceClaimReleased: true,
+        cancelledAt: new Date().toISOString() as Rfc3339Timestamp,
+        alreadyDone: false,
+        captureId: (refundEligible && hasCompletedCapture && capture ? capture.id : undefined) as
+          PaymentCaptureId | undefined,
+      };
+    });
+
+    // If refund is due and paymentService is available, trigger refund
+    if (result.captureId && this.paymentService && !result.alreadyDone) {
+      try {
+        await this.paymentService.refundPayment({
+          tenantId,
+          captureId: result.captureId,
+          amountMinor: tokenPayload.refundEligibleMinor,
+          reason: input.reason || "Customer cancellation",
+          actorRole: "BUYER",
+          idempotencyKey: `cancel-refund-${bookingId}`,
+        });
+      } catch (_err) {
+        // Outbox event guarantees downstream reconciliation
+      }
+    }
+
+    return {
+      bookingId: result.bookingId,
+      status: result.status,
+      refundStatus: result.refundStatus,
+      refundAmountMinor: result.refundAmountMinor,
+      currency: result.currency,
+      resourceClaimReleased: result.resourceClaimReleased,
+      cancelledAt: result.cancelledAt,
+    };
+  }
+
+  private checkMerchantRole(actor: BookingActor): void {
+    const allowed = actor.roles.some((r) =>
+      ["OWNER", "MANAGER", "SCHEDULER", "MERCHANT"].includes(r.toUpperCase()),
+    );
+    if (!allowed) {
+      throw new DomainError("Forbidden: scheduler or manager role required", "FORBIDDEN", 403);
+    }
+  }
+
+  /**
+   * Merchant check-in: verifies merchant/scheduler role and 2-hour window.
+   */
+  async checkInBooking(
+    tenantId: TenantId,
+    actor: BookingActor,
+    bookingId: BookingId,
+  ): Promise<AttendanceActionResponse> {
+    this.checkMerchantRole(actor);
+
+    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+      const booking = await trx
+        .selectFrom("bookings")
+        .where("id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!booking) {
+        throw new DomainError(`Booking ${bookingId} was not found`, "BOOKING_NOT_FOUND", 404);
+      }
+
+      if (booking.status === "CHECKED_IN") {
+        return {
+          bookingId,
+          status: "CHECKED_IN",
+          previousStatus: "CHECKED_IN",
+          version: booking.version,
+          updatedAt: new Date().toISOString() as Rfc3339Timestamp,
+        };
+      }
+
+      if (booking.status !== "CONFIRMED") {
+        throw new DomainError(
+          `Cannot check in booking in status ${booking.status}`,
+          "INVALID_BOOKING_STATE",
+          400,
+        );
+      }
+
+      const now = Date.now();
+      const startsAt = new Date(booking.starts_at).getTime();
+      const twoHoursMs = 2 * 60 * 60 * 1000;
+      if (startsAt - now > twoHoursMs) {
+        throw new DomainError(
+          "Check-in is only permitted within 2 hours of appointment start",
+          "CHECK_IN_TOO_EARLY",
+          400,
+        );
+      }
+
+      const previousStatus = booking.status;
+      const newVersion = booking.version + 1;
+
+      await trx
+        .updateTable("bookings")
+        .set({
+          status: "CHECKED_IN",
+          version: newVersion,
+        })
+        .where("id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .execute();
+
+      await trx
+        .insertInto("outbox_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          aggregate_type: "booking",
+          aggregate_id: bookingId,
+          event_type: "booking.checked_in",
+          payload: { bookingId, version: newVersion },
+        })
+        .execute();
+
+      await trx
+        .insertInto("audit_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          actor_id: actor.userId,
+          actor_type: "MERCHANT",
+          action: "booking.checked_in",
+          resource_type: "booking",
+          resource_id: bookingId,
+          metadata_redacted: { previousStatus, newVersion },
+        })
+        .execute();
+
+      return {
+        bookingId,
+        status: "CHECKED_IN",
+        previousStatus,
+        version: newVersion,
+        updatedAt: new Date().toISOString() as Rfc3339Timestamp,
+      };
+    });
+  }
+
+  /**
+   * Merchant completion: transitions to COMPLETED, releases resource claim, and enables balance invoicing.
+   */
+  async completeBooking(
+    tenantId: TenantId,
+    actor: BookingActor,
+    bookingId: BookingId,
+  ): Promise<AttendanceActionResponse> {
+    this.checkMerchantRole(actor);
+
+    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+      const booking = await trx
+        .selectFrom("bookings")
+        .where("id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!booking) {
+        throw new DomainError(`Booking ${bookingId} was not found`, "BOOKING_NOT_FOUND", 404);
+      }
+
+      if (booking.status === "COMPLETED") {
+        return {
+          bookingId,
+          status: "COMPLETED",
+          previousStatus: "COMPLETED",
+          version: booking.version,
+          updatedAt: new Date().toISOString() as Rfc3339Timestamp,
+        };
+      }
+
+      if (booking.status !== "CHECKED_IN" && booking.status !== "CONFIRMED") {
+        throw new DomainError(
+          `Cannot complete booking in status ${booking.status}`,
+          "INVALID_BOOKING_STATE",
+          400,
+        );
+      }
+
+      const previousStatus = booking.status;
+      const newVersion = booking.version + 1;
+
+      await trx
+        .updateTable("bookings")
+        .set({
+          status: "COMPLETED",
+          version: newVersion,
+        })
+        .where("id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .execute();
+
+      // Release resource claim
+      await trx
+        .updateTable("resource_claims")
+        .set({
+          state: "COMPLETED",
+          blocking: false,
+        })
+        .where("booking_id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .execute();
+
+      await trx
+        .insertInto("outbox_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          aggregate_type: "booking",
+          aggregate_id: bookingId,
+          event_type: "booking.completed",
+          payload: { bookingId, version: newVersion },
+        })
+        .execute();
+
+      await trx
+        .insertInto("audit_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          actor_id: actor.userId,
+          actor_type: "MERCHANT",
+          action: "booking.completed",
+          resource_type: "booking",
+          resource_id: bookingId,
+          metadata_redacted: { previousStatus, newVersion },
+        })
+        .execute();
+
+      return {
+        bookingId,
+        status: "COMPLETED",
+        previousStatus,
+        version: newVersion,
+        updatedAt: new Date().toISOString() as Rfc3339Timestamp,
+      };
+    });
+  }
+
+  /**
+   * Merchant no-show: enforces 15-minute grace period after appointment start,
+   * transitions to NO_SHOW, and releases resource claim.
+   */
+  async noShowBooking(
+    tenantId: TenantId,
+    actor: BookingActor,
+    bookingId: BookingId,
+  ): Promise<AttendanceActionResponse> {
+    this.checkMerchantRole(actor);
+
+    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+      const booking = await trx
+        .selectFrom("bookings")
+        .where("id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!booking) {
+        throw new DomainError(`Booking ${bookingId} was not found`, "BOOKING_NOT_FOUND", 404);
+      }
+
+      if (booking.status === "NO_SHOW") {
+        return {
+          bookingId,
+          status: "NO_SHOW",
+          previousStatus: "NO_SHOW",
+          version: booking.version,
+          updatedAt: new Date().toISOString() as Rfc3339Timestamp,
+        };
+      }
+
+      if (booking.status !== "CONFIRMED") {
+        throw new DomainError(
+          `Cannot mark no-show for booking in status ${booking.status}`,
+          "INVALID_BOOKING_STATE",
+          400,
+        );
+      }
+
+      const now = Date.now();
+      const startsAt = new Date(booking.starts_at).getTime();
+      const gracePeriodMs = 15 * 60 * 1000; // 15-minute grace period
+      if (now < startsAt + gracePeriodMs) {
+        throw new DomainError(
+          "Cannot mark no-show before appointment start plus 15-minute grace period",
+          "GRACE_PERIOD_ACTIVE",
+          400,
+        );
+      }
+
+      const previousStatus = booking.status;
+      const newVersion = booking.version + 1;
+
+      await trx
+        .updateTable("bookings")
+        .set({
+          status: "NO_SHOW",
+          version: newVersion,
+        })
+        .where("id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .execute();
+
+      // Release resource claim
+      await trx
+        .updateTable("resource_claims")
+        .set({
+          state: "RELEASED",
+          blocking: false,
+        })
+        .where("booking_id", "=", bookingId)
+        .where("tenant_id", "=", tenantId)
+        .execute();
+
+      await trx
+        .insertInto("outbox_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          aggregate_type: "booking",
+          aggregate_id: bookingId,
+          event_type: "booking.no_show",
+          payload: { bookingId, version: newVersion },
+        })
+        .execute();
+
+      await trx
+        .insertInto("audit_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          actor_id: actor.userId,
+          actor_type: "MERCHANT",
+          action: "booking.no_show",
+          resource_type: "booking",
+          resource_id: bookingId,
+          metadata_redacted: { previousStatus, newVersion },
+        })
+        .execute();
+
+      return {
+        bookingId,
+        status: "NO_SHOW",
+        previousStatus,
+        version: newVersion,
+        updatedAt: new Date().toISOString() as Rfc3339Timestamp,
+      };
+    });
+  }
+}
+
+interface CancellationConfirmationPayload {
+  tenantId: string;
+  bookingId: string;
+  refundEligibleMinor: string;
+  currency: string;
+  cutoffPassed: boolean;
+  expiresAt: number;
+}
+
+function signCancellationConfirmation(payload: CancellationConfirmationPayload): string {
+  const secret = process.env.APP_SECRET || "velvet-secret-cancellation-key";
+  const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", secret).update(data).digest("base64url");
+  return `${data}.${sig}`;
+}
+
+function verifyCancellationConfirmation(token: string): CancellationConfirmationPayload {
+  const secret = process.env.APP_SECRET || "velvet-secret-cancellation-key";
+  const parts = token.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new DomainError("Invalid cancellation token format", "INVALID_CANCELLATION_TOKEN", 400);
+  }
+  const data = parts[0];
+  const sig = parts[1];
+  const expectedSig = crypto.createHmac("sha256", secret).update(data).digest("base64url");
+  if (
+    sig.length !== expectedSig.length ||
+    !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))
+  ) {
+    throw new DomainError(
+      "Invalid cancellation token signature",
+      "INVALID_CANCELLATION_TOKEN",
+      400,
+    );
+  }
+  const payload = JSON.parse(
+    Buffer.from(data, "base64url").toString("utf8"),
+  ) as CancellationConfirmationPayload;
+  if (Date.now() > payload.expiresAt) {
+    throw new DomainError("Cancellation token has expired", "CANCELLATION_TOKEN_EXPIRED", 400);
+  }
+  return payload;
 }

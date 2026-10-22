@@ -14,7 +14,8 @@
     "build": "tsc -b",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --fileParallelism=false"
+    "test": "vitest run --fileParallelism=false",
+    "db:migrate": "tsx src/run-migrations.ts"
   },
   "dependencies": {
     "@velvetai/contracts": "workspace:*",
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@types/node": "^22.13.9",
     "@types/pg": "^8.11.11",
+    "tsx": "^4.19.3",
     "typescript": "^5.8.2",
     "vitest": "^3.0.8"
   }

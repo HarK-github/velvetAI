@@ -1,27 +1,29 @@
-import { FastifyPluginAsync } from "fastify";
-import {
-  BookingService,
-  BookingActor,
-} from "@velvetai/application";
-import {
-  createDatabaseClient,
-  withTenantTransaction,
-} from "@velvetai/db";
+import { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
+import { BookingService, BookingActor } from "@velvetai/application";
+import { createDatabaseClient, withTenantTransaction } from "@velvetai/db";
 import {
   createBookingQuoteInputSchema,
   prepareBookingInputSchema,
   commitBookingInputSchema,
   prepareCancellationInputSchema,
+  commitCancellationInputSchema,
+  BookingId,
   TenantId,
   UserId,
 } from "@velvetai/contracts";
+import { paymentService } from "./payments.js";
 
 // Shared database client instance for API booking routes
 const databaseUrl =
-  process.env.DATABASE_URL ||
-  "postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable";
+  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
 const db = createDatabaseClient(databaseUrl);
-const bookingService = new BookingService(db);
+let bookingService = new BookingService(db, paymentService);
+
+export function setBookingService(service: BookingService) {
+  bookingService = service;
+}
+
+export { bookingService };
 
 export const bookingsRoutes: FastifyPluginAsync = async (app) => {
   // POST /v1/booking-quotes: Request a 5-minute versioned booking quote
@@ -99,9 +101,18 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
     const customer = (body.customer as Record<string, unknown>) || {};
     // Normalize to prepare input format if legacy format used
     const preparePayload = {
-      serviceId: typeof body.serviceId === "string" ? body.serviceId : "01932b10-0001-7000-8000-000000000001",
-      locationId: typeof body.locationId === "string" ? body.locationId : "01932b10-0002-7000-8000-000000000001",
-      startsAt: typeof body.startsAt === "string" ? body.startsAt : new Date(Date.now() + 3600_000).toISOString(),
+      serviceId:
+        typeof body.serviceId === "string"
+          ? body.serviceId
+          : "01932b10-0001-7000-8000-000000000001",
+      locationId:
+        typeof body.locationId === "string"
+          ? body.locationId
+          : "01932b10-0002-7000-8000-000000000001",
+      startsAt:
+        typeof body.startsAt === "string"
+          ? body.startsAt
+          : new Date(Date.now() + 3600_000).toISOString(),
       timeZone: typeof body.timeZone === "string" ? body.timeZone : "UTC",
       customer: {
         email: typeof customer.email === "string" ? customer.email : "guest@velvetai.internal",
@@ -241,28 +252,26 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  // POST /v1/bookings/:id/prepare-cancellation: Prepare cancellation with policy quotation
-  app.post("/v1/bookings/:id/prepare-cancellation", async (request, reply) => {
+  const getBookingActor = (request: FastifyRequest, tenantId: TenantId): BookingActor => {
+    const principal = request.principal || {
+      subject: "dev|default-owner",
+      userId: "01932b10-0000-7000-8000-000000000002" as UserId,
+      tenantId,
+      roles: ["OWNER"],
+    };
+    return {
+      subject: principal.subject,
+      userId: principal.userId,
+      tenantId: principal.tenantId || tenantId,
+      roles: principal.roles || ["OWNER"],
+    };
+  };
+
+  // POST /v1/bookings/:id/prepare-cancellation & POST /v1/bookings/:id/cancel/prepare
+  const handlePrepareCancellation = async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
     const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
-
-    const booking = await withTenantTransaction(db, tenantId, async (trx) => {
-      return await trx
-        .selectFrom("bookings")
-        .where("id", "=", id)
-        .where("tenant_id", "=", tenantId)
-        .selectAll()
-        .executeTakeFirst();
-    });
-
-    if (!booking) {
-      return reply.status(404).send({
-        title: "Booking Not Found",
-        status: 404,
-        code: "booking_not_found",
-        detail: `Booking ${id} was not found`,
-      });
-    }
+    const actor = getBookingActor(request, tenantId);
 
     const parsed = prepareCancellationInputSchema.safeParse(request.body || {});
     if (!parsed.success) {
@@ -274,12 +283,70 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    return reply.status(200).send({
-      bookingId: booking.id,
-      cancellationAllowed: true,
-      refundEligibleMinor: "2000",
-      currency: "USD",
-      policySummary: "Eligible for 100% deposit refund prior to 24-hour cutoff.",
-    });
+    const result = await bookingService.prepareCancellation(
+      tenantId,
+      actor,
+      id as BookingId,
+      parsed.data,
+    );
+    return reply.status(200).send(result);
+  };
+
+  app.post("/v1/bookings/:id/prepare-cancellation", handlePrepareCancellation);
+  app.post("/v1/bookings/:id/cancel/prepare", handlePrepareCancellation);
+
+  // POST /v1/bookings/:id/cancel: Commit cancellation with signed confirmation token
+  app.post("/v1/bookings/:id/cancel", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const actor = getBookingActor(request, tenantId);
+
+    const parsed = commitCancellationInputSchema.safeParse(request.body || {});
+    if (!parsed.success) {
+      return reply.status(400).send({
+        title: "Bad Request",
+        status: 400,
+        code: "invalid_cancellation_input",
+        detail: parsed.error.message,
+      });
+    }
+
+    const result = await bookingService.commitCancellation(
+      tenantId,
+      actor,
+      id as BookingId,
+      parsed.data,
+    );
+    return reply.status(result.status === "CANCEL_REQUESTED" ? 202 : 200).send(result);
+  });
+
+  // POST /v1/bookings/:id/check-in: Merchant attendance check-in
+  app.post("/v1/bookings/:id/check-in", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const actor = getBookingActor(request, tenantId);
+
+    const result = await bookingService.checkInBooking(tenantId, actor, id as BookingId);
+    return reply.status(200).send(result);
+  });
+
+  // POST /v1/bookings/:id/complete: Merchant attendance complete
+  app.post("/v1/bookings/:id/complete", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const actor = getBookingActor(request, tenantId);
+
+    const result = await bookingService.completeBooking(tenantId, actor, id as BookingId);
+    return reply.status(200).send(result);
+  });
+
+  // POST /v1/bookings/:id/no-show: Merchant attendance no-show
+  app.post("/v1/bookings/:id/no-show", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const actor = getBookingActor(request, tenantId);
+
+    const result = await bookingService.noShowBooking(tenantId, actor, id as BookingId);
+    return reply.status(200).send(result);
   });
 };

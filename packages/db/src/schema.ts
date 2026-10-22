@@ -144,7 +144,11 @@ export interface BookingTable {
   status: string;
   version: number;
   hold_expires_at: ColumnType<Date | null, string | Date | null, string | Date | null>;
-  payment_expires_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  payment_expires_at: ColumnType<
+    Date | null,
+    string | Date | null | undefined,
+    string | Date | null
+  >;
   starts_at: ColumnType<Date, string | Date, never>;
   ends_at: ColumnType<Date, string | Date, never>;
   resource_id: string | null;
@@ -238,9 +242,17 @@ export interface ProviderOperationTable {
   provider_capture_id: string | null;
   provider_refund_id: string | null;
   attempt_count: ColumnType<number, number | undefined, number>;
-  first_dispatched_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  first_dispatched_at: ColumnType<
+    Date | null,
+    string | Date | null | undefined,
+    string | Date | null
+  >;
   last_attempt_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
-  next_reconcile_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  next_reconcile_at: ColumnType<
+    Date | null,
+    string | Date | null | undefined,
+    string | Date | null
+  >;
   last_http_status: number | null;
   provider_debug_id: string | null;
   error_code: string | null;
@@ -385,6 +397,8 @@ export interface OutboxEventTable {
   payload: unknown;
   created_at: ColumnType<Date, string | Date | undefined, never>;
   claimed_at: ColumnType<Date | null, string | Date | null, string | Date | null>;
+  lease_token: string | null;
+  lease_expires_at: ColumnType<Date | null, string | Date | null, string | Date | null>;
   processed_at: ColumnType<Date | null, string | Date | null, string | Date | null>;
   attempts: Generated<number>;
   last_error: string | null;

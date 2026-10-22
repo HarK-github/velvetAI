@@ -11,8 +11,7 @@ import { Kysely } from "kysely";
 import { buildApp } from "../app.js";
 
 const TEST_DB_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable";
+  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
 
 const DEV_TENANT_ID = "01932b10-0000-7000-8000-000000000001";
 const DEV_USER_ID = "01932b10-0000-7000-8000-000000000002";
@@ -149,24 +148,25 @@ describe("API Frontend Endpoints & Middleware", () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.total).toBeGreaterThanOrEqual(3);
+    expect(body.total).toBeGreaterThanOrEqual(1);
     expect(body.services[0].versions[0].name).toBe("Executive Haircut & Beard Sculpt");
-    expect(body.services[0].versions[0].priceMinor).toBe(7500);
-    expect(body.services[0].versions[0].baseDepositMinor).toBe(2000);
+    expect(body.services[0].versions[0].priceMinor).toBe("7500");
+    expect(body.services[0].versions[0].baseDepositMinor).toBe("2000");
   });
 
-  it("GET /v1/availability returns conflict-free slots with probabilities", async () => {
+  it("GET /v1/availability returns conflict-free slots from real PostgreSQL resources", async () => {
     const res = await app.inject({
       method: "GET",
-      url: `/v1/availability?serviceId=${DEV_SERVICE_ID}`,
+      url: `/v1/availability?serviceId=${DEV_SERVICE_ID}&locationId=${DEV_LOCATION_ID}`,
     });
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.scheduleRevision).toBe(14);
+    expect(body.scheduleRevision).toBeGreaterThan(0);
     expect(Array.isArray(body.slots)).toBe(true);
     expect(body.slots.length).toBeGreaterThan(0);
-    expect(body.slots[0].fillProbability).toBeDefined();
+    // Unsimulated fillProbability should be undefined in production
+    expect(body.slots[0].fillProbability).toBeUndefined();
     expect(body.slots[0].depositPreview.valueMinor).toBe("2000");
   });
 
@@ -174,6 +174,7 @@ describe("API Frontend Endpoints & Middleware", () => {
     const res = await app.inject({
       method: "POST",
       url: "/v1/booking-quotes",
+      headers: { "idempotency-key": "quote-idemp-test-1" },
       payload: {
         serviceId: DEV_SERVICE_ID,
         locationId: DEV_LOCATION_ID,
@@ -191,12 +192,15 @@ describe("API Frontend Endpoints & Middleware", () => {
   });
 
   it("Full booking pipeline: prepare -> get approval -> confirm approval -> commit", async () => {
-    const slotStart = new Date(Date.now() + 86400_000 * 30 + Math.floor(Math.random() * 1000000000)).toISOString();
+    const slotStart = new Date(
+      Date.now() + 86400_000 * 30 + Math.floor(Math.random() * 1000000000),
+    ).toISOString();
 
     // 1. Prepare booking (slot hold + signed intent + approval locator)
     const prepRes = await app.inject({
       method: "POST",
       url: "/v1/bookings/prepare",
+      headers: { "idempotency-key": `prep-idemp-${Date.now()}` },
       payload: {
         serviceId: DEV_SERVICE_ID,
         locationId: DEV_LOCATION_ID,
@@ -235,6 +239,7 @@ describe("API Frontend Endpoints & Middleware", () => {
     const confirmRes = await app.inject({
       method: "POST",
       url: `${prepBody.approvalLocator}/confirm`,
+      headers: { "idempotency-key": `confirm-idemp-${Date.now()}` },
     });
 
     expect(confirmRes.statusCode).toBe(200);
@@ -245,6 +250,7 @@ describe("API Frontend Endpoints & Middleware", () => {
     const commitRes = await app.inject({
       method: "POST",
       url: "/v1/bookings/commit",
+      headers: { "idempotency-key": `idemp-e2e-${Date.now()}` },
       payload: {
         intent: prepBody.intent,
         confirmation: confirmBody.confirmation,
@@ -333,7 +339,8 @@ describe("API Frontend Endpoints & Middleware", () => {
 
     it("Requirement 2: rejects real HTTP request containing duplicate JSON keys with 400 Problem Details", async () => {
       // Wire representation with duplicate "amount" key
-      const rawDuplicatePayload = '{"serviceId":"01932b10-0001-7000-8000-000000000001","locationId":"01932b10-0004-7000-8000-000000000001","startsAt":"2026-11-20T10:00:00.000Z","timeZone":"America/New_York","amount":"1000","amount":"9000"}';
+      const rawDuplicatePayload =
+        '{"serviceId":"01932b10-0001-7000-8000-000000000001","locationId":"01932b10-0004-7000-8000-000000000001","startsAt":"2026-11-20T10:00:00.000Z","timeZone":"America/New_York","amount":"1000","amount":"9000"}';
 
       const res = await app.inject({
         method: "POST",

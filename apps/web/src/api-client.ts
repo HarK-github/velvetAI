@@ -27,9 +27,10 @@ export class VelvetApiClient {
   private authToken?: string;
 
   constructor(config?: ApiClientConfig) {
-    const envBaseUrl = typeof import.meta.env !== "undefined"
-      ? (import.meta.env.VITE_API_BASE_URL as string | undefined)
-      : undefined;
+    const envBaseUrl =
+      typeof import.meta.env !== "undefined"
+        ? (import.meta.env.VITE_API_BASE_URL as string | undefined)
+        : undefined;
     this.baseUrl = config?.baseUrl ?? envBaseUrl ?? "http://localhost:3000";
     this.authToken = config?.authToken;
   }
@@ -72,7 +73,9 @@ export class VelvetApiClient {
     return this.request<{ services: ServiceDTO[]; total: number }>("/v1/services");
   }
 
-  async getAvailability(serviceId: string): Promise<{ slots: AvailableSlot[]; scheduleRevision: number }> {
+  async getAvailability(
+    serviceId: string,
+  ): Promise<{ slots: AvailableSlot[]; scheduleRevision: number }> {
     return this.request<{ slots: AvailableSlot[]; scheduleRevision: number }>(
       `/v1/availability?serviceId=${encodeURIComponent(serviceId)}`,
     );
@@ -90,11 +93,14 @@ export class VelvetApiClient {
     });
   }
 
-  async createBookingHold(params: {
-    quoteId: string;
-    customer: { email: string; displayName?: string };
-    note?: string;
-  }, idempotencyKey?: string): Promise<BookingHoldResponse> {
+  async createBookingHold(
+    params: {
+      quoteId: string;
+      customer: { email: string; displayName?: string };
+      note?: string;
+    },
+    idempotencyKey?: string,
+  ): Promise<BookingHoldResponse> {
     const headers: Record<string, string> = {};
     if (idempotencyKey) {
       headers["idempotency-key"] = idempotencyKey;

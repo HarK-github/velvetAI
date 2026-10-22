@@ -2,10 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { sql, Kysely } from "kysely";
 import crypto from "node:crypto";
 import { Database } from "../schema.js";
-import {
-  TEST_DB_URL,
-  seedTenantContext,
-} from "./test-helper.js";
+import { TEST_DB_URL, seedTenantContext } from "./test-helper.js";
 import { migrateToLatest, migrateDown } from "../migrator.js";
 import { createDatabaseClient, withTenantTransaction } from "../client.js";
 
@@ -244,13 +241,31 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
 
     // Verify FORCE ROW LEVEL SECURITY across all 25 tenant tables
     const tenantTables = [
-      "locations", "customers", "memberships", "services",
-      "service_versions", "resources", "availability_rules", "booking_quotes",
-      "bookings", "resource_claims", "booking_hold_snapshots", "buyer_confirmations",
-      "committed_intents", "idempotency_records", "outbox_events", "audit_events",
-      "provider_connections", "provider_operations", "payment_intents", "payment_captures",
-      "refund_reservations", "verified_provider_events", "financial_journal_entries",
-      "financial_journal_lines", "invoices"
+      "locations",
+      "customers",
+      "memberships",
+      "services",
+      "service_versions",
+      "resources",
+      "availability_rules",
+      "booking_quotes",
+      "bookings",
+      "resource_claims",
+      "booking_hold_snapshots",
+      "buyer_confirmations",
+      "committed_intents",
+      "idempotency_records",
+      "outbox_events",
+      "audit_events",
+      "provider_connections",
+      "provider_operations",
+      "payment_intents",
+      "payment_captures",
+      "refund_reservations",
+      "verified_provider_events",
+      "financial_journal_entries",
+      "financial_journal_lines",
+      "invoices",
     ];
 
     const rlsTables = await sql<{
@@ -290,6 +305,18 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
   });
 
   it("4. Migration Rollback and Re-apply Proof: verifies down() and up() idempotency", async () => {
+    // Rollback migration 0004
+    await migrateDown(adminDb);
+
+    // After rollback of 0004, lease_token should be absent from outbox_events
+    const rolledBackLease = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'outbox_events' AND column_name = 'lease_token'
+      ) as exists
+    `.execute(adminDb);
+    expect(rolledBackLease.rows[0]?.exists).toBe(false);
+
     // Rollback migration 0003
     await migrateDown(adminDb);
 
@@ -396,59 +423,72 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     const bookingId = crypto.randomUUID();
 
     await withTenantTransaction(adminDb, tenantId, async (trx) => {
-      await trx.insertInto("booking_quotes").values({
-        id: quoteId,
-        tenant_id: tenantId,
-        service_version_id: seed.serviceVersionId,
-        customer_id: seed.actorUserId,
-        starts_at: new Date(Date.now() + 86400000),
-        ends_at: new Date(Date.now() + 90000000),
-        total_minor: "5000",
-        deposit_minor: "2500",
-        currency: "USD",
-        canonical_hash: "hash-quote-1",
-        expires_at: new Date(Date.now() + 300000),
-      }).execute();
+      await trx
+        .insertInto("booking_quotes")
+        .values({
+          id: quoteId,
+          tenant_id: tenantId,
+          service_version_id: seed.serviceVersionId,
+          customer_id: seed.actorUserId,
+          starts_at: new Date(Date.now() + 86400000),
+          ends_at: new Date(Date.now() + 90000000),
+          total_minor: "5000",
+          deposit_minor: "2500",
+          currency: "USD",
+          canonical_hash: "hash-quote-1",
+          expires_at: new Date(Date.now() + 300000),
+        })
+        .execute();
 
-      await trx.insertInto("bookings").values({
-        id: bookingId,
-        tenant_id: tenantId,
-        customer_id: seed.actorUserId,
-        quote_id: quoteId,
-        status: "COMMITTING",
-        version: 1,
-        starts_at: new Date(Date.now() + 86400000),
-        ends_at: new Date(Date.now() + 90000000),
-      }).execute();
+      await trx
+        .insertInto("bookings")
+        .values({
+          id: bookingId,
+          tenant_id: tenantId,
+          customer_id: seed.actorUserId,
+          quote_id: quoteId,
+          status: "COMMITTING",
+          version: 1,
+          starts_at: new Date(Date.now() + 86400000),
+          ends_at: new Date(Date.now() + 90000000),
+        })
+        .execute();
     });
 
     // A. Unbalanced entry cannot commit as POSTED
     await expect(
       withTenantTransaction(adminDb, tenantId, async (trx) => {
         const entryId = crypto.randomUUID();
-        await trx.insertInto("financial_journal_entries").values({
-          id: entryId,
-          tenant_id: tenantId,
-          booking_id: bookingId,
-          entry_type: "DEPOSIT_CAPTURE",
-          reference_id: "ref-unbalanced",
-          currency: "USD",
-          status: "DRAFT",
-        }).execute();
+        await trx
+          .insertInto("financial_journal_entries")
+          .values({
+            id: entryId,
+            tenant_id: tenantId,
+            booking_id: bookingId,
+            entry_type: "DEPOSIT_CAPTURE",
+            reference_id: "ref-unbalanced",
+            currency: "USD",
+            status: "DRAFT",
+          })
+          .execute();
 
         // Line with 2500 debit and 0 credit
-        await trx.insertInto("financial_journal_lines").values({
-          id: crypto.randomUUID(),
-          journal_entry_id: entryId,
-          tenant_id: tenantId,
-          account: "ASSET:PAYPAL_CLEARING",
-          debit_minor: "2500",
-          credit_minor: "0",
-          currency: "USD",
-        }).execute();
+        await trx
+          .insertInto("financial_journal_lines")
+          .values({
+            id: crypto.randomUUID(),
+            journal_entry_id: entryId,
+            tenant_id: tenantId,
+            account: "ASSET:PAYPAL_CLEARING",
+            debit_minor: "2500",
+            credit_minor: "0",
+            currency: "USD",
+          })
+          .execute();
 
         // Update to POSTED without offsetting credit
-        await trx.updateTable("financial_journal_entries")
+        await trx
+          .updateTable("financial_journal_entries")
           .set({ status: "POSTED", posted_at: new Date() })
           .where("id", "=", entryId)
           .execute();
@@ -461,38 +501,45 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     const lineCreditId = crypto.randomUUID();
 
     await withTenantTransaction(adminDb, tenantId, async (trx) => {
-      await trx.insertInto("financial_journal_entries").values({
-        id: validEntryId,
-        tenant_id: tenantId,
-        booking_id: bookingId,
-        entry_type: "DEPOSIT_CAPTURE",
-        reference_id: "ref-valid",
-        currency: "USD",
-        status: "DRAFT",
-      }).execute();
-
-      await trx.insertInto("financial_journal_lines").values([
-        {
-          id: lineDebitId,
-          journal_entry_id: validEntryId,
+      await trx
+        .insertInto("financial_journal_entries")
+        .values({
+          id: validEntryId,
           tenant_id: tenantId,
-          account: "ASSET:PAYPAL_CLEARING",
-          debit_minor: "2500",
-          credit_minor: "0",
+          booking_id: bookingId,
+          entry_type: "DEPOSIT_CAPTURE",
+          reference_id: "ref-valid",
           currency: "USD",
-        },
-        {
-          id: lineCreditId,
-          journal_entry_id: validEntryId,
-          tenant_id: tenantId,
-          account: "LIABILITY:CUSTOMER_DEPOSIT",
-          debit_minor: "0",
-          credit_minor: "2500",
-          currency: "USD",
-        },
-      ]).execute();
+          status: "DRAFT",
+        })
+        .execute();
 
-      await trx.updateTable("financial_journal_entries")
+      await trx
+        .insertInto("financial_journal_lines")
+        .values([
+          {
+            id: lineDebitId,
+            journal_entry_id: validEntryId,
+            tenant_id: tenantId,
+            account: "ASSET:PAYPAL_CLEARING",
+            debit_minor: "2500",
+            credit_minor: "0",
+            currency: "USD",
+          },
+          {
+            id: lineCreditId,
+            journal_entry_id: validEntryId,
+            tenant_id: tenantId,
+            account: "LIABILITY:CUSTOMER_DEPOSIT",
+            debit_minor: "0",
+            credit_minor: "2500",
+            currency: "USD",
+          },
+        ])
+        .execute();
+
+      await trx
+        .updateTable("financial_journal_entries")
         .set({ status: "POSTED", posted_at: new Date() })
         .where("id", "=", validEntryId)
         .execute();
@@ -501,22 +548,26 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     // C. Adding a line after posting fails visibly
     await expect(
       withTenantTransaction(adminDb, tenantId, async (trx) => {
-        await trx.insertInto("financial_journal_lines").values({
-          id: crypto.randomUUID(),
-          journal_entry_id: validEntryId,
-          tenant_id: tenantId,
-          account: "EXPENSE:FEE",
-          debit_minor: "100",
-          credit_minor: "0",
-          currency: "USD",
-        }).execute();
+        await trx
+          .insertInto("financial_journal_lines")
+          .values({
+            id: crypto.randomUUID(),
+            journal_entry_id: validEntryId,
+            tenant_id: tenantId,
+            account: "EXPENSE:FEE",
+            debit_minor: "100",
+            credit_minor: "0",
+            currency: "USD",
+          })
+          .execute();
       }),
     ).rejects.toThrow(/Cannot add lines to a posted financial journal entry/);
 
     // D. Updating a posted line fails visibly
     await expect(
       withTenantTransaction(adminDb, tenantId, async (trx) => {
-        await trx.updateTable("financial_journal_lines")
+        await trx
+          .updateTable("financial_journal_lines")
           .set({ debit_minor: "3000" })
           .where("id", "=", lineDebitId)
           .execute();
@@ -526,16 +577,15 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     // E. Deleting a posted line fails visibly
     await expect(
       withTenantTransaction(adminDb, tenantId, async (trx) => {
-        await trx.deleteFrom("financial_journal_lines")
-          .where("id", "=", lineCreditId)
-          .execute();
+        await trx.deleteFrom("financial_journal_lines").where("id", "=", lineCreditId).execute();
       }),
     ).rejects.toThrow(/Posted financial journal lines cannot be deleted/);
 
     // F. Updating a posted entry fails visibly
     await expect(
       withTenantTransaction(adminDb, tenantId, async (trx) => {
-        await trx.updateTable("financial_journal_entries")
+        await trx
+          .updateTable("financial_journal_entries")
           .set({ reference_id: "tampered" })
           .where("id", "=", validEntryId)
           .execute();
@@ -545,9 +595,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     // G. Deleting a posted entry fails visibly
     await expect(
       withTenantTransaction(adminDb, tenantId, async (trx) => {
-        await trx.deleteFrom("financial_journal_entries")
-          .where("id", "=", validEntryId)
-          .execute();
+        await trx.deleteFrom("financial_journal_entries").where("id", "=", validEntryId).execute();
       }),
     ).rejects.toThrow(/Posted financial journal entries cannot be deleted/);
   });

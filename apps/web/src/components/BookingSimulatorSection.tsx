@@ -576,7 +576,14 @@ export const BookingSimulatorSection: FC = () => {
                           marginTop: "16px",
                         }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            marginBottom: "8px",
+                          }}
+                        >
                           <span className="signal-dot signal-dot--emerald"></span>
                           <strong className="mono" style={{ color: "#059669", fontSize: "12px" }}>
                             BOOKING CONFIRMED &bull; DEPOSIT CAPTURED
@@ -584,12 +591,17 @@ export const BookingSimulatorSection: FC = () => {
                         </div>
                         <p style={{ fontSize: "11px", color: "var(--secondary)", margin: "4px 0" }}>
                           PayPal Capture ID:{" "}
-                          <code className="mono">{paymentOutcome.providerCaptureId || "CAP-COMPLETED"}</code>
+                          <code className="mono">
+                            {paymentOutcome.providerCaptureId || "CAP-COMPLETED"}
+                          </code>
                         </p>
                         <p style={{ fontSize: "11px", color: "var(--secondary)", margin: "4px 0" }}>
                           Booking ID: <code className="mono">{paymentOutcome.bookingId}</code>
                         </p>
-                        <div className="mono" style={{ fontSize: "10px", color: "var(--muted)", marginTop: "8px" }}>
+                        <div
+                          className="mono"
+                          style={{ fontSize: "10px", color: "var(--muted)", marginTop: "8px" }}
+                        >
                           Double-entry journal posted &bull; Balanced ledger recorded
                         </div>
                         <button
@@ -613,14 +625,22 @@ export const BookingSimulatorSection: FC = () => {
                           marginTop: "16px",
                         }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            marginBottom: "8px",
+                          }}
+                        >
                           <span className="signal-dot signal-dot--amber"></span>
                           <strong className="mono" style={{ color: "#d97706", fontSize: "12px" }}>
                             CAPTURE PENDING &bull; RECONCILING IN BACKGROUND
                           </strong>
                         </div>
                         <p style={{ fontSize: "11px", color: "var(--secondary)", margin: "4px 0" }}>
-                          Booking claim remains blocking while outbox worker reconciles provider state.
+                          Booking claim remains blocking while outbox worker reconciles provider
+                          state.
                         </p>
                       </div>
                     )

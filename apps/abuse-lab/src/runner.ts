@@ -15,7 +15,9 @@ export interface SuiteResult {
   }>;
 }
 
-export async function runAbuseSuite(scenarios: AbuseScenario[] = deterministicScenarios): Promise<SuiteResult> {
+export async function runAbuseSuite(
+  scenarios: AbuseScenario[] = deterministicScenarios,
+): Promise<SuiteResult> {
   const results = [];
   let passed = 0;
   let failed = 0;

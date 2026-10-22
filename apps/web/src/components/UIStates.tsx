@@ -42,11 +42,21 @@ export const EmptyState: FC<{ title?: string; message?: string; action?: ReactNo
       borderRadius: "8px",
     }}
   >
-    <div className="mono" style={{ fontSize: "28px", color: "var(--ink-faint)", marginBottom: "12px" }}>
+    <div
+      className="mono"
+      style={{ fontSize: "28px", color: "var(--ink-faint)", marginBottom: "12px" }}
+    >
       &empty;
     </div>
     <h3 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px" }}>{title}</h3>
-    <p style={{ color: "var(--ink-muted)", fontSize: "14px", maxWidth: "400px", margin: "0 auto 16px" }}>
+    <p
+      style={{
+        color: "var(--ink-muted)",
+        fontSize: "14px",
+        maxWidth: "400px",
+        margin: "0 auto 16px",
+      }}
+    >
       {message}
     </p>
     {action}
@@ -94,7 +104,9 @@ export const ForbiddenState: FC<{ message?: string }> = ({
     <div className="mono" style={{ fontSize: "24px", marginBottom: "8px" }}>
       [403 FORBIDDEN]
     </div>
-    <h3 style={{ fontWeight: 700, fontSize: "16px", marginBottom: "8px" }}>Tenant Isolation Boundary</h3>
+    <h3 style={{ fontWeight: 700, fontSize: "16px", marginBottom: "8px" }}>
+      Tenant Isolation Boundary
+    </h3>
     <p style={{ fontSize: "14px", maxWidth: "450px", margin: "0 auto" }}>{message}</p>
   </div>
 );

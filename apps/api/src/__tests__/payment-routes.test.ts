@@ -37,8 +37,7 @@ import {
 import { setPaymentService } from "../routes/payments.js";
 
 const TEST_DB_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable";
+  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
 
 const DEV_TENANT_ID = "01932b10-0000-7000-8000-000000000001";
 const DEV_USER_ID = "01932b10-0000-7000-8000-000000000002";
@@ -262,7 +261,12 @@ describe("API PayPal Payment & Ingress Endpoints (W3 - W8)", () => {
   async function createCommittingBooking() {
     const bookingId = crypto.randomUUID();
     const quoteId = crypto.randomUUID();
-    const startsAt = new Date(Date.now() + 86400_000 * 500 + Math.floor(Math.random() * 10_000_000_000) + slotCounter * 7200_000);
+    const startsAt = new Date(
+      Date.now() +
+        86400_000 * 500 +
+        Math.floor(Math.random() * 10_000_000_000) +
+        slotCounter * 7200_000,
+    );
     const endsAt = new Date(startsAt.getTime() + 45 * 60_000);
     slotCounter++;
 
@@ -437,7 +441,11 @@ describe("API PayPal Payment & Ingress Endpoints (W3 - W8)", () => {
     });
 
     const capture = await withTenantTransaction(db, DEV_TENANT_ID, (trx) =>
-      trx.selectFrom("payment_captures").where("booking_id", "=", bookingId).selectAll().executeTakeFirstOrThrow(),
+      trx
+        .selectFrom("payment_captures")
+        .where("booking_id", "=", bookingId)
+        .selectAll()
+        .executeTakeFirstOrThrow(),
     );
 
     // 1. Valid partial refund: $10.00
@@ -470,7 +478,9 @@ describe("API PayPal Payment & Ingress Endpoints (W3 - W8)", () => {
     expect(() => {
       const env = "live";
       if (env !== "sandbox") {
-        throw new Error("Only PayPal sandbox environment is permitted in Epic 3; live configuration is rejected");
+        throw new Error(
+          "Only PayPal sandbox environment is permitted in Epic 3; live configuration is rejected",
+        );
       }
     }).toThrow("Only PayPal sandbox environment is permitted in Epic 3");
   });
@@ -494,12 +504,17 @@ describe("API PayPal Payment & Ingress Endpoints (W3 - W8)", () => {
 
     // Mark appointment completed
     await withTenantTransaction(db, DEV_TENANT_ID, async (trx) => {
-      await trx.updateTable("bookings").set({ status: "COMPLETED" }).where("id", "=", bookingId).execute();
+      await trx
+        .updateTable("bookings")
+        .set({ status: "COMPLETED" })
+        .where("id", "=", bookingId)
+        .execute();
     });
 
     const invRes = await app.inject({
       method: "POST",
       url: `/v1/bookings/${bookingId}/balance-invoice`,
+      headers: { "idempotency-key": `req-inv-${bookingId}` },
       payload: {
         customerEmail: "alex@example.com",
         customerName: "Alex Buyer",

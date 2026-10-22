@@ -99,9 +99,30 @@ export const SUPPORTED_MVP_CURRENCIES = ["USD"] as const;
 export type SupportedMvpCurrency = (typeof SUPPORTED_MVP_CURRENCIES)[number];
 
 export const PAYPAL_OFFICIALLY_SUPPORTED_CURRENCIES = [
-  "AUD", "BRL", "CAD", "CNY", "CZK", "DKK", "EUR", "HKD", "HUF", "ILS",
-  "JPY", "MYR", "MXN", "TWD", "NZD", "NOK", "PHP", "PLN", "GBP", "SGD",
-  "SEK", "CHF", "THB", "USD",
+  "AUD",
+  "BRL",
+  "CAD",
+  "CNY",
+  "CZK",
+  "DKK",
+  "EUR",
+  "HKD",
+  "HUF",
+  "ILS",
+  "JPY",
+  "MYR",
+  "MXN",
+  "TWD",
+  "NZD",
+  "NOK",
+  "PHP",
+  "PLN",
+  "GBP",
+  "SGD",
+  "SEK",
+  "CHF",
+  "THB",
+  "USD",
 ] as const;
 
 export function isSupportedMvpCurrency(currency: string): currency is SupportedMvpCurrency {
@@ -115,7 +136,24 @@ export function isSupportedMvpCurrency(currency: string): currency is SupportedM
  * Two-decimal: default for all other currencies (USD, EUR, GBP, etc.).
  */
 export function getCurrencyScale(currency: string): number {
-  const zeroDecimal = ["BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF"];
+  const zeroDecimal = [
+    "BIF",
+    "CLP",
+    "DJF",
+    "GNF",
+    "JPY",
+    "KMF",
+    "KRW",
+    "MGA",
+    "PYG",
+    "RWF",
+    "UGX",
+    "VND",
+    "VUV",
+    "XAF",
+    "XOF",
+    "XPF",
+  ];
   const threeDecimal = ["BHD", "IQD", "JOD", "KWD", "OMR", "TND"];
   const upper = currency.toUpperCase();
   if (zeroDecimal.includes(upper)) return 0;
@@ -157,7 +195,7 @@ export function decimalToMinorUnits(decimal: string, scale: number = 2): string 
   const fractionPart = (parts[1] ?? "").padEnd(scale, "0").slice(0, scale);
   const isNegative = wholePart.startsWith("-");
   const cleanWhole = isNegative ? wholePart.slice(1) : wholePart;
-  const minor = BigInt(cleanWhole) * (10n ** BigInt(scale)) + BigInt(fractionPart);
+  const minor = BigInt(cleanWhole) * 10n ** BigInt(scale) + BigInt(fractionPart);
   return (isNegative ? -minor : minor).toString();
 }
 

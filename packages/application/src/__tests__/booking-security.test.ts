@@ -29,8 +29,7 @@ import {
 } from "@velvetai/contracts";
 
 const TEST_DB_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable";
+  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
 
 describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)", () => {
   let db: Kysely<Database>;
@@ -63,67 +62,92 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
     subjectB = `oidc|user-b-${userB}`;
 
     // Seed tenants
-    await db.insertInto("tenants").values([
-      { id: tenantA, name: `sec-a-${Date.now()}`, default_currency: "USD", status: "ACTIVE" },
-      { id: tenantB, name: `sec-b-${Date.now()}`, default_currency: "USD", status: "ACTIVE" },
-    ]).execute();
+    await db
+      .insertInto("tenants")
+      .values([
+        { id: tenantA, name: `sec-a-${Date.now()}`, default_currency: "USD", status: "ACTIVE" },
+        { id: tenantB, name: `sec-b-${Date.now()}`, default_currency: "USD", status: "ACTIVE" },
+      ])
+      .execute();
 
     // Seed users
-    await db.insertInto("app_users").values([
-      { id: userA, oidc_subject: subjectA, email_ciphertext: "a@example.com" },
-      { id: userB, oidc_subject: subjectB, email_ciphertext: "b@example.com" },
-    ]).execute();
+    await db
+      .insertInto("app_users")
+      .values([
+        { id: userA, oidc_subject: subjectA, email_ciphertext: "a@example.com" },
+        { id: userB, oidc_subject: subjectB, email_ciphertext: "b@example.com" },
+      ])
+      .execute();
 
     // Seed Tenant A structures
     await withTenantTransaction(db, tenantA, async (trx) => {
-      await trx.insertInto("locations").values({
-        id: locationA,
-        tenant_id: tenantA,
-        name: "Security Clinic",
-        timezone: "America/New_York",
-        status: "ACTIVE",
-      }).execute();
+      await trx
+        .insertInto("locations")
+        .values({
+          id: locationA,
+          tenant_id: tenantA,
+          name: "Security Clinic",
+          timezone: "America/New_York",
+          status: "ACTIVE",
+        })
+        .execute();
 
-      await trx.insertInto("memberships").values({
-        id: crypto.randomUUID(),
-        tenant_id: tenantA,
-        user_id: userA,
-        role: "OWNER",
-        role_version: 1,
-      }).execute();
+      await trx
+        .insertInto("memberships")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantA,
+          user_id: userA,
+          role: "OWNER",
+          role_version: 1,
+        })
+        .execute();
 
-      await trx.insertInto("services").values({
-        id: serviceA,
-        tenant_id: tenantA,
-        status: "ACTIVE",
-        current_version_id: null,
-      }).execute();
+      await trx
+        .insertInto("services")
+        .values({
+          id: serviceA,
+          tenant_id: tenantA,
+          status: "ACTIVE",
+          current_version_id: null,
+        })
+        .execute();
 
-      await trx.insertInto("service_versions").values({
-        id: serviceVersionA,
-        tenant_id: tenantA,
-        service_id: serviceA,
-        version: 1,
-        name: "Security Consult",
-        duration_minutes: 30,
-        buffer_before_minutes: 0,
-        buffer_after_minutes: 0,
-        price_minor: "5000",
-        base_deposit_minor: "1500",
-        currency: "USD",
-        cancellation_policy_id: crypto.randomUUID(),
-      }).execute();
+      await trx
+        .insertInto("service_versions")
+        .values({
+          id: serviceVersionA,
+          tenant_id: tenantA,
+          service_id: serviceA,
+          version: 1,
+          name: "Security Consult",
+          duration_minutes: 30,
+          buffer_before_minutes: 0,
+          buffer_after_minutes: 0,
+          price_minor: "5000",
+          base_deposit_minor: "1500",
+          currency: "USD",
+          cancellation_policy_id: crypto.randomUUID(),
+        })
+        .execute();
 
-      await trx.updateTable("services").set({ current_version_id: serviceVersionA }).where("id", "=", serviceA).execute();
+      await trx
+        .updateTable("services")
+        .set({ current_version_id: serviceVersionA })
+        .where("id", "=", serviceA)
+        .execute();
 
-      await trx.insertInto("resources").values({
-        id: resourceA,
-        tenant_id: tenantA,
-        location_id: locationA,
-        resource_type: "ROOM",
-        display_name: "Suite 1",
-        status: "ACTIVE",
-      }).execute();
+      await trx
+        .insertInto("resources")
+        .values({
+          id: resourceA,
+          tenant_id: tenantA,
+          location_id: locationA,
+          resource_type: "ROOM",
+          display_name: "Suite 1",
+          status: "ACTIVE",
+        })
+        .execute();
     });
   });
 
@@ -193,7 +217,10 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       const hB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
       const pB64 = Buffer.from(JSON.stringify(claims)).toString("base64url");
       const signingInput = `${hB64}.${pB64}`;
-      const forgedSig = crypto.createHmac("sha256", defaultKeys.publicKeyPem).update(signingInput).digest("base64url");
+      const forgedSig = crypto
+        .createHmac("sha256", defaultKeys.publicKeyPem)
+        .update(signingInput)
+        .digest("base64url");
       const forgedHs256 = `${signingInput}.${forgedSig}`;
 
       await expect(verifyBookingIntent(forgedHs256)).rejects.toThrow(/only 'ES256' is permitted/);
@@ -215,12 +242,16 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       };
       const hB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
       const pB64 = Buffer.from(JSON.stringify(claims)).toString("base64url");
-      const sig = crypto.sign("SHA256", Buffer.from(`${hB64}.${pB64}`), {
-        key: defaultKeys.privateKeyPem,
-        dsaEncoding: "ieee-p1363",
-      }).toString("base64url");
+      const sig = crypto
+        .sign("SHA256", Buffer.from(`${hB64}.${pB64}`), {
+          key: defaultKeys.privateKeyPem,
+          dsaEncoding: "ieee-p1363",
+        })
+        .toString("base64url");
 
-      await expect(verifyBookingIntent(`${hB64}.${pB64}.${sig}`)).rejects.toThrow(/Remote jku or x5u headers are prohibited/);
+      await expect(verifyBookingIntent(`${hB64}.${pB64}.${sig}`)).rejects.toThrow(
+        /Remote jku or x5u headers are prohibited/,
+      );
     });
 
     it("rejects wrong typ (e.g. standard JWT)", async () => {
@@ -228,12 +259,16 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       const header = { alg: "ES256", typ: "JWT", kid: defaultKeys.kid };
       const hB64 = Buffer.from(JSON.stringify(header)).toString("base64url");
       const pB64 = Buffer.from(JSON.stringify(claims)).toString("base64url");
-      const sig = crypto.sign("SHA256", Buffer.from(`${hB64}.${pB64}`), {
-        key: defaultKeys.privateKeyPem,
-        dsaEncoding: "ieee-p1363",
-      }).toString("base64url");
+      const sig = crypto
+        .sign("SHA256", Buffer.from(`${hB64}.${pB64}`), {
+          key: defaultKeys.privateKeyPem,
+          dsaEncoding: "ieee-p1363",
+        })
+        .toString("base64url");
 
-      await expect(verifyBookingIntent(`${hB64}.${pB64}.${sig}`)).rejects.toThrow(/Invalid JWS typ/);
+      await expect(verifyBookingIntent(`${hB64}.${pB64}.${sig}`)).rejects.toThrow(
+        /Invalid JWS typ/,
+      );
     });
 
     it("rejects issuer mismatch and audience mismatch", async () => {
@@ -254,14 +289,14 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       const token = await signBookingIntent(claims);
 
       // Future time beyond exp
-      await expect(
-        verifyBookingIntent(token, { asOfSeconds: claims.exp + 10 }),
-      ).rejects.toThrow(/Intent has expired/);
+      await expect(verifyBookingIntent(token, { asOfSeconds: claims.exp + 10 })).rejects.toThrow(
+        /Intent has expired/,
+      );
 
       // Past time before nbf
-      await expect(
-        verifyBookingIntent(token, { asOfSeconds: claims.nbf - 10 }),
-      ).rejects.toThrow(/Intent is not yet valid/);
+      await expect(verifyBookingIntent(token, { asOfSeconds: claims.nbf - 10 })).rejects.toThrow(
+        /Intent is not yet valid/,
+      );
     });
 
     it("rejects tampered payload content", async () => {
@@ -274,7 +309,9 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       payloadObj.total_minor = "999999";
       const tamperedP = Buffer.from(JSON.stringify(payloadObj)).toString("base64url");
 
-      await expect(verifyBookingIntent(`${h}.${tamperedP}.${s}`)).rejects.toThrow(/signature verification failed/);
+      await expect(verifyBookingIntent(`${h}.${tamperedP}.${s}`)).rejects.toThrow(
+        /signature verification failed/,
+      );
     });
   });
 
@@ -395,11 +432,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       );
 
       // Confirm Hold 2
-      const conf2 = await bookingService.confirmApproval(
-        tenantA,
-        prep2.approvalLocator,
-        userA,
-      );
+      const conf2 = await bookingService.confirmApproval(tenantA, prep2.approvalLocator, userA);
 
       // Attempt to commit Intent 1 with Confirmation 2
       await expect(
@@ -430,11 +463,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
         },
       );
 
-      const conf = await bookingService.confirmApproval(
-        tenantA,
-        prep.approvalLocator,
-        userA,
-      );
+      const conf = await bookingService.confirmApproval(tenantA, prep.approvalLocator, userA);
 
       // First commit: succeeds
       const commitRes1 = await bookingService.commitBooking(
@@ -493,11 +522,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
         },
       );
 
-      const conf = await bookingService.confirmApproval(
-        tenantA,
-        prep.approvalLocator,
-        userA,
-      );
+      const conf = await bookingService.confirmApproval(tenantA, prep.approvalLocator, userA);
 
       await bookingService.commitBooking(
         tenantA,
@@ -551,11 +576,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
         },
       );
 
-      const conf = await bookingService.confirmApproval(
-        tenantA,
-        prep.approvalLocator,
-        userA,
-      );
+      const conf = await bookingService.confirmApproval(tenantA, prep.approvalLocator, userA);
 
       const idempotencyKey = "concurrent-replay-idemp-100";
 
@@ -621,11 +642,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
         },
       );
 
-      const conf = await bookingService.confirmApproval(
-        tenantA,
-        prep.approvalLocator,
-        userA,
-      );
+      const conf = await bookingService.confirmApproval(tenantA, prep.approvalLocator, userA);
 
       // Launch 100 concurrent requests with the SAME confirmation token but 100 DIFFERENT idempotency keys
       const promises = Array.from({ length: 100 }, (_, idx) => {
@@ -722,11 +739,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       ).rejects.toThrow(/Invalid buyer confirmation token/);
 
       // 3. Confirming approval generates opaque one-time confirmation token with at least 256 bits of randomness
-      const conf = await bookingService.confirmApproval(
-        tenantA,
-        prep.approvalLocator,
-        userA,
-      );
+      const conf = await bookingService.confirmApproval(tenantA, prep.approvalLocator, userA);
       // Pattern: conf_<64 hex chars = 32 bytes = 256 bits>
       const tokenHex = conf.confirmation.replace("conf_", "");
       expect(tokenHex).toMatch(/^[0-9a-f]{64}$/);
@@ -768,11 +781,7 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
         },
       );
 
-      const conf = await bookingService.confirmApproval(
-        tenantA,
-        prep.approvalLocator,
-        userA,
-      );
+      const conf = await bookingService.confirmApproval(tenantA, prep.approvalLocator, userA);
 
       // Commit once successfully
       await bookingService.commitBooking(
@@ -801,7 +810,11 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
         );
       } catch (err: unknown) {
         const dErr = err as { code?: string; status?: number; message?: string };
-        if (dErr.code === "INTENT_REPLAY_DETECTED" || dErr.code === "CONFIRMATION_REPLAY_BLOCKED" || dErr.status === 409) {
+        if (
+          dErr.code === "INTENT_REPLAY_DETECTED" ||
+          dErr.code === "CONFIRMATION_REPLAY_BLOCKED" ||
+          dErr.status === 409
+        ) {
           newKeyReplayFailed = true;
         }
       }
@@ -858,11 +871,12 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       expect(cryptoVerified).toBe(true);
 
       // 3. Node crypto.sign signs -> verified independently using production verifyBookingIntent (jose)
-      const cryptoSig = crypto.sign(
-        "SHA256",
-        Buffer.from(signingInput),
-        { key: defaultKeys.privateKeyPem, dsaEncoding: "ieee-p1363" },
-      ).toString("base64url");
+      const cryptoSig = crypto
+        .sign("SHA256", Buffer.from(signingInput), {
+          key: defaultKeys.privateKeyPem,
+          dsaEncoding: "ieee-p1363",
+        })
+        .toString("base64url");
       const cryptoToken = `${signingInput}.${cryptoSig}`;
 
       const velvetVerified = await verifyBookingIntent(cryptoToken, {
@@ -915,13 +929,21 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       };
 
       // Sign with rotated key kid: key-velvetai-2
-      const rotatedToken = await signBookingIntent(claims, { keyConfig: rotatedKey, kid: "key-velvetai-2" });
+      const rotatedToken = await signBookingIntent(claims, {
+        keyConfig: rotatedKey,
+        kid: "key-velvetai-2",
+      });
       const verified = await verifyBookingIntent(rotatedToken);
       expect(verified.jti).toBe(claims.jti);
 
       // Attempt to verify with unknown kid
-      const unknownKidToken = await signBookingIntent(claims, { keyConfig: rotatedKey, kid: "unknown-rotated-kid" });
-      await expect(verifyBookingIntent(unknownKidToken)).rejects.toThrow(/Unknown kid 'unknown-rotated-kid'/);
+      const unknownKidToken = await signBookingIntent(claims, {
+        keyConfig: rotatedKey,
+        kid: "unknown-rotated-kid",
+      });
+      await expect(verifyBookingIntent(unknownKidToken)).rejects.toThrow(
+        /Unknown kid 'unknown-rotated-kid'/,
+      );
     });
   });
 });

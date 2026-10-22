@@ -114,10 +114,16 @@ describe("PayPalHttpClient", () => {
 
   it("maps 401 to PayPalAuthError with debugId", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ error: "invalid_client", error_description: "Client Authentication failed" }), {
-        status: 401,
-        headers: { "paypal-debug-id": "dbg-auth-fail" },
-      }),
+      new Response(
+        JSON.stringify({
+          error: "invalid_client",
+          error_description: "Client Authentication failed",
+        }),
+        {
+          status: 401,
+          headers: { "paypal-debug-id": "dbg-auth-fail" },
+        },
+      ),
     );
 
     const client = new PayPalHttpClient({
@@ -132,10 +138,15 @@ describe("PayPalHttpClient", () => {
   it("maps 422 to PayPalClientError", async () => {
     const mockFetch = vi.fn().mockImplementation(async (url: string) => {
       if (url.includes("/v1/oauth2/token")) {
-        return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), { status: 200 });
+        return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), {
+          status: 200,
+        });
       }
       return new Response(
-        JSON.stringify({ name: "UNPROCESSABLE_ENTITY", message: "The requested action could not be performed" }),
+        JSON.stringify({
+          name: "UNPROCESSABLE_ENTITY",
+          message: "The requested action could not be performed",
+        }),
         {
           status: 422,
           headers: { "paypal-debug-id": "dbg-422" },
@@ -161,7 +172,9 @@ describe("PayPalHttpClient", () => {
   it("maps 429 and 503 to PayPalRetryableError", async () => {
     const mockFetch = vi.fn().mockImplementation(async (url: string) => {
       if (url.includes("/v1/oauth2/token")) {
-        return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), { status: 200 });
+        return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ message: "Rate limit exceeded" }), {
         status: 429,
@@ -186,7 +199,9 @@ describe("PayPalHttpClient", () => {
   it("maps 500 on POST mutation to PayPalUnknownOutcomeError", async () => {
     const mockFetch = vi.fn().mockImplementation(async (url: string) => {
       if (url.includes("/v1/oauth2/token")) {
-        return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), { status: 200 });
+        return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ message: "Internal server error" }), {
         status: 500,
@@ -212,7 +227,9 @@ describe("PayPalHttpClient", () => {
   it("maps request timeout on POST to PayPalUnknownOutcomeError", async () => {
     const mockFetch = vi.fn().mockImplementation(async (url: string) => {
       if (url.includes("/v1/oauth2/token")) {
-        return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), { status: 200 });
+        return new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), {
+          status: 200,
+        });
       }
       const abortError = new Error("The operation was aborted");
       abortError.name = "AbortError";
@@ -244,7 +261,9 @@ describe("PayPalSandboxAdapter", () => {
     const mockFetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
       const parsedUrl = new URL(url);
       if (parsedUrl.pathname === "/v1/oauth2/token") {
-        return new Response(JSON.stringify({ access_token: "valid_token", expires_in: 3600 }), { status: 200 });
+        return new Response(JSON.stringify({ access_token: "valid_token", expires_in: 3600 }), {
+          status: 200,
+        });
       }
       return handler(parsedUrl.pathname, init ?? {});
     });
@@ -286,7 +305,10 @@ describe("PayPalSandboxAdapter", () => {
 
     expect(result.providerOrderId).toBe("ORDER_987654321");
     expect(result.paymentIntentId).toBeDefined();
-    const body = capturedBody as { intent: string; purchase_units: Array<{ custom_id: string; amount: { value: string } }> };
+    const body = capturedBody as {
+      intent: string;
+      purchase_units: Array<{ custom_id: string; amount: { value: string } }>;
+    };
     expect(body.intent).toBe("CAPTURE");
     expect(body.purchase_units[0]?.amount.value).toBe("50.00");
     expect(body.purchase_units[0]?.custom_id).toBe(bookingId);

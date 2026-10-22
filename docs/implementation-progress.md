@@ -3,15 +3,15 @@
 ## Current Status
 
 - Specification version: 1.1 (`spec.md` version 1.0 amended by `SPEC_V1_1_AMENDMENT.md`, last modified 2026-10-21)
-- Current work phase: Sprint Epic 3 — PayPal Integration & Financial Reconciliation
-- Current track: Tracks A–G (Foundation) + Epic 2 (Booking Concurrency & RLS) + Epic 3
-- Epic 3 code status: IMPLEMENTED
+- Current work phase: Sprint Epic 3.5 — Integration Hardening & Verification
+- Current track: Tracks A–G (Foundation) + Epic 2 (Booking Concurrency & RLS) + Epic 3 (PayPal & Ledger) + Epic 3.5 (Integration Hardening)
+- Epic 3.5 code status: IMPLEMENTED
 - Automated verification: VERIFIED
 - Real PayPal Sandbox E2E: VERIFIED
-- Epic 3 acceptance: VERIFIED
-- Overall status: EPIC_3_VERIFIED_ACCEPTANCE_GRANTED
-- Last updated: 2026-10-21 20:55 UTC+5:30
-- Active blocker: None. Epic 3 acceptance criteria fully satisfied.
+- Epic 3.5 acceptance: VERIFIED
+- Overall status: EPIC_3_5_VERIFIED_COMPLETE
+- Last updated: 2026-10-22 00:15 UTC+5:30
+- Active blocker: None. Epic 3.5 acceptance criteria fully satisfied.
 
 ## Status Legend
 
@@ -26,24 +26,26 @@
 
 ## Phase Progress Summary
 
-| Sprint / Phase | Description | Status | Evidence |
-|---|---|---|---|
-| **Phase 0 & Epic 1** | Monorepo foundation, catalog, Kysely migrations, pure domain, outbox worker, Fastify API, React 19 web shell | **VERIFIED** | 17/17 tasks, 33 tests passing, ADR 0001–0004 |
-| **Epic 2 (W0–W6)** | Concurrency-safe booking, GiST exclusion, RLS pool isolation, ES256 JWS intent, one-time buyer confirmation, atomic commit, hold reaper | **VERIFIED** | 100 concurrent holds (1 winner, 99 conflicts), RLS pool size 1, 13 JWS attack tests, 12 abuse lab scenarios, ADR 0005 |
-| **Epic 2 Audit Remediation** | Acceptance audit pass: CHECK constraint, restricted NOBYPASSRLS role, replay tests, RFC 8785 canonicalization, validated decimal money, JOSE interop, 28 Abuse Lab scenarios, migration lifecycle | **VERIFIED** | Checkpoint commit `539d177`, JWS jose standardization `191ca98`, all test suites passing |
-| **Epic 3** | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation | **VERIFIED** | Real PayPal Sandbox E2E verified (Orders v2 create -> buyer approval -> capture COMPLETED -> verified webhook delivery -> partial refund COMPLETED -> balanced double-entry ledger). All automated and manual criteria passed. |
-| **Epic 4** | Agent Interfaces and Security Boundary | **NOT_STARTED** | Out of scope (`commit_booking` tool execution disabled) |
-| **Epic 5** | Bryntum scheduler, forecast visualization, submission | **NOT_STARTED** | Out of scope |
+| Sprint / Phase               | Description                                                                                                                                                                                                                                           | Status          | Evidence                                                                                                                                                                                                                                                                    |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Phase 0 & Epic 1**         | Monorepo foundation, catalog, Kysely migrations, pure domain, outbox worker, Fastify API, React 19 web shell                                                                                                                                          | **VERIFIED**    | 17/17 tasks, 33 tests passing, ADR 0001–0004                                                                                                                                                                                                                                |
+| **Epic 2 (W0–W6)**           | Concurrency-safe booking, GiST exclusion, RLS pool isolation, ES256 JWS intent, one-time buyer confirmation, atomic commit, hold reaper                                                                                                               | **VERIFIED**    | 100 concurrent holds (1 winner, 99 conflicts), RLS pool size 1, 13 JWS attack tests, 12 abuse lab scenarios, ADR 0005                                                                                                                                                       |
+| **Epic 2 Audit Remediation** | Acceptance audit pass: CHECK constraint, restricted NOBYPASSRLS role, replay tests, RFC 8785 canonicalization, validated decimal money, JOSE interop, 28 Abuse Lab scenarios, migration lifecycle                                                     | **VERIFIED**    | Checkpoint commit `539d177`, JWS jose standardization `191ca98`, all test suites passing                                                                                                                                                                                    |
+| **Epic 3**                   | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation                                                                                                                                                                                   | **VERIFIED**    | Real PayPal Sandbox E2E verified (Orders v2 create -> buyer approval -> capture COMPLETED -> verified webhook delivery -> partial refund COMPLETED -> balanced double-entry ledger). All automated and manual criteria passed.                                              |
+| **Epic 3.5**                 | Integration hardening: Node 24 toolchain, MIT license, credential hygiene, PostgreSQL catalog/availability, 100% mutation idempotency, complete cancellation/attendance, PostgreSQL outbox/reconciliation worker, NFR corrections, Render scaffolding | **VERIFIED**    | All tests pass under Node 24 LTS; 0 fixed passwords; 25 RLS tables verified; 100 concurrent idempotency tests; 7 cancellation/attendance tests; 7 Postgres outbox/reconciliation tests; `tests/load/k6-availability-booking.js` added; `render.yaml` & Dockerfiles created. |
+| **Epic 4**                   | Agent Interfaces and Security Boundary                                                                                                                                                                                                                | **NOT_STARTED** | Out of scope (`commit_booking` tool execution disabled)                                                                                                                                                                                                                     |
+| **Epic 5**                   | Bryntum scheduler, forecast visualization, submission                                                                                                                                                                                                 | **NOT_STARTED** | Out of scope                                                                                                                                                                                                                                                                |
 
 ---
 
 ## Final Acceptance Verification Clarifications (All 5 Items Resolved)
 
 ### 1. Concurrent Replay with 100 Different Idempotency Keys
+
 - **Clarification & Test Added**:
   - Differentiated identical-key replay from new-key concurrent replay.
-  - Test 1: 100 concurrent requests with the *same* confirmation and the *same* idempotency key return the cached 200 `COMMITTING` operation.
-  - Test 2 (Separate Requirement 1 Test): 100 concurrent requests with the *same* confirmation token and 100 *different* idempotency keys:
+  - Test 1: 100 concurrent requests with the _same_ confirmation and the _same_ idempotency key return the cached 200 `COMMITTING` operation.
+  - Test 2 (Separate Requirement 1 Test): 100 concurrent requests with the _same_ confirmation token and 100 _different_ idempotency keys:
     - Exactly 1 request succeeds (transitions booking to `COMMITTING`).
     - Exactly 99 requests fail with `CONFIRMATION_REPLAY_BLOCKED` (HTTP 409).
     - Exactly 1 `committed_intents` row exists in PostgreSQL.
@@ -51,6 +53,7 @@
 - **Evidence**: `packages/application/src/__tests__/booking-security.test.ts` (Test 15).
 
 ### 2. Fastify HTTP Content-Type Parser Duplicate-Key Rejection
+
 - **Implementation**:
   - Wired `parseJsonRejectingDuplicates` directly into Fastify's `application/json` content-type parser in `apps/api/src/app.ts`:
     ```ts
@@ -77,6 +80,7 @@
   - Real HTTP test in `apps/api/src/__tests__/routes.test.ts` injects raw JSON with duplicate `"amount"` keys (`{"amount":"1000","amount":"9000"}`). Fastify returns HTTP 400 Problem Details with code `invalid_request_schema` and detail containing `Duplicate JSON key detected: "amount"`.
 
 ### 3. Confirmation Tokens & Approval Locators Security Properties
+
 - **Cryptographic Randomness**:
   - Confirmation token: 256 bits of cryptographically secure randomness (`conf_<64 hex chars = 32 bytes = 256 bits>`).
   - Interaction locator: 128 bits of cryptographically secure randomness (`loc_<32 hex chars = 16 bytes = 128 bits>`).
@@ -88,15 +92,18 @@
 - **Evidence**: `packages/application/src/__tests__/booking-security.test.ts` (Test 16).
 
 ### 4. Historical Duplicate Specification Archived & Cleaned
+
 - **Action**:
   - Removed `planning/spec.md` via `git rm planning/spec.md` (removing the redundant `planning/` directory entirely).
   - Moved historical reference to `docs/archive/spec-v1.0.md` with the required banner:
     ```markdown
     # ARCHIVED — DO NOT USE FOR IMPLEMENTATION
+
     The current sources of truth are `/spec.md` and `/SPEC_V1_1_AMENDMENT.md`.
     ```
 
 ### 5. Repository Verification & Workspace Count Clarification
+
 - **Workspace Package Count Explanation**:
   - Earlier mention of "13 projects" in pnpm lockfile reflects the monorepo root container plus the 12 workspace packages.
   - Turborepo operates across the 12 scoped packages:
@@ -166,6 +173,7 @@
 > The payer-action boundary is strictly preserved. `onApprove` from PayPal JS SDK is solely a trigger to call the velvetAI backend; it does NOT confirm payment or complete the booking.
 
 ### Authoritative Epic 3 State Progression:
+
 ```
 COMMITTING
   → ORDER_CREATE_PENDING
@@ -179,25 +187,26 @@ COMMITTING
 
 ## Sprint Epic 3 — PayPal Integration & Financial Reconciliation Work Breakdown
 
-| Phase | Description | Status | Evidence |
-|---|---|---|---|
-| **W0** | Audit & Architecture Plan | **VERIFIED** | State machine mapped, checklist created, ADR 0006 written & accepted |
-| **W1** | Persistence & Domain Model | **VERIFIED** | Migration `0003_payment_core_ledger.ts`, 9 tables, Kysely schema types, check constraints, append-only rules, RLS policies, `payment_expires_at` column; migration apply/rollback/re-apply tests pass |
-| **W2** | PayPal Sandbox Client | **VERIFIED** | Typed `PaymentPort` adapter (`PayPalHttpClient`, `PayPalSandboxAdapter`), token caching with stampede prevention, timeout taxonomy, typed error hierarchy (`PayPalClientError`, `PayPalRetryableError`, `PayPalUnknownOutcomeError`, `PayPalAuthError`), strictly rejects live environment |
-| **W3** | Create Deposit Order | **VERIFIED** | `POST /v1/bookings/:bookingId/payment-order`, stable request ID, immutable snapshot binding (deposit minor, currency, merchant), transition to `REQUIRES_PAYER_ACTION` |
-| **W4** | PayPal JS SDK v6 | **VERIFIED** | `apps/web/src/components/PayPalButton.tsx`, client `createOrder` calls backend payment-order endpoint, `onApprove` calls backend capture (no local confirmation), countdown timer derived from server `payment_expires_at`, slot released on expiry |
-| **W5** | Backend Capture & Reconciliation | **VERIFIED** | `POST /v1/payments/:paymentIntentId/capture`, confirms booking ONLY on contained capture status `COMPLETED`, returns HTTP 202 with status URL on `UNCERTAIN` / timeout / network drop |
-| **W6** | Webhook Ingress | **VERIFIED** | `POST /v1/webhooks/paypal/:connectionKey`, route-scoped raw Buffer parser, 256 KiB body limit enforcement (rejects > 256 KiB with 413), raw quarantine storage in `webhook_quarantine`, asynchronous verification & out-of-order deduplication |
-| **W7** | Refunds | **VERIFIED** | `POST /v1/captures/:captureId/refunds`, PostgreSQL row-level lock (`FOR UPDATE`) on `payment_captures`, strictly enforces `requested <= captured - (completed + pending + unknown)` preventing over-refunds |
-| **W8** | Financial Journal & Invoicing | **VERIFIED** | Append-only double-entry ledger (`financial_journal_entries`, `financial_journal_lines`), zero-sum balanced debit/credit per currency, non-authoritative PayPal Invoicing v2 balance projection for completed appointments (`POST /v1/bookings/:bookingId/balance-invoice`) |
-| **W9** | Tests & Fault Injection | **VERIFIED** | Deterministic mock adapter test suite, fault injection (timeout, socket drop, duplicate webhook, refund balance exhaustion), clean opt-in skip when sandbox credentials absent (`RUN_PAYPAL_SANDBOX_E2E=1`) |
-| **W10** | Documentation & Runbook | **VERIFIED** | ADR 0006 written & committed, environment variable documentation, implementation progress canonical record updated |
+| Phase   | Description                      | Status       | Evidence                                                                                                                                                                                                                                                                                   |
+| ------- | -------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **W0**  | Audit & Architecture Plan        | **VERIFIED** | State machine mapped, checklist created, ADR 0006 written & accepted                                                                                                                                                                                                                       |
+| **W1**  | Persistence & Domain Model       | **VERIFIED** | Migration `0003_payment_core_ledger.ts`, 9 tables, Kysely schema types, check constraints, append-only rules, RLS policies, `payment_expires_at` column; migration apply/rollback/re-apply tests pass                                                                                      |
+| **W2**  | PayPal Sandbox Client            | **VERIFIED** | Typed `PaymentPort` adapter (`PayPalHttpClient`, `PayPalSandboxAdapter`), token caching with stampede prevention, timeout taxonomy, typed error hierarchy (`PayPalClientError`, `PayPalRetryableError`, `PayPalUnknownOutcomeError`, `PayPalAuthError`), strictly rejects live environment |
+| **W3**  | Create Deposit Order             | **VERIFIED** | `POST /v1/bookings/:bookingId/payment-order`, stable request ID, immutable snapshot binding (deposit minor, currency, merchant), transition to `REQUIRES_PAYER_ACTION`                                                                                                                     |
+| **W4**  | PayPal JS SDK v6                 | **VERIFIED** | `apps/web/src/components/PayPalButton.tsx`, client `createOrder` calls backend payment-order endpoint, `onApprove` calls backend capture (no local confirmation), countdown timer derived from server `payment_expires_at`, slot released on expiry                                        |
+| **W5**  | Backend Capture & Reconciliation | **VERIFIED** | `POST /v1/payments/:paymentIntentId/capture`, confirms booking ONLY on contained capture status `COMPLETED`, returns HTTP 202 with status URL on `UNCERTAIN` / timeout / network drop                                                                                                      |
+| **W6**  | Webhook Ingress                  | **VERIFIED** | `POST /v1/webhooks/paypal/:connectionKey`, route-scoped raw Buffer parser, 256 KiB body limit enforcement (rejects > 256 KiB with 413), raw quarantine storage in `webhook_quarantine`, asynchronous verification & out-of-order deduplication                                             |
+| **W7**  | Refunds                          | **VERIFIED** | `POST /v1/captures/:captureId/refunds`, PostgreSQL row-level lock (`FOR UPDATE`) on `payment_captures`, strictly enforces `requested <= captured - (completed + pending + unknown)` preventing over-refunds                                                                                |
+| **W8**  | Financial Journal & Invoicing    | **VERIFIED** | Append-only double-entry ledger (`financial_journal_entries`, `financial_journal_lines`), zero-sum balanced debit/credit per currency, non-authoritative PayPal Invoicing v2 balance projection for completed appointments (`POST /v1/bookings/:bookingId/balance-invoice`)                |
+| **W9**  | Tests & Fault Injection          | **VERIFIED** | Deterministic mock adapter test suite, fault injection (timeout, socket drop, duplicate webhook, refund balance exhaustion), clean opt-in skip when sandbox credentials absent (`RUN_PAYPAL_SANDBOX_E2E=1`)                                                                                |
+| **W10** | Documentation & Runbook          | **VERIFIED** | ADR 0006 written & committed, environment variable documentation, implementation progress canonical record updated                                                                                                                                                                         |
 
 ---
 
 ## Sprint Epic 3 Acceptance Audit & Remediation (All 6 Blockers Resolved)
 
 ### 1. Capture State Semantics & Definitive Failure Separation
+
 - **Remediation**:
   - `capturePayment` when receiving `UNCERTAIN` (or PayPal `PENDING`) persists `payment_captures` in `PENDING` state, marks booking as `CAPTURE_UNCERTAIN`, and keeps `resource_claims` as `blocking: true`.
   - Definitive capture failure (e.g. `DECLINED` / `FAILED`) transitions booking and payment intent to `PAYMENT_FAILED` and releases claim (`blocking: false`), clearly distinguished from `PAYMENT_WINDOW_EXPIRED`.
@@ -205,6 +214,7 @@ COMMITTING
 - **Evidence**: `packages/application/src/__tests__/payment-lifecycle.test.ts` (Tests 5, 6, 12, 13).
 
 ### 2. Webhook Quarantine Poisoning Prevention
+
 - **Remediation**:
   - `webhook_quarantine` table holds all unverified webhook deliveries with `payload_sha256` and transmission metadata.
   - Signature verification precedes any canonical registration: unverified or forged events are marked `REJECTED` in quarantine and NEVER insert into `verified_provider_events`.
@@ -213,6 +223,7 @@ COMMITTING
 - **Evidence**: `packages/application/src/__tests__/payment-lifecycle.test.ts` (Test 14).
 
 ### 3. Out-of-Order Webhook Reconciliation
+
 - **Remediation**:
   - Authoritative event reducer handles out-of-order deliveries for all material events:
     - `CHECKOUT.ORDER.APPROVED`
@@ -224,6 +235,7 @@ COMMITTING
 - **Evidence**: `packages/application/src/__tests__/payment-lifecycle.test.ts` (Tests 13, 15).
 
 ### 4. Refund Unknown Outcomes & Capacity Preservation
+
 - **Remediation**:
   - Network timeouts, connection resets, and HTTP 5xx retain refund reservation in `UNKNOWN`/`RECONCILING` state, keeping refundable capacity reserved.
   - Only definitive 4xx client rejection releases refundable capacity (transitions to `FAILED`).
@@ -231,6 +243,7 @@ COMMITTING
 - **Evidence**: `packages/application/src/__tests__/payment-lifecycle.test.ts` (Test 16).
 
 ### 5. PayPal JavaScript SDK v6 Proof
+
 - **Remediation**:
   - Web component `apps/web/src/components/PayPalButton.tsx` loads the official v6 core script:
     `https://www.sandbox.paypal.com/web-sdk/v6/core` (production: `https://www.paypal.com/web-sdk/v6/core`).
@@ -243,6 +256,7 @@ COMMITTING
 - **Evidence**: Component unit test `apps/web/src/components/__tests__/PayPalButton.test.ts` (5 tests passing).
 
 ### 6. Financial Journal Database Integrity
+
 - **Remediation**:
   - Replaced silent `DO INSTEAD NOTHING` rewrite rules with PostgreSQL triggers (`fn_protect_financial_journal_entries` and `fn_protect_financial_journal_lines`) that raise explicit runtime exceptions on UPDATE/DELETE of posted entries/lines and INSERT of lines into posted entries.
   - Added deferred constraint trigger `trg_validate_journal_balance` on `financial_journal_entries` enforcing $\sum \text{debits} == \sum \text{credits}$ and $\text{line\_count} > 0$ for every `POSTED` entry before transaction commit.
@@ -250,6 +264,7 @@ COMMITTING
 - **Evidence**: `packages/db/src/__tests__/migration-lifecycle.test.ts` (Test 6).
 
 ### 7. Supported MVP Currencies & ISO-4217 Conversions
+
 - **Remediation**:
   - Declared explicit supported MVP currency allowlist `SUPPORTED_MVP_CURRENCIES = ["USD"]`.
   - Unsupported currencies (e.g. `EUR`) fail fast before order creation with `UNSUPPORTED_CURRENCY`.
@@ -257,12 +272,14 @@ COMMITTING
 - **Evidence**: `packages/application/src/__tests__/payment-lifecycle.test.ts` (Test 17).
 
 ### 8. Canonical RLS Custom Setting
+
 - **Remediation**:
   - Standardized on `app.tenant_id` across all RLS policies, `withTenantTransaction`, tests, and background workers.
   - Added database introspection test proving all active RLS policies inspect `app.tenant_id`.
 - **Evidence**: `packages/db/src/__tests__/migration-lifecycle.test.ts` (Test 7).
 
 ### 9. Real PayPal Sandbox E2E Verification (VERIFIED)
+
 - **Status**: **VERIFIED** per `docs/runbooks/paypal-sandbox-e2e.md` (Steps 8–16).
 - **Environment & Ingress**:
   - PayPal Environment: `sandbox` (enforced by `PayPalSandboxAdapter` & `validateEnv`; live credentials rejected at startup).
@@ -315,21 +332,145 @@ COMMITTING
 
 ---
 
+## Epic 3.5 Integration Hardening Verification (W0–W7 Complete)
+
+### W0 — Baseline & Workspace Hygiene
+
+- Cleaned trailing newline diff in `prompts/REPOSITORY_STATUS_AUDIT_PROMPT.md`.
+- `git diff --check` exits with 0 (zero whitespace/newline errors).
+- Baseline verification suite verified 100% green before modifications.
+
+### W1 — Toolchain, License & Credential Hygiene
+
+- **Toolchain Alignment**:
+  - Added repository-root `mise.toml` pinning `node = "24.22.1"` and `pnpm = "12.14.0"`.
+  - Added `"engines": { "node": ">=24 <25" }` and `"packageManager": "pnpm@12.14.0"` to root `package.json`.
+- **License**:
+  - Created root [LICENSE](file:///Users/ayu/Documents/github/velvetAI/LICENSE) file with standard MIT License terms.
+  - Added `"license": "MIT"` in root `package.json`.
+  - Retained `"private": true` in root `package.json` to prevent accidental npm publishing while remaining fully open source.
+- **Credential Hygiene**:
+  - `git grep -nE 'velvet_runtime_pass|velvet_dev_pass'` returns 0 occurrences across the entire codebase.
+  - Removed all hardcoded database credentials from `packages/db/src/migrations/`, `docker-compose.yml`, `.env.example`, and test helpers.
+  - Ephemeral restricted test roles generated per test run; runtime credentials provisioned strictly via `process.env.DATABASE_URL`.
+
+### W2 — PostgreSQL-Backed Catalog & Availability Integration
+
+- **`CatalogService` (`packages/application/src/catalog-service.ts`)**:
+  - Direct PostgreSQL queries against `services` and published `service_versions` inside `withTenantTransaction`.
+  - Filters out inactive services and enforces strict tenant isolation.
+  - Replaced production usage of `MOCK_SERVICES` in `apps/api/src/routes/services.ts`.
+- **`AvailabilityService` (`packages/application/src/availability-service.ts`)**:
+  - Direct PostgreSQL queries against `resources`, `availability_rules`, and `resource_claims` under `withTenantTransaction`.
+  - Subtracts active blocking claims using half-open intervals `[starts_at, ends_at)`.
+  - Incorporates buffer time before and after appointments.
+  - Evaluates DST transitions and authoritative IANA timezones (`temporal` / Luxon semantics).
+  - Production responses output authoritative UTC ISO timestamps and schedule revision; zero simulated fill scores returned.
+- **Verification**:
+  - `packages/application/src/__tests__/catalog-availability.test.ts`: 8/8 tests pass.
+
+### W3 — 100% Mutation Idempotency Coverage
+
+- **`apps/api/src/plugins/idempotency.ts`**:
+  - Enforces mandatory `Idempotency-Key` header on all mutating routes:
+    - `POST /v1/booking-quotes`
+    - `POST /v1/bookings/prepare`
+    - `POST /v1/booking-holds`
+    - `POST /v1/booking-approvals/:locator/confirm`
+    - `POST /v1/bookings/commit`
+    - `POST /v1/bookings/:id/cancel`
+    - `POST /v1/bookings/:id/check-in`
+    - `POST /v1/bookings/:id/complete`
+    - `POST /v1/bookings/:id/no-show`
+    - `POST /v1/bookings/:bookingId/payment-order`
+    - `POST /v1/payments/:paymentIntentId/capture`
+    - `POST /v1/captures/:captureId/refunds`
+    - `POST /v1/bookings/:bookingId/balance-invoice`
+  - Canonical request hashing includes route operation, tenant, and body payload.
+  - Missing key returns RFC 9457 HTTP 400 (`missing_idempotency_key`).
+  - Key reuse with different payload returns RFC 9457 HTTP 409 (`idempotency_key_conflict`).
+  - Key reuse with identical payload replays cached HTTP response with matching status and headers.
+- **Verification**:
+  - `apps/api/src/__tests__/idempotency-coverage.test.ts`: All tests pass (including 100 concurrent identical requests converging to exactly 1 operation and cross-tenant key isolation).
+
+### W4 — Complete Cancellation & Attendance Lifecycle Minimum
+
+- **Cancellation Contracts & Service (`BookingService`)**:
+  - `prepareCancellation`: Evaluates 24-hour cutoff rule, computes refundable deposit according to cancellation policy, and issues an HMAC-SHA256 signed `cancellationConfirmationToken`.
+  - `commitCancellation`: Verifies token signature, locks booking, handles `CAPTURE_UNCERTAIN` by moving booking to `CANCEL_REQUESTED` until reconciliation, reserves and dispatches policy refunds via `PaymentService.refundPayment()`, releases resource claims (`blocking: false`), and appends audit/outbox events.
+- **Attendance Routes (`apps/api/src/routes/bookings.ts`)**:
+  - `POST /v1/bookings/:id/check-in`: Enforces merchant/scheduler role and <=2h window before start; transitions status to `CHECKED_IN`.
+  - `POST /v1/bookings/:id/complete`: Enforces merchant role; transitions status to `COMPLETED`, releases resource claim, and authorizes balance invoice creation.
+  - `POST /v1/bookings/:id/no-show`: Enforces merchant role and 15-minute grace period after appointment start; transitions status to `NO_SHOW` and releases claim.
+- **Verification**:
+  - `packages/application/src/__tests__/cancellation-attendance.test.ts`: 7/7 tests pass.
+
+### W5 — PostgreSQL Outbox Store & Reconciliation Worker
+
+- **Migration `0004_outbox_lease_hardening.ts`**:
+  - Adds `lease_token UUID` and `lease_expires_at TIMESTAMPTZ` to `outbox_events`.
+  - Verified with full up/down rollback migration lifecycle tests.
+- **`PostgreSqlOutboxStore` (`apps/worker/src/postgres-outbox-store.ts`)**:
+  - Authoritative PostgreSQL outbox store claiming events with `FOR UPDATE SKIP LOCKED`.
+  - Fenced lease token and expiry (`NOW() + 30 seconds`).
+  - Stale worker acknowledgments fail closed (`WHERE lease_token = :leaseToken`).
+  - Bounded exponential backoff with jitter and dead-lettering (`max_attempts = 5`).
+- **`ReconciliationProcessor` (`apps/worker/src/reconciliation-processor.ts`)**:
+  - Background reconciliation loop leveraging index `idx_provider_operations_reconcile`.
+  - Queries pending PayPal orders/captures/refunds and transitions uncertain states to terminal outcomes.
+- **Production Guard**:
+  - `apps/worker/src/index.ts` validates `NODE_ENV === "production"` and throws a fatal error if `InMemoryOutboxStore` is used.
+- **Verification**:
+  - `apps/worker/src/__tests__/postgres-worker-reconciliation.test.ts`: 7/7 tests pass.
+
+### W6 — Documentation & NFR Traceability Correction
+
+- **RLS Introspection**:
+  - Queried `pg_tables` in PostgreSQL 17: exactly **25 tables** enforce `FORCE ROW LEVEL SECURITY`.
+  - Updated `README.md` and `docs/PROJECT_STATUS_DOSSIER.md` reflecting the exact 25 tables.
+  - Added Mermaid architecture diagram showing PostgreSQL catalog, availability, and background worker.
+- **NFR Correction**:
+  - Restored canonical spec targets:
+    - NFR-001 (Availability): Cached p95 < 300ms, p99 < 800ms; Uncached p95 < 800ms, p99 < 1.5s.
+    - NFR-002 (Booking): Quote & Hold p95 < 500ms, p99 < 1s (excl. providers); internal command p95 < 700ms, p99 < 1.5s.
+    - NFR-003 (Webhooks): Durable ack p99 < 500ms; verified event applied 99.9% in 2 min.
+    - NFR-004 (Durability): Monthly availability 99.9%; production RPO <= 5 min; RTO <= 60 min.
+    - NFR-005 (Capacity): Sustains >= 100 cached reads/s and 20 booking mutations/s; 10,000 bookings/day/tenant.
+  - Corrected claims: marked NFR-001 through NFR-005 as `IMPLEMENTED_UNVERIFIED` until load tests are run on staging/production infrastructure.
+- **Load Script**:
+  - Created `tests/load/k6-availability-booking.js` covering cached reads (100 req/s), uncached reads, quotes & non-conflicting holds (20 mut/s), and hot-resource GiST conflict contention.
+
+### W7 — Render Deployment Scaffold
+
+- **Containerization**:
+  - Created [Dockerfile.api](file:///Users/ayu/Documents/github/velvetAI/Dockerfile.api) for API service on Node 24 Alpine with healthcheck at `/healthz`.
+  - Created [Dockerfile.worker](file:///Users/ayu/Documents/github/velvetAI/Dockerfile.worker) for background outbox & reconciliation worker.
+  - Created [Dockerfile.web](file:///Users/ayu/Documents/github/velvetAI/Dockerfile.web) and [docker/nginx-web.conf](file:///Users/ayu/Documents/github/velvetAI/docker/nginx-web.conf) for static SPA hosting.
+- **Render Blueprint**:
+  - Created [render.yaml](file:///Users/ayu/Documents/github/velvetAI/render.yaml) defining API, Worker, Web static site, and managed PostgreSQL 16/17 database.
+  - Wired pre-deploy migration command: `pnpm --filter @velvetai/db db:migrate`.
+- **Sandbox PayPal Enforcement**:
+  - Configured `PAYPAL_ENVIRONMENT` schema validation in `packages/observability/src/env.ts` to strictly require `sandbox`.
+  - Added [docs/DEPLOYMENT.md](file:///Users/ayu/Documents/github/velvetAI/docs/DEPLOYMENT.md) documentation guide.
+
+---
+
 ## Full Workspace Verification Summary
 
-| Verification Check | Command | Exit Code | Result |
-|---|---|---|---|
-| **Dependencies** | `pnpm install --frozen-lockfile` | 0 | 13 workspace projects verified in 28ms |
-| **Linter** | `pnpm lint` | 0 | 18 tasks: 12 packages: 0 errors, 0 warnings |
-| **Typecheck** | `pnpm typecheck` | 0 | 18 tasks: 12 packages: Strict TypeScript: 0 errors |
-| **Test Suite** | `pnpm test` | 0 | 18 tasks: 100% passed across all packages (0 failures) |
-| **Production Build** | `pnpm build` | 0 | 12 packages: All packages & apps built cleanly |
-| **Git Whitespace** | `git diff --check` | 0 | Clean diff, 0 trailing whitespace / blank lines |
-| **Git Status** | `git status --short` | 0 | Clean working tree ready for commit |
+| Verification Check   | Command                          | Exit Code | Result                                                 |
+| -------------------- | -------------------------------- | --------- | ------------------------------------------------------ |
+| **Dependencies**     | `pnpm install --frozen-lockfile` | 0         | 13 workspace projects verified in 28ms                 |
+| **Linter**           | `pnpm lint`                      | 0         | 18 tasks: 12 packages: 0 errors, 0 warnings            |
+| **Typecheck**        | `pnpm typecheck`                 | 0         | 18 tasks: 12 packages: Strict TypeScript: 0 errors     |
+| **Test Suite**       | `pnpm test`                      | 0         | 18 tasks: 100% passed across all packages (0 failures) |
+| **Production Build** | `pnpm build`                     | 0         | 12 packages: All packages & apps built cleanly         |
+| **Git Whitespace**   | `git diff --check`               | 0         | Clean diff, 0 trailing whitespace / blank lines        |
+| **Git Status**       | `git status --short`             | 0         | Clean working tree ready for commit                    |
 
 ---
 
 ## Commitments & Invariants
+
 - Baseline clean reproduction confirmed before and throughout Epic 3.
 - JWS standardized exclusively on maintained `jose` library in production path.
 - ADR 0006 accepted and committed.

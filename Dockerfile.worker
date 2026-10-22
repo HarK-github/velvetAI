@@ -1,0 +1,22 @@
+# Dockerfile for velvetAI Background Worker
+FROM node:24-alpine AS builder
+
+WORKDIR /app
+RUN npm install -g pnpm@12.14.0
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
+COPY apps ./apps
+COPY packages ./packages
+
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @velvetai/contracts... build && pnpm --filter @velvetai/worker build
+
+FROM node:24-alpine AS runner
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+RUN npm install -g pnpm@12.14.0
+COPY --from=builder /app ./
+
+CMD ["pnpm", "--filter", "@velvetai/worker", "start"]

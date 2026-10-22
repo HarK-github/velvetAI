@@ -56,8 +56,7 @@ try {
 }
 
 const TEST_DB_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable";
+  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
 
 /**
  * Deterministic Mock PaymentPort for testing fault injection, state branches, and ledger effects.
@@ -438,6 +437,7 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
     const op = await withTenantTransaction(db, tenantId, (trx) =>
       trx
         .selectFrom("provider_operations")
+        .where("tenant_id", "=", tenantId)
         .where("paypal_request_id", "=", "req-order-1")
         .selectAll()
         .executeTakeFirst(),
@@ -466,7 +466,9 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
     expect(second.paymentIntentId).toBe(first.paymentIntentId);
 
     // Verify only one order was dispatched to adapter
-    const matchingDispatches = mockPort.ordersCreated.filter((o) => o.requestId === "req-order-replay");
+    const matchingDispatches = mockPort.ordersCreated.filter(
+      (o) => o.requestId === "req-order-replay",
+    );
     expect(matchingDispatches).toHaveLength(1);
   });
 
@@ -516,7 +518,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // Verify resource claim is CONFIRMED and blocking
     const claim = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("resource_claims").where("booking_id", "=", bookingId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("resource_claims")
+        .where("booking_id", "=", bookingId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(claim?.state).toBe("CONFIRMED");
     expect(claim?.blocking).toBe(true);
@@ -585,7 +591,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // Verify resource claim remains blocking
     const claim = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("resource_claims").where("booking_id", "=", bookingId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("resource_claims")
+        .where("booking_id", "=", bookingId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(claim?.state).toBe("CAPTURE_UNCERTAIN");
     expect(claim?.blocking).toBe(true);
@@ -613,6 +623,7 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
     const op = await withTenantTransaction(db, tenantId, (trx) =>
       trx
         .selectFrom("provider_operations")
+        .where("tenant_id", "=", tenantId)
         .where("paypal_request_id", "=", "req-cap-timeout-1")
         .selectAll()
         .executeTakeFirst(),
@@ -640,7 +651,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // Verify claim is RELEASED and non-blocking
     const claim = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("resource_claims").where("booking_id", "=", bookingId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("resource_claims")
+        .where("booking_id", "=", bookingId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(claim?.state).toBe("RELEASED");
     expect(claim?.blocking).toBe(false);
@@ -774,7 +789,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // Complete the appointment
     await withTenantTransaction(db, tenantId, async (trx) => {
-      await trx.updateTable("bookings").set({ status: "COMPLETED" }).where("id", "=", bookingId).execute();
+      await trx
+        .updateTable("bookings")
+        .set({ status: "COMPLETED" })
+        .where("id", "=", bookingId)
+        .execute();
     });
 
     // Create balance invoice: Total $150.00 minus $50.00 deposit = $100.00 balance due
@@ -801,7 +820,8 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
   it("11. Opt-in sandbox test: skips cleanly when credentials absent, executes when present", async () => {
     // Canonical test flag per docs/runbooks/paypal-sandbox-e2e.md (PAYPAL_SANDBOX_LIVE is deprecated alias)
-    const isLiveOptIn = process.env.RUN_PAYPAL_SANDBOX_E2E === "1" || process.env.PAYPAL_SANDBOX_LIVE === "true";
+    const isLiveOptIn =
+      process.env.RUN_PAYPAL_SANDBOX_E2E === "1" || process.env.PAYPAL_SANDBOX_LIVE === "true";
     const clientId = process.env.PAYPAL_CLIENT_ID;
     const isPlaceholder = !clientId || clientId.startsWith("placeholder_");
 
@@ -843,13 +863,21 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // Payment intent must be PAYMENT_FAILED
     const intent = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("payment_intents").where("id", "=", orderRes.paymentIntentId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("payment_intents")
+        .where("id", "=", orderRes.paymentIntentId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(intent?.state).toBe("PAYMENT_FAILED");
 
     // Claim must be RELEASED and non-blocking
     const claim = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("resource_claims").where("booking_id", "=", bookingId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("resource_claims")
+        .where("booking_id", "=", bookingId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(claim?.state).toBe("RELEASED");
     expect(claim?.blocking).toBe(false);
@@ -877,7 +905,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // Claim remains blocking
     let claim = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("resource_claims").where("booking_id", "=", bookingId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("resource_claims")
+        .where("booking_id", "=", bookingId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(claim?.state).toBe("CAPTURE_UNCERTAIN");
     expect(claim?.blocking).toBe(true);
@@ -910,14 +942,22 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
     expect(bookingConfirmed?.status).toBe("CONFIRMED");
 
     claim = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("resource_claims").where("booking_id", "=", bookingId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("resource_claims")
+        .where("booking_id", "=", bookingId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(claim?.state).toBe("CONFIRMED");
     expect(claim?.blocking).toBe(true);
 
     // Verify journal entry posted and balanced
     const journal = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("financial_journal_entries").where("booking_id", "=", bookingId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("financial_journal_entries")
+        .where("booking_id", "=", bookingId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(journal?.status).toBe("POSTED");
 
@@ -1003,7 +1043,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // Proves: verified_provider_events does NOT contain the event ID
     const verifiedRow = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("verified_provider_events").where("provider_event_id", "=", poisonedEventId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("verified_provider_events")
+        .where("provider_event_id", "=", poisonedEventId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(verifiedRow).toBeUndefined();
 
@@ -1026,13 +1070,20 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // Verified event row is now present
     const verifiedLegit = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("verified_provider_events").where("provider_event_id", "=", poisonedEventId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("verified_provider_events")
+        .where("provider_event_id", "=", poisonedEventId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(verifiedLegit).toBeDefined();
     expect(verifiedLegit?.provider_event_id).toBe(poisonedEventId);
 
     // 3. Replaying the valid delivery idempotently succeeds without duplicate row
-    const replayResult = await paymentService.processWebhookDelivery(legitimateDeliveryId, tenantId);
+    const replayResult = await paymentService.processWebhookDelivery(
+      legitimateDeliveryId,
+      tenantId,
+    );
     expect(replayResult).toBe(false); // already verified
   });
 
@@ -1085,7 +1136,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
     expect(bookingA?.status).toBe("CONFIRMED");
 
     const captureA = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("payment_captures").where("booking_id", "=", bA).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("payment_captures")
+        .where("booking_id", "=", bA)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(captureA?.state).toBe("REFUNDED");
 
@@ -1158,7 +1213,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // Capture state transitions to PARTIALLY_REFUNDED
     const captureC = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("payment_captures").where("booking_id", "=", bC).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("payment_captures")
+        .where("booking_id", "=", bC)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(captureC?.state).toBe("PARTIALLY_REFUNDED");
 
@@ -1218,11 +1277,17 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
     });
 
     const capture = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("payment_captures").where("booking_id", "=", bookingId).selectAll().executeTakeFirstOrThrow(),
+      trx
+        .selectFrom("payment_captures")
+        .where("booking_id", "=", bookingId)
+        .selectAll()
+        .executeTakeFirstOrThrow(),
     );
 
     // 1. 503 Service Unavailable: moves to UNKNOWN, retains capacity reserved
-    mockPort.refundError = Object.assign(new Error("PayPal 503 Service Unavailable"), { statusCode: 503 });
+    mockPort.refundError = Object.assign(new Error("PayPal 503 Service Unavailable"), {
+      statusCode: 503,
+    });
 
     const unkRefundRes = await paymentService.refundPayment({
       tenantId,
@@ -1236,7 +1301,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
     expect(unkRefundRes.status).toBe("UNCERTAIN");
 
     const unkReservation = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("refund_reservations").where("id", "=", unkRefundRes.refundId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("refund_reservations")
+        .where("id", "=", unkRefundRes.refundId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(unkReservation?.state).toBe("UNKNOWN");
 
@@ -1253,7 +1322,9 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
     ).rejects.toThrow(DomainError);
 
     // 2. Definitive 400 rejection: reservation moves to FAILED and releases capacity
-    mockPort.refundError = Object.assign(new Error("PayPal 400 Bad Request: Invalid Amount"), { statusCode: 400 });
+    mockPort.refundError = Object.assign(new Error("PayPal 400 Bad Request: Invalid Amount"), {
+      statusCode: 400,
+    });
 
     await expect(
       paymentService.refundPayment({
@@ -1277,7 +1348,11 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
     expect(reconciled.status).toBe("COMPLETED");
 
     const updatedRes = await withTenantTransaction(db, tenantId, (trx) =>
-      trx.selectFrom("refund_reservations").where("id", "=", unkRefundRes.refundId).selectAll().executeTakeFirst(),
+      trx
+        .selectFrom("refund_reservations")
+        .where("id", "=", unkRefundRes.refundId)
+        .selectAll()
+        .executeTakeFirst(),
     );
     expect(updatedRes?.state).toBe("COMPLETED");
   });
@@ -1323,8 +1398,8 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
   it("19. Provider fee settlement reconciliation arithmetic: net amount + PayPal fee = gross amount; refund fee retention recorded", () => {
     // 1. Capture settlement breakdown arithmetic (e.g. $20.00 gross deposit with $1.27 fee -> $18.73 net settlement)
     const grossAmount = "2000"; // 2000 minor ($20.00 USD)
-    const paypalFee = "127";    // 127 minor ($1.27 USD)
-    const netAmount = "1873";   // 1873 minor ($18.73 USD)
+    const paypalFee = "127"; // 127 minor ($1.27 USD)
+    const netAmount = "1873"; // 1873 minor ($18.73 USD)
 
     const grossMinor = BigInt(grossAmount);
     const feeMinor = BigInt(paypalFee);
@@ -1336,8 +1411,8 @@ describe("Payment Lifecycle & Ledger Integration (Requirements W3-W9)", () => {
 
     // 2. Refund settlement breakdown arithmetic (e.g. $5.00 partial refund; PayPal retains processing fees)
     const refundGrossAmount = "500"; // 500 minor ($5.00 USD)
-    const refundFeeReturned = "0";    // 0 minor ($0.00 USD fee returned; retained by provider)
-    const refundNetAmount = "500";   // 500 minor ($5.00 USD debited from merchant)
+    const refundFeeReturned = "0"; // 0 minor ($0.00 USD fee returned; retained by provider)
+    const refundNetAmount = "500"; // 500 minor ($5.00 USD debited from merchant)
 
     const rfGrossMinor = BigInt(refundGrossAmount);
     const rfFeeMinor = BigInt(refundFeeReturned);

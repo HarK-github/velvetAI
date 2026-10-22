@@ -1,14 +1,6 @@
 import { FastifyInstance, FastifyRequest } from "fastify";
-import {
-  AuthenticatedPrincipal,
-  AuthenticationPort,
-} from "@velvetai/application";
-import {
-  TenantId,
-  UserId,
-  Role,
-  createProblemDetails,
-} from "@velvetai/contracts";
+import { AuthenticatedPrincipal, AuthenticationPort } from "@velvetai/application";
+import { TenantId, UserId, Role, createProblemDetails } from "@velvetai/contracts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -62,16 +54,14 @@ export function registerAuth(app: FastifyInstance): void {
 
   app.addHook("preHandler", async (request: FastifyRequest, reply) => {
     // Skip public paths
-    if (
-      request.url.startsWith("/health") ||
-      request.url === "/v1/system/spec"
-    ) {
+    if (request.url.startsWith("/health") || request.url === "/v1/system/spec") {
       return;
     }
 
-    request.clientId = typeof request.headers["x-client-id"] === "string"
-      ? request.headers["x-client-id"]
-      : "default-client";
+    request.clientId =
+      typeof request.headers["x-client-id"] === "string"
+        ? request.headers["x-client-id"]
+        : "default-client";
 
     const authHeader = request.headers.authorization;
     const token = authHeader?.startsWith("Bearer ")
@@ -90,10 +80,7 @@ export function registerAuth(app: FastifyInstance): void {
         requestId: request.id,
         detail: "Invalid or expired authentication credentials",
       });
-      return reply
-        .status(401)
-        .header("content-type", "application/problem+json")
-        .send(problem);
+      return reply.status(401).header("content-type", "application/problem+json").send(problem);
     }
   });
 }

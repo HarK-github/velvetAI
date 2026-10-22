@@ -1,15 +1,15 @@
 import crypto from "node:crypto";
 import { Kysely } from "kysely";
-import { Database, createDatabaseClient, migrateToLatest, withTenantTransaction } from "../index.js";
+import {
+  Database,
+  createDatabaseClient,
+  migrateToLatest,
+  withTenantTransaction,
+} from "../index.js";
 import { TenantId, LocationId, ServiceId, ResourceId, UserId } from "@velvetai/contracts";
 
 export const TEST_DB_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable";
-
-export const RESTRICTED_DB_URL =
-  process.env.RESTRICTED_DATABASE_URL ||
-  "postgresql://velvet_runtime:velvet_runtime_pass@localhost:5432/velvetai?sslmode=disable";
+  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
 
 export async function setupTestDatabase(): Promise<Kysely<Database>> {
   const db = createDatabaseClient(TEST_DB_URL, { min: 2, max: 20 });
@@ -21,8 +21,44 @@ export async function createSingleConnectionDb(): Promise<Kysely<Database>> {
   return createDatabaseClient(TEST_DB_URL, { min: 1, max: 1 });
 }
 
-export async function createRestrictedSingleConnectionDb(): Promise<Kysely<Database>> {
-  return createDatabaseClient(RESTRICTED_DB_URL, { min: 1, max: 1 });
+export async function createRestrictedSingleConnectionDb(
+  adminDb?: Kysely<Database>,
+): Promise<Kysely<Database>> {
+  if (process.env.RESTRICTED_DATABASE_URL) {
+    return createDatabaseClient(process.env.RESTRICTED_DATABASE_URL, { min: 1, max: 1 });
+  }
+
+  const ephemeralRole = `test_rt_${crypto.randomBytes(4).toString("hex")}`;
+  const ephemeralPass = crypto.randomBytes(16).toString("hex");
+
+  const effectiveAdmin = adminDb ?? (await setupTestDatabase());
+  const { sql } = await import("kysely");
+  await sql
+    .raw(`CREATE ROLE ${ephemeralRole} WITH LOGIN PASSWORD '${ephemeralPass}' NOBYPASSRLS INHERIT;`)
+    .execute(effectiveAdmin);
+  await sql
+    .raw(`GRANT velvet_runtime TO ${ephemeralRole} WITH INHERIT TRUE, SET TRUE;`)
+    .execute(effectiveAdmin);
+
+  const parsedUrl = new URL(TEST_DB_URL);
+  parsedUrl.username = ephemeralRole;
+  parsedUrl.password = ephemeralPass;
+
+  const client = createDatabaseClient(parsedUrl.toString(), { min: 1, max: 1 });
+  const originalDestroy = client.destroy.bind(client);
+  client.destroy = async () => {
+    await originalDestroy();
+    try {
+      await sql.raw(`DROP ROLE IF EXISTS ${ephemeralRole};`).execute(effectiveAdmin);
+    } catch {
+      // ignore cleanup errors on drop
+    }
+    if (!adminDb) {
+      await effectiveAdmin.destroy();
+    }
+  };
+
+  return client;
 }
 
 export interface SeededTenantContext {
@@ -55,7 +91,6 @@ export async function seedTenantContext(
       status: "ACTIVE",
     })
     .execute();
-
 
   // Insert user (global table)
   await db

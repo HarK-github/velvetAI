@@ -1,10 +1,4 @@
-import {
-  TenantId,
-  ServiceId,
-  LocationId,
-  BookingId,
-  IanaTimeZone,
-} from "@velvetai/contracts";
+import { TenantId, ServiceId, LocationId, BookingId, IanaTimeZone } from "@velvetai/contracts";
 
 export interface ListServicesQuery {
   tenantId: TenantId;

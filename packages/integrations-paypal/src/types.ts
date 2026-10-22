@@ -34,6 +34,6 @@ export function decimalToMinorUnits(decimal: string, scale: number = 2): string 
   const fractionPart = (parts[1] ?? "").padEnd(scale, "0").slice(0, scale);
   const isNegative = wholePart.startsWith("-");
   const cleanWhole = isNegative ? wholePart.slice(1) : wholePart;
-  const minor = BigInt(cleanWhole) * (10n ** BigInt(scale)) + BigInt(fractionPart);
+  const minor = BigInt(cleanWhole) * 10n ** BigInt(scale) + BigInt(fractionPart);
   return (isNegative ? -minor : minor).toString();
 }

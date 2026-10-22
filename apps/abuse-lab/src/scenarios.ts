@@ -7,11 +7,7 @@ import {
   validateNoDuplicateKeys,
   preNormalizeNfcV1,
 } from "@velvetai/application";
-import {
-  moneyMinorSchema,
-  getCurrencyScale,
-  isSafeMoneyMinor,
-} from "@velvetai/contracts";
+import { moneyMinorSchema, getCurrencyScale, isSafeMoneyMinor } from "@velvetai/contracts";
 
 export interface AbuseScenario {
   id: string;
@@ -29,7 +25,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Artifact mismatch: Intent A combined with Confirmation B",
     severity: "CRITICAL",
     category: "AUTH",
-    description: "Verifies that an intent for Booking 1 cannot be committed using a confirmation for Booking 2",
+    description:
+      "Verifies that an intent for Booking 1 cannot be committed using a confirmation for Booking 2",
     run: async () => {
       const intentBookingId = crypto.randomUUID();
       const confBookingId = crypto.randomUUID();
@@ -47,9 +44,14 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Confirmation token reuse with altered idempotency key",
     severity: "CRITICAL",
     category: "AUTH",
-    description: "Verifies that consumed confirmation records reject subsequent commit attempts even with a new idempotency key",
+    description:
+      "Verifies that consumed confirmation records reject subsequent commit attempts even with a new idempotency key",
     run: async () => {
-      const confirmationRecord = { consumed: true, consumedAt: new Date(), bookingId: crypto.randomUUID() };
+      const confirmationRecord = {
+        consumed: true,
+        consumedAt: new Date(),
+        bookingId: crypto.randomUUID(),
+      };
       const newIdempotencyKey = crypto.randomUUID();
       // Service checks confirmationRecord.consumed; if true, throws 409 CONFIRMATION_REPLAY_BLOCKED
       const canCommit = !confirmationRecord.consumed;
@@ -66,7 +68,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "One hundred simultaneous commits with one confirmation",
     severity: "CRITICAL",
     category: "CONCURRENCY",
-    description: "Simulates 100 concurrent requests competing to consume a single confirmation; exactly one must succeed",
+    description:
+      "Simulates 100 concurrent requests competing to consume a single confirmation; exactly one must succeed",
     run: async () => {
       let isConsumed = false;
       let successCount = 0;
@@ -99,7 +102,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Actor, OAuth client, and tenant substitution prevention",
     severity: "CRITICAL",
     category: "TENANCY",
-    description: "Verifies that signed intent claims for tenant, client, and actor sub are verified against active execution context",
+    description:
+      "Verifies that signed intent claims for tenant, client, and actor sub are verified against active execution context",
     run: async () => {
       const claims = {
         tenant_id: "01932b10-0001-7000-8000-000000000001",
@@ -130,7 +134,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Transport surface substitution: intent replayed through unlisted transport",
     severity: "HIGH",
     category: "AUTH",
-    description: "Asserts that an intent signed only for web cannot be replayed over mcp_streamable_http",
+    description:
+      "Asserts that an intent signed only for web cannot be replayed over mcp_streamable_http",
     run: async () => {
       const allowedSurfaces: string[] = ["web"];
       const incomingSurface = "mcp_streamable_http";
@@ -150,7 +155,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Tool/schema/version substitution after prepare",
     severity: "CRITICAL",
     category: "AUTH",
-    description: "Asserts that modifying the tool version or schema hash between prepare and commit is rejected",
+    description:
+      "Asserts that modifying the tool version or schema hash between prepare and commit is rejected",
     run: async () => {
       const preparedToolVersion: string = "1.0.0";
       const preparedSchemaHash: string = "a".repeat(64);
@@ -177,7 +183,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Duplicate JSON keys rejected before object parsing",
     severity: "HIGH",
     category: "CRYPTO",
-    description: "Asserts that raw payloads with duplicate keys are rejected before standard JSON.parse",
+    description:
+      "Asserts that raw payloads with duplicate keys are rejected before standard JSON.parse",
     run: async () => {
       const duplicateKeyJson = '{"amount":"100","service":"haircut","amount":"200"}';
       let errorThrown = false;
@@ -203,7 +210,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Unicode NFC/NFD canonicalization differences",
     severity: "HIGH",
     category: "CRYPTO",
-    description: "Verifies that canonicalJson normalizes Unicode characters so NFD and NFC yield identical canonical hashes",
+    description:
+      "Verifies that canonicalJson normalizes Unicode characters so NFD and NFC yield identical canonical hashes",
     run: async () => {
       const nfc: string = "caf\u00E9";
       const nfd: string = "cafe\u0301";
@@ -228,7 +236,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Money validation: exponent notation, excessive precision, negative and overflow",
     severity: "HIGH",
     category: "PAYMENT",
-    description: "Verifies that moneyMinorSchema and isSafeMoneyMinor reject invalid wire formats and out-of-range integers",
+    description:
+      "Verifies that moneyMinorSchema and isSafeMoneyMinor reject invalid wire formats and out-of-range integers",
     run: async () => {
       // 1. Exponent notation "1e5" -> rejected
       const exponentCheck = !moneyMinorSchema.safeParse("1e5").success;
@@ -255,7 +264,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Zero-decimal and three-decimal currency scale mismatch",
     severity: "HIGH",
     category: "PAYMENT",
-    description: "Verifies getCurrencyScale returns correct scale (0 for JPY, 2 for USD, 3 for BHD/KWD)",
+    description:
+      "Verifies getCurrencyScale returns correct scale (0 for JPY, 2 for USD, 3 for BHD/KWD)",
     run: async () => {
       const jpyScale = getCurrencyScale("JPY");
       const usdScale = getCurrencyScale("USD");
@@ -281,9 +291,9 @@ export const deterministicScenarios: AbuseScenario[] = [
     description: "Verifies that tokens are accepted at exp - 1 and rejected at exp and after exp",
     run: async () => {
       const exp = 1700000000;
-      const beforeExpValid = (exp - 1) < exp;
-      const atExpValid = (exp) < exp;
-      const afterExpValid = (exp + 1) < exp;
+      const beforeExpValid = exp - 1 < exp;
+      const atExpValid = exp < exp;
+      const afterExpValid = exp + 1 < exp;
 
       const passed = beforeExpValid && !atExpValid && !afterExpValid;
       return {
@@ -301,7 +311,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "JWS attack suite: alg none, algorithm confusion, unknown kid, remote jku, wrong typ",
     severity: "CRITICAL",
     category: "CRYPTO",
-    description: "Ensures verifyBookingIntent rejects unpermitted algorithms, remote key urls, unknown kids, and incorrect typ headers",
+    description:
+      "Ensures verifyBookingIntent rejects unpermitted algorithms, remote key urls, unknown kids, and incorrect typ headers",
     run: async () => {
       const keys = getDefaultIntentKeys();
       const dummySig64 = Buffer.alloc(64).toString("base64url");
@@ -312,7 +323,9 @@ export const deterministicScenarios: AbuseScenario[] = [
 
       // 1. alg: none
       try {
-        const h = Buffer.from(JSON.stringify({ alg: "none", typ: "velvetai-intent+jwt", kid: keys.kid })).toString("base64url");
+        const h = Buffer.from(
+          JSON.stringify({ alg: "none", typ: "velvetai-intent+jwt", kid: keys.kid }),
+        ).toString("base64url");
         const p = Buffer.from(JSON.stringify({ iss: "test" })).toString("base64url");
         await verifyBookingIntent(`${h}.${p}.dummy`);
       } catch (err: unknown) {
@@ -321,7 +334,9 @@ export const deterministicScenarios: AbuseScenario[] = [
 
       // 2. wrong typ
       try {
-        const h = Buffer.from(JSON.stringify({ alg: "ES256", typ: "JWT", kid: keys.kid })).toString("base64url");
+        const h = Buffer.from(JSON.stringify({ alg: "ES256", typ: "JWT", kid: keys.kid })).toString(
+          "base64url",
+        );
         const p = Buffer.from(JSON.stringify({ iss: "test" })).toString("base64url");
         await verifyBookingIntent(`${h}.${p}.${dummySig64}`);
       } catch (err: unknown) {
@@ -330,20 +345,31 @@ export const deterministicScenarios: AbuseScenario[] = [
 
       // 3. remote jku
       try {
-        const h = Buffer.from(JSON.stringify({ alg: "ES256", typ: "velvetai-intent+jwt", kid: keys.kid, jku: "https://evil.example" })).toString("base64url");
+        const h = Buffer.from(
+          JSON.stringify({
+            alg: "ES256",
+            typ: "velvetai-intent+jwt",
+            kid: keys.kid,
+            jku: "https://evil.example",
+          }),
+        ).toString("base64url");
         const p = Buffer.from(JSON.stringify({ iss: "test" })).toString("base64url");
         await verifyBookingIntent(`${h}.${p}.${dummySig64}`);
       } catch (err: unknown) {
-        if ((err as Error).message.includes("Remote jku or x5u headers are prohibited")) remoteJkuBlocked = true;
+        if ((err as Error).message.includes("Remote jku or x5u headers are prohibited"))
+          remoteJkuBlocked = true;
       }
 
       // 4. unknown kid
       try {
-        const h = Buffer.from(JSON.stringify({ alg: "ES256", typ: "velvetai-intent+jwt", kid: "unknown-kid-xyz" })).toString("base64url");
+        const h = Buffer.from(
+          JSON.stringify({ alg: "ES256", typ: "velvetai-intent+jwt", kid: "unknown-kid-xyz" }),
+        ).toString("base64url");
         const p = Buffer.from(JSON.stringify({ iss: "test" })).toString("base64url");
         await verifyBookingIntent(`${h}.${p}.${dummySig64}`);
       } catch (err: unknown) {
-        if ((err as Error).message.includes("Unknown kid 'unknown-kid-xyz'")) unknownKidBlocked = true;
+        if ((err as Error).message.includes("Unknown kid 'unknown-kid-xyz'"))
+          unknownKidBlocked = true;
       }
 
       const passed = algNoneBlocked && wrongTypBlocked && remoteJkuBlocked && unknownKidBlocked;
@@ -362,7 +388,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Approval URL shared with another buyer",
     severity: "CRITICAL",
     category: "AUTH",
-    description: "Asserts that Buyer B cannot use an approval URL or confirmation token intended for Buyer A",
+    description:
+      "Asserts that Buyer B cannot use an approval URL or confirmation token intended for Buyer A",
     run: async () => {
       const confirmationBuyer: string = "01932b10-0002-7000-8000-000000000001";
       const sessionUser: string = "01932b10-0002-7000-8000-000000000002";
@@ -382,7 +409,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Role or tenant membership revoked after approval",
     severity: "HIGH",
     category: "AUTH",
-    description: "Asserts that revoking user membership prevents booking commit even if previously approved",
+    description:
+      "Asserts that revoking user membership prevents booking commit even if previously approved",
     run: async () => {
       const membership = { status: "REVOKED", role: "CUSTOMER" };
       const canCommit = membership.status === "ACTIVE";
@@ -401,13 +429,15 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "MCP action: accept without browser approval completion",
     severity: "CRITICAL",
     category: "AUTH",
-    description: "Asserts that client-side boolean flags or MCP annotations cannot bypass cryptographic buyer approval",
+    description:
+      "Asserts that client-side boolean flags or MCP annotations cannot bypass cryptographic buyer approval",
     run: async () => {
       const mcpPayload: Record<string, unknown> = { action: "accept", confirmed: true };
       const hasCryptographicConfirmation = "buyerConfirmationToken" in mcpPayload;
       return {
         passed: !hasCryptographicConfirmation,
-        message: "Model or client boolean flag cannot authorize booking commit; cryptographically signed approval token required",
+        message:
+          "Model or client boolean flag cannot authorize booking commit; cryptographically signed approval token required",
       };
     },
   },
@@ -418,14 +448,16 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Transaction crash boundary: crash after confirmation consumption",
     severity: "CRITICAL",
     category: "IDEMPOTENCY",
-    description: "Asserts that confirmation consumption and intent recording occur in a single atomic transaction; crash rolls back cleanly",
+    description:
+      "Asserts that confirmation consumption and intent recording occur in a single atomic transaction; crash rolls back cleanly",
     run: async () => {
       // In VelvetAI, consumption of confirmation and intent commit occur inside same DB transaction.
       // If a crash occurs before COMMIT, PostgreSQL rolls back and confirmation remains unconsumed.
       // If a crash occurs after COMMIT, retry with same idempotency key returns 200 without duplicate execution.
       return {
         passed: true,
-        message: "Single atomic transaction wraps confirmation consumption, claim commit, and outbox insertion",
+        message:
+          "Single atomic transaction wraps confirmation consumption, claim commit, and outbox insertion",
       };
     },
   },
@@ -436,14 +468,16 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Transaction crash boundary: crash after outbox insertion",
     severity: "HIGH",
     category: "IDEMPOTENCY",
-    description: "Asserts that outbox event is committed atomically with booking state change; worker crash recovers safely",
+    description:
+      "Asserts that outbox event is committed atomically with booking state change; worker crash recovers safely",
     run: async () => {
       // Outbox insertion occurs in the same transaction as state transition.
       // Outbox relay recovers unpublished events using leased polling:
       // WHERE published_at IS NULL AND (lease_expires_at IS NULL OR lease_expires_at < clock_timestamp())
       return {
         passed: true,
-        message: "Outbox event committed atomically with booking state; leased relay recovers on crash",
+        message:
+          "Outbox event committed atomically with booking state; leased relay recovers on crash",
       };
     },
   },
@@ -454,14 +488,16 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "PayPal capture succeeds before local persistence",
     severity: "CRITICAL",
     category: "PAYMENT",
-    description: "Asserts that reconciliation uses PayPal custom_id / invoice_id to link orphaned captures to local bookings",
+    description:
+      "Asserts that reconciliation uses PayPal custom_id / invoice_id to link orphaned captures to local bookings",
     run: async () => {
       const customId = "tenant_01932b10:booking_01932b10-0003";
       const [tenantPart, bookingPart] = customId.split(":");
       const canReconcile = Boolean(tenantPart && bookingPart);
       return {
         passed: canReconcile,
-        message: "PayPal custom_id embeds tenant and booking ID allowing reconciliation to recover local state",
+        message:
+          "PayPal custom_id embeds tenant and booking ID allowing reconciliation to recover local state",
       };
     },
   },
@@ -472,12 +508,14 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Cancellation/expiry/commit race prevention",
     severity: "CRITICAL",
     category: "CONCURRENCY",
-    description: "Asserts that state machine checks and chk_resource_claim_blocking_state prevent concurrent racing transitions",
+    description:
+      "Asserts that state machine checks and chk_resource_claim_blocking_state prevent concurrent racing transitions",
     run: async () => {
       // Verified by packages/db/src/__tests__/concurrency-booking.test.ts and chk_resource_claim_blocking_state
       return {
         passed: true,
-        message: "Optimistic row versioning and chk_resource_claim_blocking_state prevent race between commit and expiry",
+        message:
+          "Optimistic row versioning and chk_resource_claim_blocking_state prevent race between commit and expiry",
       };
     },
   },
@@ -488,7 +526,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Long-transaction expiry uses database clock_timestamp()",
     severity: "HIGH",
     category: "CONCURRENCY",
-    description: "Asserts that hold expiration decisions rely on clock_timestamp() rather than transaction start now()",
+    description:
+      "Asserts that hold expiration decisions rely on clock_timestamp() rather than transaction start now()",
     run: async () => {
       return {
         passed: true,
@@ -503,12 +542,14 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "RLS context leak through a one-connection pool",
     severity: "CRITICAL",
     category: "TENANCY",
-    description: "Asserts that restricted role velvet_runtime with FORCE ROW LEVEL SECURITY isolates tenants even across connection reuse",
+    description:
+      "Asserts that restricted role velvet_runtime with FORCE ROW LEVEL SECURITY isolates tenants even across connection reuse",
     run: async () => {
       // Verified in packages/db/src/__tests__/rls-isolation.test.ts with createRestrictedSingleConnectionDb()
       return {
         passed: true,
-        message: "Single-connection pool isolation verified under velvet_runtime role with NOBYPASSRLS and FORCE RLS",
+        message:
+          "Single-connection pool isolation verified under velvet_runtime role with NOBYPASSRLS and FORCE RLS",
       };
     },
   },
@@ -519,14 +560,16 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Outbox relay resumes after its lease was reassigned",
     severity: "HIGH",
     category: "CONCURRENCY",
-    description: "Asserts that stale outbox workers cannot publish events if their lease expired and was reassigned",
+    description:
+      "Asserts that stale outbox workers cannot publish events if their lease expired and was reassigned",
     run: async () => {
       const activeLeaseToken: string = "lease-token-2";
       const staleWorkerToken: string = "lease-token-1";
       const canPublish = staleWorkerToken === activeLeaseToken;
       return {
         passed: !canPublish,
-        message: "Lease token fencing prevents stale outbox worker from updating after lease reassignment",
+        message:
+          "Lease token fencing prevents stale outbox worker from updating after lease reassignment",
       };
     },
   },
@@ -537,7 +580,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "BullMQ worker executes a stalled job twice",
     severity: "HIGH",
     category: "IDEMPOTENCY",
-    description: "Asserts that idempotent execution logic skips duplicate work when a stalled job is re-delivered",
+    description:
+      "Asserts that idempotent execution logic skips duplicate work when a stalled job is re-delivered",
     run: async () => {
       const bookingStatus = "CONFIRMED";
       // If already CONFIRMED, worker skips duplicate capture / notification
@@ -573,13 +617,15 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Refund performed externally in PayPal dashboard",
     severity: "MEDIUM",
     category: "PAYMENT",
-    description: "Asserts that external PayPal refund webhook reconciles local payment state to REFUNDED",
+    description:
+      "Asserts that external PayPal refund webhook reconciles local payment state to REFUNDED",
     run: async () => {
       const webhookEventType = "PAYMENT.CAPTURE.REFUNDED";
       const willReconcile = webhookEventType === "PAYMENT.CAPTURE.REFUNDED";
       return {
         passed: willReconcile,
-        message: "PAYMENT.CAPTURE.REFUNDED webhook transitions payment state to REFUNDED and logs audit entry",
+        message:
+          "PAYMENT.CAPTURE.REFUNDED webhook transitions payment state to REFUNDED and logs audit entry",
       };
     },
   },
@@ -590,7 +636,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Webhook certificate URL validation (SSRF / non-PayPal host prevention)",
     severity: "CRITICAL",
     category: "CRYPTO",
-    description: "Asserts that PayPal webhook cert_url must match trusted PayPal domain and reject private IP ranges",
+    description:
+      "Asserts that PayPal webhook cert_url must match trusted PayPal domain and reject private IP ranges",
     run: async () => {
       const trustedPattern = /^https:\/\/api(\.sandbox)?\.paypal\.com\//;
 
@@ -620,7 +667,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Order reports COMPLETED while capture reports PENDING",
     severity: "CRITICAL",
     category: "PAYMENT",
-    description: "Asserts that booking is NOT confirmed if capture status is PENDING, per Epic 3 state progression",
+    description:
+      "Asserts that booking is NOT confirmed if capture status is PENDING, per Epic 3 state progression",
     run: async () => {
       // In accordance with Epic 3 state progression:
       // COMMITTING -> ... -> CAPTURE_IN_FLIGHT -> CAPTURE_UNCERTAIN
@@ -647,7 +695,8 @@ export const deterministicScenarios: AbuseScenario[] = [
     name: "Wrong sandbox app or wrong environment webhook",
     severity: "HIGH",
     category: "PAYMENT",
-    description: "Asserts that incoming webhooks with mismatched webhook_id or app credentials fail verification with 401",
+    description:
+      "Asserts that incoming webhooks with mismatched webhook_id or app credentials fail verification with 401",
     run: async () => {
       const configuredWebhookId: string = "WH-TENANT-APP-123";
       const incomingWebhookId: string = "WH-DIFFERENT-APP-456";

@@ -22,8 +22,9 @@ SOURCE PRECEDENCE
 - Record every remediation and deviation in docs/implementation-progress.md.
 
 ==================================================
+
 1. CAPTURE-STATE SEMANTICS
-==================================================
+   \==================================================
 
 Audit and correct every capture transition.
 
@@ -62,8 +63,7 @@ Required tests:
 4. Definitive failure before payment-window expiry uses PAYMENT_FAILED.
 5. Timeout never maps directly to FAILED or releases a claim.
 
-==================================================
-2. WEBHOOK QUARANTINE POISONING
+================================================== 2. WEBHOOK QUARANTINE POISONING
 ==================================================
 
 Unverified events must not reserve the canonical provider event ID.
@@ -85,8 +85,7 @@ Required tests:
 - Same body digest with different valid transmission IDs remains diagnostically visible.
 - Wrong app, webhook ID, environment, merchant, or provider connection cannot reserve event identity.
 
-==================================================
-3. OUT-OF-ORDER WEBHOOK RECONCILIATION
+================================================== 3. OUT-OF-ORDER WEBHOOK RECONCILIATION
 ==================================================
 
 Webhook handlers shall not directly trust arrival order.
@@ -117,8 +116,7 @@ Support or explicitly handle:
 
 Query or record the event types supported by the configured sandbox REST app.
 
-==================================================
-4. REFUND UNKNOWN OUTCOMES
+================================================== 4. REFUND UNKNOWN OUTCOMES
 ==================================================
 
 Audit refund error mapping.
@@ -142,8 +140,7 @@ Required tests:
 4. Unknown refund plus a new refund request cannot over-refund.
 5. External refund reduces local refundable balance after reconciliation.
 
-==================================================
-5. PAYPAL JAVASCRIPT SDK V6 PROOF
+================================================== 5. PAYPAL JAVASCRIPT SDK V6 PROOF
 ==================================================
 
 Verify the web component uses PayPal JS SDK v6 rather than the legacy v5 pattern.
@@ -165,8 +162,7 @@ Add a component test asserting the loaded script URL and the absence of legacy A
 
 Do not invent SDK method names. Cite the exact official v6 page used by the implementation.
 
-==================================================
-6. REAL PAYPAL SANDBOX END-TO-END EVIDENCE
+================================================== 6. REAL PAYPAL SANDBOX END-TO-END EVIDENCE
 ==================================================
 
 Epic 3 is not complete without an opt-in real sandbox test.
@@ -203,8 +199,7 @@ If credentials, public webhook ingress, or manual buyer approval are unavailable
 
 Record sanitized IDs, timestamps, statuses, and test output. Do not record credentials or payer PII.
 
-==================================================
-7. FINANCIAL JOURNAL DATABASE INTEGRITY
+================================================== 7. FINANCIAL JOURNAL DATABASE INTEGRITY
 ==================================================
 
 Application-only balancing is insufficient for a production-grade claim.
@@ -239,8 +234,7 @@ Review capture accounting:
 
 Do not claim legal/accounting certification.
 
-==================================================
-8. MONEY AND CURRENCY SUPPORT
+================================================== 8. MONEY AND CURRENCY SUPPORT
 ==================================================
 
 Declare the MVP supported currency allowlist explicitly.
@@ -263,8 +257,7 @@ Required tests:
 - Decimal string round-trip.
 - Overflow and precision errors.
 
-==================================================
-9. RLS SETTING CONSISTENCY
+================================================== 9. RLS SETTING CONSISTENCY
 ==================================================
 
 The report references app.current_tenant_id while prior requirements used app.tenant_id.
@@ -279,8 +272,7 @@ Choose one canonical custom setting and use it consistently in:
 
 Add a test that inspects policy definitions and proves the helper sets the same key.
 
-==================================================
-10. EXACT VERIFICATION EVIDENCE
+================================================== 10. EXACT VERIFICATION EVIDENCE
 ==================================================
 
 Run and record exact commands separately:

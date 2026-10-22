@@ -61,7 +61,9 @@ export class Location {
 
   constructor(props: LocationProps) {
     if (!props.tenantId) {
-      throw new InvariantViolationError("Location must belong to a tenant (tenantId cannot be null)");
+      throw new InvariantViolationError(
+        "Location must belong to a tenant (tenantId cannot be null)",
+      );
     }
     if (!props.name || props.name.trim().length === 0) {
       throw new InvariantViolationError("Location name cannot be empty");

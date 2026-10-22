@@ -96,239 +96,247 @@ export class PaymentService {
       tenantId,
       async (
         trx,
-      ): Promise<{ expired: true; paymentExpiresAt: string; dbTime: string } | CreateDepositOrderResult> => {
-      // 1. Lock booking row
-      const booking = await trx
-        .selectFrom("bookings")
-        .where("id", "=", bookingId)
-        .where("tenant_id", "=", tenantId)
-        .selectAll()
-        .forUpdate()
-        .executeTakeFirst();
-
-      if (!booking) {
-        throw new DomainError("Booking not found", "BOOKING_NOT_FOUND", 404);
-      }
-
-      // Check for idempotent replay
-      const existingIntent = await trx
-        .selectFrom("payment_intents")
-        .where("booking_id", "=", bookingId)
-        .where("tenant_id", "=", tenantId)
-        .where("request_id", "=", idempotencyKey)
-        .selectAll()
-        .executeTakeFirst();
-
-      if (existingIntent && existingIntent.provider_order_id) {
-        return {
-          paymentIntentId: paymentIntentIdSchema.parse(existingIntent.id),
-          paypalOrderId: existingIntent.provider_order_id,
-          amount: {
-            currency: currencyCodeSchema.parse(existingIntent.currency),
-            valueMinor: moneyMinorSchema.parse(existingIntent.amount_minor),
-          },
-          status: "REQUIRES_PAYER_ACTION" as const,
-          paymentExpiresAt: (booking.payment_expires_at ?? existingIntent.payment_expires_at).toISOString(),
-        };
-      }
-
-      // Check valid booking state
-      if (booking.status !== "COMMITTING" && booking.status !== "REQUIRES_PAYER_ACTION") {
-        throw new InvalidStateTransitionError(booking.status, "REQUIRES_PAYER_ACTION", {
-          bookingId: booking.id,
-        });
-      }
-
-      // 2. Verify database clock before payment window expiry
-      const clockRes = await sql<{ now: Date }>`SELECT clock_timestamp() as now`.execute(trx);
-      const dbNow = clockRes.rows[0]?.now ?? new Date();
-
-      if (booking.payment_expires_at && dbNow.getTime() >= booking.payment_expires_at.getTime()) {
-        // Transition to PAYMENT_WINDOW_EXPIRED and release claim
-        await trx
-          .updateTable("bookings")
-          .set({ status: "PAYMENT_WINDOW_EXPIRED", version: booking.version + 1 })
+      ): Promise<
+        { expired: true; paymentExpiresAt: string; dbTime: string } | CreateDepositOrderResult
+      > => {
+        // 1. Lock booking row
+        const booking = await trx
+          .selectFrom("bookings")
           .where("id", "=", bookingId)
-          .execute();
+          .where("tenant_id", "=", tenantId)
+          .selectAll()
+          .forUpdate()
+          .executeTakeFirst();
 
-        await trx
-          .updateTable("resource_claims")
-          .set({ state: "RELEASED", blocking: false })
+        if (!booking) {
+          throw new DomainError("Booking not found", "BOOKING_NOT_FOUND", 404);
+        }
+
+        // Check for idempotent replay
+        const existingIntent = await trx
+          .selectFrom("payment_intents")
           .where("booking_id", "=", bookingId)
           .where("tenant_id", "=", tenantId)
-          .execute();
+          .where("request_id", "=", idempotencyKey)
+          .selectAll()
+          .executeTakeFirst();
 
-        return {
-          expired: true as const,
-          paymentExpiresAt: booking.payment_expires_at.toISOString(),
-          dbTime: dbNow.toISOString(),
-        };
-      }
-
-      // 3. Read immutable snapshot for deposit amount, currency, and merchant
-      const snapshot = await trx
-        .selectFrom("booking_hold_snapshots")
-        .where("booking_id", "=", bookingId)
-        .where("tenant_id", "=", tenantId)
-        .selectAll()
-        .executeTakeFirst();
-
-      if (!snapshot) {
-        throw new DomainError("Booking snapshot not found", "SNAPSHOT_NOT_FOUND", 404);
-      }
-
-      if (!isSupportedMvpCurrency(snapshot.currency)) {
-        throw new DomainError(
-          `Currency ${snapshot.currency} is not supported. Supported currencies: ${SUPPORTED_MVP_CURRENCIES.join(", ")}`,
-          "UNSUPPORTED_CURRENCY",
-          400,
-        );
-      }
-
-      // 4. Compute canonical hash of payload
-      const canonicalPayload = {
-        tenantId,
-        bookingId,
-        depositMinor: snapshot.deposit_minor,
-        currency: snapshot.currency,
-      };
-      const payloadHash = canonicalHash(canonicalPayload);
-
-      // 5. Check provider operations for idempotency
-      const existingOp = await trx
-        .selectFrom("provider_operations")
-        .where("tenant_id", "=", tenantId)
-        .where("paypal_request_id", "=", idempotencyKey)
-        .where("operation_type", "=", "ORDER_CREATE")
-        .selectAll()
-        .executeTakeFirst();
-
-      if (existingOp) {
-        if (existingOp.canonical_payload_hash !== payloadHash) {
-          throw new IdempotencyConflictError("PayPal-Request-Id was previously used with different parameters");
+        if (existingIntent && existingIntent.provider_order_id) {
+          return {
+            paymentIntentId: paymentIntentIdSchema.parse(existingIntent.id),
+            paypalOrderId: existingIntent.provider_order_id,
+            amount: {
+              currency: currencyCodeSchema.parse(existingIntent.currency),
+              valueMinor: moneyMinorSchema.parse(existingIntent.amount_minor),
+            },
+            status: "REQUIRES_PAYER_ACTION" as const,
+            paymentExpiresAt: (
+              booking.payment_expires_at ?? existingIntent.payment_expires_at
+            ).toISOString(),
+          };
         }
-        if (existingOp.state === "SUCCEEDED" && existingOp.provider_order_id) {
-          const intent = await trx
-            .selectFrom("payment_intents")
-            .where("provider_order_id", "=", existingOp.provider_order_id)
+
+        // Check valid booking state
+        if (booking.status !== "COMMITTING" && booking.status !== "REQUIRES_PAYER_ACTION") {
+          throw new InvalidStateTransitionError(booking.status, "REQUIRES_PAYER_ACTION", {
+            bookingId: booking.id,
+          });
+        }
+
+        // 2. Verify database clock before payment window expiry
+        const clockRes = await sql<{ now: Date }>`SELECT clock_timestamp() as now`.execute(trx);
+        const dbNow = clockRes.rows[0]?.now ?? new Date();
+
+        if (booking.payment_expires_at && dbNow.getTime() >= booking.payment_expires_at.getTime()) {
+          // Transition to PAYMENT_WINDOW_EXPIRED and release claim
+          await trx
+            .updateTable("bookings")
+            .set({ status: "PAYMENT_WINDOW_EXPIRED", version: booking.version + 1 })
+            .where("id", "=", bookingId)
+            .execute();
+
+          await trx
+            .updateTable("resource_claims")
+            .set({ state: "RELEASED", blocking: false })
+            .where("booking_id", "=", bookingId)
             .where("tenant_id", "=", tenantId)
-            .selectAll()
-            .executeTakeFirst();
+            .execute();
 
-          if (intent) {
-            return {
-              paymentIntentId: paymentIntentIdSchema.parse(intent.id),
-              paypalOrderId: existingOp.provider_order_id,
-              amount: {
-                currency: currencyCodeSchema.parse(intent.currency),
-                valueMinor: moneyMinorSchema.parse(intent.amount_minor),
-              },
-              status: "REQUIRES_PAYER_ACTION",
-              paymentExpiresAt: (booking.payment_expires_at ?? dbNow).toISOString(),
-            };
-          }
+          return {
+            expired: true as const,
+            paymentExpiresAt: booking.payment_expires_at.toISOString(),
+            dbTime: dbNow.toISOString(),
+          };
         }
-      }
 
-      // 6. Record provider operation in DISPATCHING state before provider dispatch
-      const operationId = crypto.randomUUID();
-      await trx
-        .insertInto("provider_operations")
-        .values({
-          id: operationId,
-          tenant_id: tenantId,
-          booking_id: bookingId,
-          provider: "PAYPAL",
-          environment: "sandbox",
-          operation_type: "ORDER_CREATE",
-          state: "DISPATCHING",
-          endpoint: "/v2/checkout/orders",
-          paypal_request_id: idempotencyKey,
-          canonical_payload_hash: payloadHash,
-          attempt_count: 1,
-          first_dispatched_at: dbNow,
-          last_attempt_at: dbNow,
-          created_at: dbNow,
-          updated_at: dbNow,
-        })
-        .execute();
+        // 3. Read immutable snapshot for deposit amount, currency, and merchant
+        const snapshot = await trx
+          .selectFrom("booking_hold_snapshots")
+          .where("booking_id", "=", bookingId)
+          .where("tenant_id", "=", tenantId)
+          .selectAll()
+          .executeTakeFirst();
 
-      // 7. Call PayPal Orders v2 createOrder
-      let orderResult: CreateOrderResult;
-      try {
-        orderResult = await this.paymentPort.createOrder({
+        if (!snapshot) {
+          throw new DomainError("Booking snapshot not found", "SNAPSHOT_NOT_FOUND", 404);
+        }
+
+        if (!isSupportedMvpCurrency(snapshot.currency)) {
+          throw new DomainError(
+            `Currency ${snapshot.currency} is not supported. Supported currencies: ${SUPPORTED_MVP_CURRENCIES.join(", ")}`,
+            "UNSUPPORTED_CURRENCY",
+            400,
+          );
+        }
+
+        // 4. Compute canonical hash of payload
+        const canonicalPayload = {
           tenantId,
           bookingId,
-          amount: {
-            currency: currencyCodeSchema.parse(snapshot.currency),
-            valueMinor: moneyMinorSchema.parse(snapshot.deposit_minor),
-          },
-          requestId: idempotencyKey,
-        });
-      } catch (err: unknown) {
+          depositMinor: snapshot.deposit_minor,
+          currency: snapshot.currency,
+        };
+        const payloadHash = canonicalHash(canonicalPayload);
+
+        // 5. Check provider operations for idempotency
+        const existingOp = await trx
+          .selectFrom("provider_operations")
+          .where("tenant_id", "=", tenantId)
+          .where("paypal_request_id", "=", idempotencyKey)
+          .where("operation_type", "=", "ORDER_CREATE")
+          .selectAll()
+          .executeTakeFirst();
+
+        if (existingOp) {
+          if (existingOp.canonical_payload_hash !== payloadHash) {
+            throw new IdempotencyConflictError(
+              "PayPal-Request-Id was previously used with different parameters",
+            );
+          }
+          if (existingOp.state === "SUCCEEDED" && existingOp.provider_order_id) {
+            const intent = await trx
+              .selectFrom("payment_intents")
+              .where("provider_order_id", "=", existingOp.provider_order_id)
+              .where("tenant_id", "=", tenantId)
+              .selectAll()
+              .executeTakeFirst();
+
+            if (intent) {
+              return {
+                paymentIntentId: paymentIntentIdSchema.parse(intent.id),
+                paypalOrderId: existingOp.provider_order_id,
+                amount: {
+                  currency: currencyCodeSchema.parse(intent.currency),
+                  valueMinor: moneyMinorSchema.parse(intent.amount_minor),
+                },
+                status: "REQUIRES_PAYER_ACTION",
+                paymentExpiresAt: (booking.payment_expires_at ?? dbNow).toISOString(),
+              };
+            }
+          }
+        }
+
+        // 6. Record provider operation in DISPATCHING state before provider dispatch
+        const operationId = crypto.randomUUID();
+        await trx
+          .insertInto("provider_operations")
+          .values({
+            id: operationId,
+            tenant_id: tenantId,
+            booking_id: bookingId,
+            provider: "PAYPAL",
+            environment: "sandbox",
+            operation_type: "ORDER_CREATE",
+            state: "DISPATCHING",
+            endpoint: "/v2/checkout/orders",
+            paypal_request_id: idempotencyKey,
+            canonical_payload_hash: payloadHash,
+            attempt_count: 1,
+            first_dispatched_at: dbNow,
+            last_attempt_at: dbNow,
+            created_at: dbNow,
+            updated_at: dbNow,
+          })
+          .execute();
+
+        // 7. Call PayPal Orders v2 createOrder
+        let orderResult: CreateOrderResult;
+        try {
+          orderResult = await this.paymentPort.createOrder({
+            tenantId,
+            bookingId,
+            amount: {
+              currency: currencyCodeSchema.parse(snapshot.currency),
+              valueMinor: moneyMinorSchema.parse(snapshot.deposit_minor),
+            },
+            requestId: idempotencyKey,
+          });
+        } catch (err: unknown) {
+          await trx
+            .updateTable("provider_operations")
+            .set({
+              state: "SENT_UNKNOWN",
+              error_code: (err as Error).name,
+              updated_at: dbNow,
+            })
+            .where("id", "=", operationId)
+            .execute();
+          throw err;
+        }
+
+        // 8. Update provider operation and persist payment intent
         await trx
           .updateTable("provider_operations")
           .set({
-            state: "SENT_UNKNOWN",
-            error_code: (err as Error).name,
+            state: "SUCCEEDED",
+            provider_order_id: orderResult.providerOrderId,
             updated_at: dbNow,
           })
           .where("id", "=", operationId)
           .execute();
-        throw err;
-      }
 
-      // 8. Update provider operation and persist payment intent
-      await trx
-        .updateTable("provider_operations")
-        .set({
-          state: "SUCCEEDED",
-          provider_order_id: orderResult.providerOrderId,
-          updated_at: dbNow,
-        })
-        .where("id", "=", operationId)
-        .execute();
+        const paymentExpiresAt =
+          booking.payment_expires_at ?? new Date(dbNow.getTime() + 10 * 60_000);
 
-      const paymentExpiresAt = booking.payment_expires_at ?? new Date(dbNow.getTime() + 10 * 60_000);
+        await trx
+          .insertInto("payment_intents")
+          .values({
+            id: orderResult.paymentIntentId,
+            tenant_id: tenantId,
+            booking_id: bookingId,
+            provider_order_id: orderResult.providerOrderId,
+            amount_minor: snapshot.deposit_minor,
+            currency: snapshot.currency,
+            state: "REQUIRES_PAYER_ACTION",
+            payment_expires_at: paymentExpiresAt,
+            request_id: idempotencyKey,
+            created_at: dbNow,
+            updated_at: dbNow,
+          })
+          .execute();
 
-      await trx
-        .insertInto("payment_intents")
-        .values({
-          id: orderResult.paymentIntentId,
-          tenant_id: tenantId,
-          booking_id: bookingId,
-          provider_order_id: orderResult.providerOrderId,
-          amount_minor: snapshot.deposit_minor,
-          currency: snapshot.currency,
-          state: "REQUIRES_PAYER_ACTION",
-          payment_expires_at: paymentExpiresAt,
-          request_id: idempotencyKey,
-          created_at: dbNow,
-          updated_at: dbNow,
-        })
-        .execute();
+        // 9. Transition booking state to REQUIRES_PAYER_ACTION
+        await trx
+          .updateTable("bookings")
+          .set({
+            status: "REQUIRES_PAYER_ACTION",
+            version: booking.version + 1,
+          })
+          .where("id", "=", bookingId)
+          .execute();
 
-      // 9. Transition booking state to REQUIRES_PAYER_ACTION
-      await trx
-        .updateTable("bookings")
-        .set({
-          status: "REQUIRES_PAYER_ACTION",
-          version: booking.version + 1,
-        })
-        .where("id", "=", bookingId)
-        .execute();
-
-      return {
-        paymentIntentId: orderResult.paymentIntentId,
-        paypalOrderId: orderResult.providerOrderId,
-        amount: {
-          currency: currencyCodeSchema.parse(snapshot.currency),
-          valueMinor: moneyMinorSchema.parse(snapshot.deposit_minor),
-        },
-        status: "REQUIRES_PAYER_ACTION" as const,
-        paymentExpiresAt: paymentExpiresAt.toISOString(),
-      };
-    });
+        return {
+          paymentIntentId: orderResult.paymentIntentId,
+          paypalOrderId: orderResult.providerOrderId,
+          amount: {
+            currency: currencyCodeSchema.parse(snapshot.currency),
+            valueMinor: moneyMinorSchema.parse(snapshot.deposit_minor),
+          },
+          status: "REQUIRES_PAYER_ACTION" as const,
+          paymentExpiresAt: paymentExpiresAt.toISOString(),
+        };
+      },
+    );
 
     if ("expired" in result) {
       throw new SlotUnavailableError("Payment window expired before deposit order creation", {
@@ -357,58 +365,361 @@ export class PaymentService {
       tenantId,
       async (
         trx,
-      ): Promise<{ expired: true; paymentExpiresAt: string; dbTime: string } | CapturePaymentOutcome> => {
-      // 1. Lock payment intent and booking rows
-      const intent = await trx
-        .selectFrom("payment_intents")
-        .where("id", "=", paymentIntentId)
-        .where("tenant_id", "=", tenantId)
-        .selectAll()
-        .forUpdate()
-        .executeTakeFirst();
-
-      if (!intent) {
-        throw new DomainError("Payment intent not found", "PAYMENT_INTENT_NOT_FOUND", 404);
-      }
-
-      const booking = await trx
-        .selectFrom("bookings")
-        .where("id", "=", intent.booking_id)
-        .where("tenant_id", "=", tenantId)
-        .selectAll()
-        .forUpdate()
-        .executeTakeFirst();
-
-      if (!booking) {
-        throw new DomainError("Booking not found", "BOOKING_NOT_FOUND", 404);
-      }
-
-      // Check if already captured (idempotent replay)
-      if (intent.state === "CAPTURED" && booking.status === "CONFIRMED") {
-        const capture = await trx
-          .selectFrom("payment_captures")
-          .where("payment_intent_id", "=", paymentIntentId)
+      ): Promise<
+        { expired: true; paymentExpiresAt: string; dbTime: string } | CapturePaymentOutcome
+      > => {
+        // 1. Lock payment intent and booking rows
+        const intent = await trx
+          .selectFrom("payment_intents")
+          .where("id", "=", paymentIntentId)
           .where("tenant_id", "=", tenantId)
           .selectAll()
+          .forUpdate()
           .executeTakeFirst();
 
-        return {
-          bookingId: bookingIdSchema.parse(booking.id),
-          bookingStatus: "CONFIRMED" as const,
-          paymentStatus: "CAPTURED" as const,
-          providerCaptureId: capture?.provider_capture_id,
-          version: booking.version,
+        if (!intent) {
+          throw new DomainError("Payment intent not found", "PAYMENT_INTENT_NOT_FOUND", 404);
+        }
+
+        const booking = await trx
+          .selectFrom("bookings")
+          .where("id", "=", intent.booking_id)
+          .where("tenant_id", "=", tenantId)
+          .selectAll()
+          .forUpdate()
+          .executeTakeFirst();
+
+        if (!booking) {
+          throw new DomainError("Booking not found", "BOOKING_NOT_FOUND", 404);
+        }
+
+        // Check if already captured (idempotent replay)
+        if (intent.state === "CAPTURED" && booking.status === "CONFIRMED") {
+          const capture = await trx
+            .selectFrom("payment_captures")
+            .where("payment_intent_id", "=", paymentIntentId)
+            .where("tenant_id", "=", tenantId)
+            .selectAll()
+            .executeTakeFirst();
+
+          return {
+            bookingId: bookingIdSchema.parse(booking.id),
+            bookingStatus: "CONFIRMED" as const,
+            paymentStatus: "CAPTURED" as const,
+            providerCaptureId: capture?.provider_capture_id,
+            version: booking.version,
+          };
+        }
+
+        // 2. Verify database clock against payment_expires_at
+        const clockRes = await sql<{ now: Date }>`SELECT clock_timestamp() as now`.execute(trx);
+        const dbNow = clockRes.rows[0]?.now ?? new Date();
+
+        if (booking.payment_expires_at && dbNow.getTime() >= booking.payment_expires_at.getTime()) {
+          await trx
+            .updateTable("bookings")
+            .set({ status: "PAYMENT_WINDOW_EXPIRED", version: booking.version + 1 })
+            .where("id", "=", booking.id)
+            .execute();
+
+          await trx
+            .updateTable("resource_claims")
+            .set({ state: "RELEASED", blocking: false })
+            .where("booking_id", "=", booking.id)
+            .where("tenant_id", "=", tenantId)
+            .execute();
+
+          return {
+            expired: true as const,
+            paymentExpiresAt: booking.payment_expires_at.toISOString(),
+            dbTime: dbNow.toISOString(),
+          };
+        }
+
+        // 3. Record provider operation in DISPATCHING state before remote call
+        const operationId = crypto.randomUUID();
+        const canonicalPayload = {
+          tenantId,
+          paymentIntentId,
+          providerOrderId: intent.provider_order_id,
+          amountMinor: intent.amount_minor,
         };
-      }
+        const payloadHash = canonicalHash(canonicalPayload);
 
-      // 2. Verify database clock against payment_expires_at
-      const clockRes = await sql<{ now: Date }>`SELECT clock_timestamp() as now`.execute(trx);
-      const dbNow = clockRes.rows[0]?.now ?? new Date();
+        await trx
+          .insertInto("provider_operations")
+          .values({
+            id: operationId,
+            tenant_id: tenantId,
+            booking_id: booking.id,
+            provider: "PAYPAL",
+            environment: "sandbox",
+            operation_type: "CAPTURE",
+            state: "DISPATCHING",
+            endpoint: `/v2/checkout/orders/${intent.provider_order_id}/capture`,
+            paypal_request_id: idempotencyKey,
+            canonical_payload_hash: payloadHash,
+            provider_order_id: intent.provider_order_id,
+            attempt_count: 1,
+            first_dispatched_at: dbNow,
+            last_attempt_at: dbNow,
+            created_at: dbNow,
+            updated_at: dbNow,
+          })
+          .execute();
 
-      if (booking.payment_expires_at && dbNow.getTime() >= booking.payment_expires_at.getTime()) {
+        // 4. Call PayPal capture API
+        let captureResult: CapturePaymentResult;
+        try {
+          captureResult = await this.paymentPort.capturePayment({
+            tenantId,
+            paymentIntentId,
+            providerOrderId: intent.provider_order_id ?? "",
+            amount: {
+              currency: currencyCodeSchema.parse(intent.currency),
+              valueMinor: moneyMinorSchema.parse(intent.amount_minor),
+            },
+            requestId: idempotencyKey,
+          });
+        } catch (err: unknown) {
+          // Unknown outcome (timeout, 5xx): retain claim as blocking, mark SENT_UNKNOWN & CAPTURE_UNCERTAIN
+          await trx
+            .updateTable("provider_operations")
+            .set({
+              state: "SENT_UNKNOWN",
+              error_code: (err as Error).name,
+              updated_at: dbNow,
+            })
+            .where("id", "=", operationId)
+            .execute();
+
+          await trx
+            .updateTable("bookings")
+            .set({ status: "CAPTURE_UNCERTAIN", version: booking.version + 1 })
+            .where("id", "=", booking.id)
+            .execute();
+
+          await trx
+            .updateTable("resource_claims")
+            .set({ state: "CAPTURE_UNCERTAIN", blocking: true })
+            .where("booking_id", "=", booking.id)
+            .where("tenant_id", "=", tenantId)
+            .execute();
+
+          return {
+            bookingId: bookingIdSchema.parse(booking.id),
+            bookingStatus: "CAPTURE_UNCERTAIN",
+            paymentStatus: "UNCERTAIN",
+            operationId,
+            statusUrl: `/v1/operations/${operationId}`,
+          };
+        }
+
+        // 5. Handle authoritative COMPLETED capture
+        if (captureResult.status === "CAPTURED") {
+          const nextVersion = booking.version + 1;
+
+          // Persist payment capture record
+          await trx
+            .insertInto("payment_captures")
+            .values({
+              id: captureResult.paymentCaptureId,
+              tenant_id: tenantId,
+              payment_intent_id: paymentIntentId,
+              booking_id: booking.id,
+              provider_capture_id: captureResult.providerCaptureId,
+              amount_minor: intent.amount_minor,
+              currency: intent.currency,
+              state: "COMPLETED",
+              captured_at: dbNow,
+              created_at: dbNow,
+            })
+            .execute();
+
+          // Update payment intent to CAPTURED
+          await trx
+            .updateTable("payment_intents")
+            .set({ state: "CAPTURED", updated_at: dbNow })
+            .where("id", "=", paymentIntentId)
+            .execute();
+
+          // Transition booking to CONFIRMED
+          await trx
+            .updateTable("bookings")
+            .set({ status: "CONFIRMED", version: nextVersion })
+            .where("id", "=", booking.id)
+            .execute();
+
+          // Resource claim becomes CONFIRMED and blocking
+          await trx
+            .updateTable("resource_claims")
+            .set({ state: "CONFIRMED", blocking: true })
+            .where("booking_id", "=", booking.id)
+            .where("tenant_id", "=", tenantId)
+            .execute();
+
+          // Update provider operation
+          await trx
+            .updateTable("provider_operations")
+            .set({
+              state: "SUCCEEDED",
+              provider_capture_id: captureResult.providerCaptureId,
+              updated_at: dbNow,
+            })
+            .where("id", "=", operationId)
+            .execute();
+
+          // W8: Double-entry financial journal entry (DRAFT -> lines -> POSTED)
+          const entryId = crypto.randomUUID();
+          await trx
+            .insertInto("financial_journal_entries")
+            .values({
+              id: entryId,
+              tenant_id: tenantId,
+              booking_id: booking.id,
+              entry_type: "DEPOSIT_CAPTURE",
+              reference_id: captureResult.paymentCaptureId,
+              currency: intent.currency,
+              status: "DRAFT",
+              created_at: dbNow,
+            })
+            .execute();
+
+          // Balanced debit & credit lines:
+          // Debit: ASSET:PAYPAL_CLEARING
+          // Credit: LIABILITY:CUSTOMER_DEPOSIT
+          await trx
+            .insertInto("financial_journal_lines")
+            .values([
+              {
+                id: crypto.randomUUID(),
+                journal_entry_id: entryId,
+                tenant_id: tenantId,
+                account: "ASSET:PAYPAL_CLEARING",
+                debit_minor: intent.amount_minor,
+                credit_minor: "0",
+                currency: intent.currency,
+                created_at: dbNow,
+              },
+              {
+                id: crypto.randomUUID(),
+                journal_entry_id: entryId,
+                tenant_id: tenantId,
+                account: "LIABILITY:CUSTOMER_DEPOSIT",
+                debit_minor: "0",
+                credit_minor: intent.amount_minor,
+                currency: intent.currency,
+                created_at: dbNow,
+              },
+            ])
+            .execute();
+
+          // Atomically post the journal entry
+          await trx
+            .updateTable("financial_journal_entries")
+            .set({ status: "POSTED", posted_at: dbNow })
+            .where("id", "=", entryId)
+            .execute();
+
+          // Outbox event
+          await trx
+            .insertInto("outbox_events")
+            .values({
+              id: crypto.randomUUID(),
+              tenant_id: tenantId,
+              aggregate_type: "BOOKING",
+              aggregate_id: booking.id,
+              event_type: "PAYMENT_CAPTURED",
+              payload: JSON.stringify({
+                bookingId: booking.id,
+                captureId: captureResult.paymentCaptureId,
+                providerCaptureId: captureResult.providerCaptureId,
+                amountMinor: intent.amount_minor,
+                currency: intent.currency,
+              }),
+              created_at: dbNow,
+            })
+            .execute();
+
+          return {
+            bookingId: bookingIdSchema.parse(booking.id),
+            bookingStatus: "CONFIRMED" as const,
+            paymentStatus: "CAPTURED" as const,
+            providerCaptureId: captureResult.providerCaptureId,
+            version: nextVersion,
+          };
+        }
+
+        // 6. Handle UNCERTAIN capture (e.g. PayPal PENDING)
+        if (captureResult.status === "UNCERTAIN") {
+          await trx
+            .insertInto("payment_captures")
+            .values({
+              id: captureResult.paymentCaptureId,
+              tenant_id: tenantId,
+              payment_intent_id: paymentIntentId,
+              booking_id: booking.id,
+              provider_capture_id: captureResult.providerCaptureId,
+              amount_minor: intent.amount_minor,
+              currency: intent.currency,
+              state: "PENDING",
+              captured_at: null,
+              created_at: dbNow,
+            })
+            .execute();
+
+          await trx
+            .updateTable("provider_operations")
+            .set({
+              state: "PENDING",
+              provider_capture_id: captureResult.providerCaptureId,
+              updated_at: dbNow,
+            })
+            .where("id", "=", operationId)
+            .execute();
+
+          await trx
+            .updateTable("bookings")
+            .set({ status: "CAPTURE_UNCERTAIN", version: booking.version + 1 })
+            .where("id", "=", booking.id)
+            .execute();
+
+          await trx
+            .updateTable("resource_claims")
+            .set({ state: "CAPTURE_UNCERTAIN", blocking: true })
+            .where("booking_id", "=", booking.id)
+            .where("tenant_id", "=", tenantId)
+            .execute();
+
+          return {
+            bookingId: bookingIdSchema.parse(booking.id),
+            bookingStatus: "CAPTURE_UNCERTAIN" as const,
+            paymentStatus: "UNCERTAIN" as const,
+            providerCaptureId: captureResult.providerCaptureId,
+            operationId,
+            statusUrl: `/v1/operations/${operationId}`,
+          };
+        }
+
+        // 7. Handle authoritative FAILED capture (DECLINED / FAILED)
+        await trx
+          .updateTable("provider_operations")
+          .set({
+            state: "FAILED_TERMINAL",
+            updated_at: dbNow,
+          })
+          .where("id", "=", operationId)
+          .execute();
+
+        await trx
+          .updateTable("payment_intents")
+          .set({ state: "PAYMENT_FAILED", updated_at: dbNow })
+          .where("id", "=", paymentIntentId)
+          .execute();
+
         await trx
           .updateTable("bookings")
-          .set({ status: "PAYMENT_WINDOW_EXPIRED", version: booking.version + 1 })
+          .set({ status: "PAYMENT_FAILED", version: booking.version + 1 })
           .where("id", "=", booking.id)
           .execute();
 
@@ -420,313 +731,13 @@ export class PaymentService {
           .execute();
 
         return {
-          expired: true as const,
-          paymentExpiresAt: booking.payment_expires_at.toISOString(),
-          dbTime: dbNow.toISOString(),
-        };
-      }
-
-      // 3. Record provider operation in DISPATCHING state before remote call
-      const operationId = crypto.randomUUID();
-      const canonicalPayload = {
-        tenantId,
-        paymentIntentId,
-        providerOrderId: intent.provider_order_id,
-        amountMinor: intent.amount_minor,
-      };
-      const payloadHash = canonicalHash(canonicalPayload);
-
-      await trx
-        .insertInto("provider_operations")
-        .values({
-          id: operationId,
-          tenant_id: tenantId,
-          booking_id: booking.id,
-          provider: "PAYPAL",
-          environment: "sandbox",
-          operation_type: "CAPTURE",
-          state: "DISPATCHING",
-          endpoint: `/v2/checkout/orders/${intent.provider_order_id}/capture`,
-          paypal_request_id: idempotencyKey,
-          canonical_payload_hash: payloadHash,
-          provider_order_id: intent.provider_order_id,
-          attempt_count: 1,
-          first_dispatched_at: dbNow,
-          last_attempt_at: dbNow,
-          created_at: dbNow,
-          updated_at: dbNow,
-        })
-        .execute();
-
-      // 4. Call PayPal capture API
-      let captureResult: CapturePaymentResult;
-      try {
-        captureResult = await this.paymentPort.capturePayment({
-          tenantId,
-          paymentIntentId,
-          providerOrderId: intent.provider_order_id ?? "",
-          amount: {
-            currency: currencyCodeSchema.parse(intent.currency),
-            valueMinor: moneyMinorSchema.parse(intent.amount_minor),
-          },
-          requestId: idempotencyKey,
-        });
-      } catch (err: unknown) {
-        // Unknown outcome (timeout, 5xx): retain claim as blocking, mark SENT_UNKNOWN & CAPTURE_UNCERTAIN
-        await trx
-          .updateTable("provider_operations")
-          .set({
-            state: "SENT_UNKNOWN",
-            error_code: (err as Error).name,
-            updated_at: dbNow,
-          })
-          .where("id", "=", operationId)
-          .execute();
-
-        await trx
-          .updateTable("bookings")
-          .set({ status: "CAPTURE_UNCERTAIN", version: booking.version + 1 })
-          .where("id", "=", booking.id)
-          .execute();
-
-        await trx
-          .updateTable("resource_claims")
-          .set({ state: "CAPTURE_UNCERTAIN", blocking: true })
-          .where("booking_id", "=", booking.id)
-          .where("tenant_id", "=", tenantId)
-          .execute();
-
-        return {
           bookingId: bookingIdSchema.parse(booking.id),
-          bookingStatus: "CAPTURE_UNCERTAIN",
-          paymentStatus: "UNCERTAIN",
-          operationId,
-          statusUrl: `/v1/operations/${operationId}`,
+          bookingStatus: "PAYMENT_FAILED" as const,
+          paymentStatus: "FAILED" as const,
+          version: booking.version + 1,
         };
-      }
-
-      // 5. Handle authoritative COMPLETED capture
-      if (captureResult.status === "CAPTURED") {
-        const nextVersion = booking.version + 1;
-
-        // Persist payment capture record
-        await trx
-          .insertInto("payment_captures")
-          .values({
-            id: captureResult.paymentCaptureId,
-            tenant_id: tenantId,
-            payment_intent_id: paymentIntentId,
-            booking_id: booking.id,
-            provider_capture_id: captureResult.providerCaptureId,
-            amount_minor: intent.amount_minor,
-            currency: intent.currency,
-            state: "COMPLETED",
-            captured_at: dbNow,
-            created_at: dbNow,
-          })
-          .execute();
-
-        // Update payment intent to CAPTURED
-        await trx
-          .updateTable("payment_intents")
-          .set({ state: "CAPTURED", updated_at: dbNow })
-          .where("id", "=", paymentIntentId)
-          .execute();
-
-        // Transition booking to CONFIRMED
-        await trx
-          .updateTable("bookings")
-          .set({ status: "CONFIRMED", version: nextVersion })
-          .where("id", "=", booking.id)
-          .execute();
-
-        // Resource claim becomes CONFIRMED and blocking
-        await trx
-          .updateTable("resource_claims")
-          .set({ state: "CONFIRMED", blocking: true })
-          .where("booking_id", "=", booking.id)
-          .where("tenant_id", "=", tenantId)
-          .execute();
-
-        // Update provider operation
-        await trx
-          .updateTable("provider_operations")
-          .set({
-            state: "SUCCEEDED",
-            provider_capture_id: captureResult.providerCaptureId,
-            updated_at: dbNow,
-          })
-          .where("id", "=", operationId)
-          .execute();
-
-        // W8: Double-entry financial journal entry (DRAFT -> lines -> POSTED)
-        const entryId = crypto.randomUUID();
-        await trx
-          .insertInto("financial_journal_entries")
-          .values({
-            id: entryId,
-            tenant_id: tenantId,
-            booking_id: booking.id,
-            entry_type: "DEPOSIT_CAPTURE",
-            reference_id: captureResult.paymentCaptureId,
-            currency: intent.currency,
-            status: "DRAFT",
-            created_at: dbNow,
-          })
-          .execute();
-
-        // Balanced debit & credit lines:
-        // Debit: ASSET:PAYPAL_CLEARING
-        // Credit: LIABILITY:CUSTOMER_DEPOSIT
-        await trx
-          .insertInto("financial_journal_lines")
-          .values([
-            {
-              id: crypto.randomUUID(),
-              journal_entry_id: entryId,
-              tenant_id: tenantId,
-              account: "ASSET:PAYPAL_CLEARING",
-              debit_minor: intent.amount_minor,
-              credit_minor: "0",
-              currency: intent.currency,
-              created_at: dbNow,
-            },
-            {
-              id: crypto.randomUUID(),
-              journal_entry_id: entryId,
-              tenant_id: tenantId,
-              account: "LIABILITY:CUSTOMER_DEPOSIT",
-              debit_minor: "0",
-              credit_minor: intent.amount_minor,
-              currency: intent.currency,
-              created_at: dbNow,
-            },
-          ])
-          .execute();
-
-        // Atomically post the journal entry
-        await trx
-          .updateTable("financial_journal_entries")
-          .set({ status: "POSTED", posted_at: dbNow })
-          .where("id", "=", entryId)
-          .execute();
-
-        // Outbox event
-        await trx
-          .insertInto("outbox_events")
-          .values({
-            id: crypto.randomUUID(),
-            tenant_id: tenantId,
-            aggregate_type: "BOOKING",
-            aggregate_id: booking.id,
-            event_type: "PAYMENT_CAPTURED",
-            payload: JSON.stringify({
-              bookingId: booking.id,
-              captureId: captureResult.paymentCaptureId,
-              providerCaptureId: captureResult.providerCaptureId,
-              amountMinor: intent.amount_minor,
-              currency: intent.currency,
-            }),
-            created_at: dbNow,
-          })
-          .execute();
-
-        return {
-          bookingId: bookingIdSchema.parse(booking.id),
-          bookingStatus: "CONFIRMED" as const,
-          paymentStatus: "CAPTURED" as const,
-          providerCaptureId: captureResult.providerCaptureId,
-          version: nextVersion,
-        };
-      }
-
-      // 6. Handle UNCERTAIN capture (e.g. PayPal PENDING)
-      if (captureResult.status === "UNCERTAIN") {
-        await trx
-          .insertInto("payment_captures")
-          .values({
-            id: captureResult.paymentCaptureId,
-            tenant_id: tenantId,
-            payment_intent_id: paymentIntentId,
-            booking_id: booking.id,
-            provider_capture_id: captureResult.providerCaptureId,
-            amount_minor: intent.amount_minor,
-            currency: intent.currency,
-            state: "PENDING",
-            captured_at: null,
-            created_at: dbNow,
-          })
-          .execute();
-
-        await trx
-          .updateTable("provider_operations")
-          .set({
-            state: "PENDING",
-            provider_capture_id: captureResult.providerCaptureId,
-            updated_at: dbNow,
-          })
-          .where("id", "=", operationId)
-          .execute();
-
-        await trx
-          .updateTable("bookings")
-          .set({ status: "CAPTURE_UNCERTAIN", version: booking.version + 1 })
-          .where("id", "=", booking.id)
-          .execute();
-
-        await trx
-          .updateTable("resource_claims")
-          .set({ state: "CAPTURE_UNCERTAIN", blocking: true })
-          .where("booking_id", "=", booking.id)
-          .where("tenant_id", "=", tenantId)
-          .execute();
-
-        return {
-          bookingId: bookingIdSchema.parse(booking.id),
-          bookingStatus: "CAPTURE_UNCERTAIN" as const,
-          paymentStatus: "UNCERTAIN" as const,
-          providerCaptureId: captureResult.providerCaptureId,
-          operationId,
-          statusUrl: `/v1/operations/${operationId}`,
-        };
-      }
-
-      // 7. Handle authoritative FAILED capture (DECLINED / FAILED)
-      await trx
-        .updateTable("provider_operations")
-        .set({
-          state: "FAILED_TERMINAL",
-          updated_at: dbNow,
-        })
-        .where("id", "=", operationId)
-        .execute();
-
-      await trx
-        .updateTable("payment_intents")
-        .set({ state: "PAYMENT_FAILED", updated_at: dbNow })
-        .where("id", "=", paymentIntentId)
-        .execute();
-
-      await trx
-        .updateTable("bookings")
-        .set({ status: "PAYMENT_FAILED", version: booking.version + 1 })
-        .where("id", "=", booking.id)
-        .execute();
-
-      await trx
-        .updateTable("resource_claims")
-        .set({ state: "RELEASED", blocking: false })
-        .where("booking_id", "=", booking.id)
-        .where("tenant_id", "=", tenantId)
-        .execute();
-
-      return {
-        bookingId: bookingIdSchema.parse(booking.id),
-        bookingStatus: "PAYMENT_FAILED" as const,
-        paymentStatus: "FAILED" as const,
-        version: booking.version + 1,
-      };
-    });
+      },
+    );
 
     if ("expired" in result) {
       throw new SlotUnavailableError("Payment window expired before capture dispatch", {
@@ -767,7 +778,11 @@ export class PaymentService {
       }
 
       if (capture.state !== "COMPLETED" && capture.state !== "PARTIALLY_REFUNDED") {
-        throw new DomainError(`Cannot refund capture in state: ${capture.state}`, "INVALID_CAPTURE_STATE", 400);
+        throw new DomainError(
+          `Cannot refund capture in state: ${capture.state}`,
+          "INVALID_CAPTURE_STATE",
+          400,
+        );
       }
 
       // 2. Query all existing refund reservations under capture lock
@@ -883,9 +898,13 @@ export class PaymentService {
 
         if (isClientError) {
           // Definitive PayPal rejection: reservation moves to FAILED and releases capacity
-          const errCode = (err && typeof err === "object" && "name" in err && typeof (err as { name: unknown }).name === "string")
-            ? (err as { name: string }).name
-            : "CLIENT_ERROR";
+          const errCode =
+            err &&
+            typeof err === "object" &&
+            "name" in err &&
+            typeof (err as { name: unknown }).name === "string"
+              ? (err as { name: string }).name
+              : "CLIENT_ERROR";
           await trx
             .updateTable("provider_operations")
             .set({ state: "FAILED_TERMINAL", error_code: errCode, updated_at: dbNow })
@@ -937,7 +956,8 @@ export class PaymentService {
           .execute();
 
         const newTotalRefunded = totalReservedMinor + targetRefundMinor;
-        const newCaptureState = newTotalRefunded >= capturedMinor ? "REFUNDED" : "PARTIALLY_REFUNDED";
+        const newCaptureState =
+          newTotalRefunded >= capturedMinor ? "REFUNDED" : "PARTIALLY_REFUNDED";
 
         await trx
           .updateTable("payment_captures")
@@ -1618,7 +1638,11 @@ export class PaymentService {
 
         // Duplicate or out-of-order PENDING: do not downgrade if already COMPLETED / REFUNDED
         if (capture) {
-          if (capture.state !== "COMPLETED" && capture.state !== "REFUNDED" && capture.state !== "PARTIALLY_REFUNDED") {
+          if (
+            capture.state !== "COMPLETED" &&
+            capture.state !== "REFUNDED" &&
+            capture.state !== "PARTIALLY_REFUNDED"
+          ) {
             await trx
               .updateTable("bookings")
               .set({ status: "CAPTURE_UNCERTAIN" })
@@ -1641,7 +1665,11 @@ export class PaymentService {
           .executeTakeFirst();
 
         if (capture) {
-          if (capture.state !== "COMPLETED" && capture.state !== "REFUNDED" && capture.state !== "PARTIALLY_REFUNDED") {
+          if (
+            capture.state !== "COMPLETED" &&
+            capture.state !== "REFUNDED" &&
+            capture.state !== "PARTIALLY_REFUNDED"
+          ) {
             await trx
               .updateTable("payment_captures")
               .set({ state: "COMPLETED" })
@@ -1724,7 +1752,10 @@ export class PaymentService {
             }
           }
         }
-      } else if ((eventType === "PAYMENT.CAPTURE.DENIED" || eventType === "PAYMENT.CAPTURE.DECLINED") && resourceId) {
+      } else if (
+        (eventType === "PAYMENT.CAPTURE.DENIED" || eventType === "PAYMENT.CAPTURE.DECLINED") &&
+        resourceId
+      ) {
         const capture = await trx
           .selectFrom("payment_captures")
           .where("provider_capture_id", "=", resourceId)
@@ -1759,10 +1790,14 @@ export class PaymentService {
         }
       } else if (eventType === "PAYMENT.CAPTURE.REFUNDED" && resourceId) {
         // Out-of-order refund or external dashboard refund
-        const refundAmountObj = resource.amount as { value?: string; currency_code?: string } | undefined;
-        let providerCaptureId: string | null = typeof resource.capture_id === "string" ? resource.capture_id : null;
+        const refundAmountObj = resource.amount as
+          { value?: string; currency_code?: string } | undefined;
+        let providerCaptureId: string | null =
+          typeof resource.capture_id === "string" ? resource.capture_id : null;
         if (!providerCaptureId && Array.isArray(resource.links)) {
-          const upLink = (resource.links as Array<{ rel?: string; href?: string }>).find((l) => l.rel === "up");
+          const upLink = (resource.links as Array<{ rel?: string; href?: string }>).find(
+            (l) => l.rel === "up",
+          );
           if (upLink?.href) {
             const parts = upLink.href.split("/");
             providerCaptureId = parts[parts.length - 1] ?? null;
@@ -1871,7 +1906,10 @@ export class PaymentService {
             .selectAll()
             .execute();
 
-          const totalRefundedMinor = allRefunds.reduce((acc, r) => acc + BigInt(r.amount_minor), 0n);
+          const totalRefundedMinor = allRefunds.reduce(
+            (acc, r) => acc + BigInt(r.amount_minor),
+            0n,
+          );
           const nextCaptureState =
             totalRefundedMinor >= BigInt(capture.amount_minor) ? "REFUNDED" : "PARTIALLY_REFUNDED";
 

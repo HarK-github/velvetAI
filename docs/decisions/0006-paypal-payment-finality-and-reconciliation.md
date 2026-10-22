@@ -9,6 +9,7 @@ Accepted
 VelvetAI integrates with PayPal to secure appointments with forecast-sized deposits. Autonomous agents and web buyers interact with the platform under high concurrency, intermittent network connectivity, out-of-order webhook delivery, and potential payment tampering.
 
 Key failure modes and attack vectors include:
+
 1. **Payer Action vs. Payment Finality Confusion**: PayPal JavaScript SDK v6 `onApprove` or an Orders v2 order status of `APPROVED` or `COMPLETED` does not guarantee funds capture. A contained capture resource may remain in `PENDING`, `DECLINED`, or `FAILED` state. Confirming appointments prematurely creates insolvency and unpaid slot allocation.
 2. **Payment Window vs. Slot-Hoarding**: If a buyer holds an appointment without completing payment, malicious agents or abandoned checkouts can monopolize provider availability. The local booking payment window and PayPal's order lifetime are distinct clocks.
 3. **Unknown Mutation Outcomes**: Network timeouts or HTTP 5xx responses during order creation or capture leave the remote state uncertain. Naively retrying with a new request ID causes double-charging, while naively marking the booking failed causes orphaned captures.
@@ -35,7 +36,7 @@ To enforce absolute payment finality, deterministic state progression, and ledge
      - `REQUIRES_PAYER_ACTION → PAYMENT_WINDOW_EXPIRED` (releases claim)
      - `CAPTURE_IN_FLIGHT → CAPTURE_UNCERTAIN → CAPTURED | PAYMENT_FAILED | MANUAL_REVIEW`
      - `CAPTURED → REFUND_PENDING → PARTIALLY_REFUNDED | REFUNDED`
-   - **Booking Confirmation Rule**: Booking status transitions to `CONFIRMED` *only* when the contained capture resource status is explicitly `COMPLETED`:
+   - **Booking Confirmation Rule**: Booking status transitions to `CONFIRMED` _only_ when the contained capture resource status is explicitly `COMPLETED`:
      ```text
      purchase_units[].payments.captures[].status == COMPLETED
      ```

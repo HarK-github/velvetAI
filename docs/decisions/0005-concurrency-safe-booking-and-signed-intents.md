@@ -7,6 +7,7 @@ Accepted
 ## Context
 
 VelvetAI allows buyers and autonomous AI agents to discover services, negotiate appointment slots, and commit bookings. This creates high-concurrency attack surfaces:
+
 1. Slot-hoarding and concurrent race conditions where multiple actors attempt to hold the exact same appointment window.
 2. Replay, parameter tampering, and mix-and-match attacks where an agent attempts to substitute lower prices, alter cancellation policies, or reuse authorization tokens.
 3. Cross-tenant data leakage when database connections are pooled and shared across asynchronous requests.

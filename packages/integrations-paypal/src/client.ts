@@ -19,7 +19,9 @@ export class PayPalHttpClient {
 
   constructor(config: PayPalSandboxConfig) {
     if (config.environment && config.environment !== "sandbox") {
-      throw new PayPalAuthError("Only PayPal sandbox environment is permitted in Epic 3; live payments are rejected");
+      throw new PayPalAuthError(
+        "Only PayPal sandbox environment is permitted in Epic 3; live payments are rejected",
+      );
     }
 
     const resolvedBaseUrl = config.baseUrl ?? "https://api-m.sandbox.paypal.com";
@@ -85,20 +87,30 @@ export class PayPalHttpClient {
           if (response.status === 401) {
             throw new PayPalAuthError(
               `PayPal authentication failed: ${parsedError.error_description || response.statusText}`,
-              { debugId, httpStatus: response.status, errorCode: "AUTH_FAILURE", details: parsedError },
+              {
+                debugId,
+                httpStatus: response.status,
+                errorCode: "AUTH_FAILURE",
+                details: parsedError,
+              },
             );
           }
 
           throw new PayPalClientError(
             `Failed to obtain PayPal OAuth token: ${parsedError.error_description || response.statusText}`,
-            { debugId, httpStatus: response.status, errorCode: "TOKEN_ERROR", details: parsedError },
+            {
+              debugId,
+              httpStatus: response.status,
+              errorCode: "TOKEN_ERROR",
+              details: parsedError,
+            },
           );
         }
 
         const tokenData = (await response.json()) as { access_token: string; expires_in: number };
         this.cachedAccessToken = tokenData.access_token;
         // Provider expiry minus 60 seconds safety margin
-        this.tokenExpiresAt = Date.now() + Math.max(0, (tokenData.expires_in - 60)) * 1000;
+        this.tokenExpiresAt = Date.now() + Math.max(0, tokenData.expires_in - 60) * 1000;
         return this.cachedAccessToken;
       } finally {
         this.tokenRefreshPromise = null;
@@ -190,10 +202,16 @@ export class PayPalHttpClient {
         (parsedBody.message as string) ||
         (parsedBody.error_description as string) ||
         `PayPal API returned HTTP ${status}: ${response.statusText}`;
-      const errorCode = (parsedBody.name as string) || (parsedBody.error as string) || `HTTP_${status}`;
+      const errorCode =
+        (parsedBody.name as string) || (parsedBody.error as string) || `HTTP_${status}`;
 
       if (status === 401) {
-        throw new PayPalAuthError(errorMessage, { debugId, httpStatus: status, errorCode, details: parsedBody });
+        throw new PayPalAuthError(errorMessage, {
+          debugId,
+          httpStatus: status,
+          errorCode,
+          details: parsedBody,
+        });
       }
 
       if (status === 429) {

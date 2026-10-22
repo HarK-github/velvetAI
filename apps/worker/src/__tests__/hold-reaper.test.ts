@@ -10,8 +10,7 @@ import {
 import { HoldReaperProcessor } from "../hold-reaper.js";
 
 const TEST_DB_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://velvet:velvet_dev_pass@localhost:5432/velvetai?sslmode=disable";
+  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
 
 describe("Hold Reaper Processor (Requirement 6: Concurrent Replicas & Crash Recovery)", () => {
   let db: Kysely<Database>;
@@ -30,64 +29,86 @@ describe("Hold Reaper Processor (Requirement 6: Concurrent Replicas & Crash Reco
     customerId = crypto.randomUUID();
 
     // Global tenant & user
-    await db.insertInto("tenants").values({
-      id: tenantId,
-      name: `reaper-test-${Date.now()}`,
-      default_currency: "USD",
-      status: "ACTIVE",
-    }).execute();
+    await db
+      .insertInto("tenants")
+      .values({
+        id: tenantId,
+        name: `reaper-test-${Date.now()}`,
+        default_currency: "USD",
+        status: "ACTIVE",
+      })
+      .execute();
 
-    await db.insertInto("app_users").values({
-      id: customerId,
-      oidc_subject: `reaper|${customerId}`,
-      email_ciphertext: "reaper@example.com",
-    }).execute();
+    await db
+      .insertInto("app_users")
+      .values({
+        id: customerId,
+        oidc_subject: `reaper|${customerId}`,
+        email_ciphertext: "reaper@example.com",
+      })
+      .execute();
 
     // Tenant-scoped setup
     await withTenantTransaction(db, tenantId, async (trx) => {
       const locationId = crypto.randomUUID();
       const serviceId = crypto.randomUUID();
 
-      await trx.insertInto("locations").values({
-        id: locationId,
-        tenant_id: tenantId,
-        name: "Reaper Clinic",
-        timezone: "America/New_York",
-        status: "ACTIVE",
-      }).execute();
+      await trx
+        .insertInto("locations")
+        .values({
+          id: locationId,
+          tenant_id: tenantId,
+          name: "Reaper Clinic",
+          timezone: "America/New_York",
+          status: "ACTIVE",
+        })
+        .execute();
 
-      await trx.insertInto("services").values({
-        id: serviceId,
-        tenant_id: tenantId,
-        status: "ACTIVE",
-        current_version_id: null,
-      }).execute();
+      await trx
+        .insertInto("services")
+        .values({
+          id: serviceId,
+          tenant_id: tenantId,
+          status: "ACTIVE",
+          current_version_id: null,
+        })
+        .execute();
 
-      await trx.insertInto("service_versions").values({
-        id: serviceVersionId,
-        tenant_id: tenantId,
-        service_id: serviceId,
-        version: 1,
-        name: "Standard Cut",
-        duration_minutes: 30,
-        buffer_before_minutes: 0,
-        buffer_after_minutes: 0,
-        price_minor: "5000",
-        base_deposit_minor: "1500",
-        currency: "USD",
-        cancellation_policy_id: crypto.randomUUID(),
-      }).execute();
+      await trx
+        .insertInto("service_versions")
+        .values({
+          id: serviceVersionId,
+          tenant_id: tenantId,
+          service_id: serviceId,
+          version: 1,
+          name: "Standard Cut",
+          duration_minutes: 30,
+          buffer_before_minutes: 0,
+          buffer_after_minutes: 0,
+          price_minor: "5000",
+          base_deposit_minor: "1500",
+          currency: "USD",
+          cancellation_policy_id: crypto.randomUUID(),
+        })
+        .execute();
 
-      await trx.updateTable("services").set({ current_version_id: serviceVersionId }).where("id", "=", serviceId).execute();
+      await trx
+        .updateTable("services")
+        .set({ current_version_id: serviceVersionId })
+        .where("id", "=", serviceId)
+        .execute();
 
-      await trx.insertInto("resources").values({
-        id: resourceId,
-        tenant_id: tenantId,
-        location_id: locationId,
-        resource_type: "ROOM",
-        display_name: "Room R",
-        status: "ACTIVE",
-      }).execute();
+      await trx
+        .insertInto("resources")
+        .values({
+          id: resourceId,
+          tenant_id: tenantId,
+          location_id: locationId,
+          resource_type: "ROOM",
+          display_name: "Room R",
+          status: "ACTIVE",
+        })
+        .execute();
     });
   });
 
@@ -108,45 +129,54 @@ describe("Hold Reaper Processor (Requirement 6: Concurrent Replicas & Crash Reco
         const slotStart = new Date(`2026-12-01T${10 + i}:00:00.000Z`);
         const slotEnd = new Date(`2026-12-01T${10 + i}:30:00.000Z`);
 
-        await trx.insertInto("booking_quotes").values({
-          id: quoteId,
-          tenant_id: tenantId,
-          service_version_id: serviceVersionId,
-          customer_id: customerId,
-          starts_at: slotStart,
-          ends_at: slotEnd,
-          total_minor: "5000",
-          deposit_minor: "1500",
-          currency: "USD",
-          canonical_hash: `reap-hash-${i}`,
-          expires_at: pastExpiry,
-        }).execute();
+        await trx
+          .insertInto("booking_quotes")
+          .values({
+            id: quoteId,
+            tenant_id: tenantId,
+            service_version_id: serviceVersionId,
+            customer_id: customerId,
+            starts_at: slotStart,
+            ends_at: slotEnd,
+            total_minor: "5000",
+            deposit_minor: "1500",
+            currency: "USD",
+            canonical_hash: `reap-hash-${i}`,
+            expires_at: pastExpiry,
+          })
+          .execute();
 
-        await trx.insertInto("bookings").values({
-          id: bookingId,
-          tenant_id: tenantId,
-          customer_id: customerId,
-          quote_id: quoteId,
-          status: "HELD",
-          version: 1,
-          hold_expires_at: pastExpiry,
-          starts_at: slotStart,
-          ends_at: slotEnd,
-          resource_id: resourceId,
-        }).execute();
+        await trx
+          .insertInto("bookings")
+          .values({
+            id: bookingId,
+            tenant_id: tenantId,
+            customer_id: customerId,
+            quote_id: quoteId,
+            status: "HELD",
+            version: 1,
+            hold_expires_at: pastExpiry,
+            starts_at: slotStart,
+            ends_at: slotEnd,
+            resource_id: resourceId,
+          })
+          .execute();
 
-        await trx.insertInto("resource_claims").values({
-          id: claimId,
-          tenant_id: tenantId,
-          booking_id: bookingId,
-          resource_id: resourceId,
-          starts_at: slotStart,
-          ends_at: slotEnd,
-          blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-          state: "HELD",
-          blocking: true,
-          hold_expires_at: pastExpiry,
-        }).execute();
+        await trx
+          .insertInto("resource_claims")
+          .values({
+            id: claimId,
+            tenant_id: tenantId,
+            booking_id: bookingId,
+            resource_id: resourceId,
+            starts_at: slotStart,
+            ends_at: slotEnd,
+            blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+            state: "HELD",
+            blocking: true,
+            hold_expires_at: pastExpiry,
+          })
+          .execute();
       }
     });
 
@@ -173,6 +203,7 @@ describe("Hold Reaper Processor (Requirement 6: Concurrent Replicas & Crash Reco
     await withTenantTransaction(db, tenantId, async (trx) => {
       const remainingHeld = await trx
         .selectFrom("resource_claims")
+        .where("tenant_id", "=", tenantId)
         .where("state", "=", "HELD")
         .selectAll()
         .execute();
@@ -180,6 +211,7 @@ describe("Hold Reaper Processor (Requirement 6: Concurrent Replicas & Crash Reco
 
       const expiredClaims = await trx
         .selectFrom("resource_claims")
+        .where("tenant_id", "=", tenantId)
         .where("state", "=", "EXPIRED")
         .where("blocking", "=", false)
         .selectAll()
@@ -188,6 +220,7 @@ describe("Hold Reaper Processor (Requirement 6: Concurrent Replicas & Crash Reco
 
       const expiredBookings = await trx
         .selectFrom("bookings")
+        .where("tenant_id", "=", tenantId)
         .where("status", "=", "EXPIRED")
         .selectAll()
         .execute();
@@ -204,45 +237,54 @@ describe("Hold Reaper Processor (Requirement 6: Concurrent Replicas & Crash Reco
     const slotEnd = new Date("2026-12-05T14:30:00.000Z");
 
     await withTenantTransaction(db, tenantId, async (trx) => {
-      await trx.insertInto("booking_quotes").values({
-        id: quoteId,
-        tenant_id: tenantId,
-        service_version_id: serviceVersionId,
-        customer_id: customerId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        total_minor: "5000",
-        deposit_minor: "1500",
-        currency: "USD",
-        canonical_hash: "crash-test-hash",
-        expires_at: pastExpiry,
-      }).execute();
+      await trx
+        .insertInto("booking_quotes")
+        .values({
+          id: quoteId,
+          tenant_id: tenantId,
+          service_version_id: serviceVersionId,
+          customer_id: customerId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          total_minor: "5000",
+          deposit_minor: "1500",
+          currency: "USD",
+          canonical_hash: "crash-test-hash",
+          expires_at: pastExpiry,
+        })
+        .execute();
 
-      await trx.insertInto("bookings").values({
-        id: bookingId,
-        tenant_id: tenantId,
-        customer_id: customerId,
-        quote_id: quoteId,
-        status: "HELD",
-        version: 1,
-        hold_expires_at: pastExpiry,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        resource_id: resourceId,
-      }).execute();
+      await trx
+        .insertInto("bookings")
+        .values({
+          id: bookingId,
+          tenant_id: tenantId,
+          customer_id: customerId,
+          quote_id: quoteId,
+          status: "HELD",
+          version: 1,
+          hold_expires_at: pastExpiry,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          resource_id: resourceId,
+        })
+        .execute();
 
-      await trx.insertInto("resource_claims").values({
-        id: claimId,
-        tenant_id: tenantId,
-        booking_id: bookingId,
-        resource_id: resourceId,
-        starts_at: slotStart,
-        ends_at: slotEnd,
-        blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-        state: "HELD",
-        blocking: true,
-        hold_expires_at: pastExpiry,
-      }).execute();
+      await trx
+        .insertInto("resource_claims")
+        .values({
+          id: claimId,
+          tenant_id: tenantId,
+          booking_id: bookingId,
+          resource_id: resourceId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+          state: "HELD",
+          blocking: true,
+          hold_expires_at: pastExpiry,
+        })
+        .execute();
     });
 
     // Simulate worker crashing halfway through transaction (e.g. killed process or unhandled error)

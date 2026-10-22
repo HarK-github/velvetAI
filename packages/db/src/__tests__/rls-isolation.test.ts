@@ -22,7 +22,7 @@ describe("RLS Pool Leakage & Isolation Tests (Restricted Role, Single Connection
     tenantB = await seedTenantContext(adminDb, "rls-b");
 
     // Connect as velvet_runtime (NOBYPASSRLS, non-owner role) with pool size exactly 1
-    singleDb = await createRestrictedSingleConnectionDb();
+    singleDb = await createRestrictedSingleConnectionDb(adminDb);
   });
 
   afterAll(async () => {
@@ -38,7 +38,9 @@ describe("RLS Pool Leakage & Isolation Tests (Restricted Role, Single Connection
     const services = await singleDb.selectFrom("services").selectAll().execute();
     expect(services.length).toBe(0);
 
-    const setting = await sql<{ val: string | null }>`SELECT current_setting('app.tenant_id', true) AS val`.execute(singleDb);
+    const setting = await sql<{
+      val: string | null;
+    }>`SELECT current_setting('app.tenant_id', true) AS val`.execute(singleDb);
     expect(setting.rows[0]?.val ?? "").toBe("");
   });
 
@@ -77,7 +79,9 @@ describe("RLS Pool Leakage & Isolation Tests (Restricted Role, Single Connection
     });
 
     // Next statement on same pooled connection must have empty context
-    const setting = await sql<{ val: string | null }>`SELECT current_setting('app.tenant_id', true) AS val`.execute(singleDb);
+    const setting = await sql<{
+      val: string | null;
+    }>`SELECT current_setting('app.tenant_id', true) AS val`.execute(singleDb);
     expect(setting.rows[0]?.val ?? "").toBe("");
 
     const locs = await singleDb.selectFrom("locations").selectAll().execute();
@@ -95,7 +99,9 @@ describe("RLS Pool Leakage & Isolation Tests (Restricted Role, Single Connection
     }
 
     // Next statement on same pooled connection must have clean context
-    const setting = await sql<{ val: string | null }>`SELECT current_setting('app.tenant_id', true) AS val`.execute(singleDb);
+    const setting = await sql<{
+      val: string | null;
+    }>`SELECT current_setting('app.tenant_id', true) AS val`.execute(singleDb);
     expect(setting.rows[0]?.val ?? "").toBe("");
 
     // Check Tenant B sees only Tenant B

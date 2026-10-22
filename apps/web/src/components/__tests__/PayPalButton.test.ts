@@ -73,7 +73,8 @@ describe("PayPal JS SDK v6 Web Integration Proof", () => {
   });
 
   it("uses documented v6 createInstance and createPayPalOneTimePaymentSession APIs rather than legacy paypal.Buttons().render()", async () => {
-    let capturedSessionConfig: Parameters<PayPalV6SDKInstance["createPayPalOneTimePaymentSession"]>[0] | null = null;
+    let capturedSessionConfig:
+      Parameters<PayPalV6SDKInstance["createPayPalOneTimePaymentSession"]>[0] | null = null;
 
     const mockPaymentSession: PayPalV6PaymentSession = {
       start: vi.fn(async () => {}),
