@@ -19,7 +19,8 @@
   "dependencies": {
     "@velvetai/contracts": "workspace:*",
     "@velvetai/domain": "workspace:*",
-    "@velvetai/application": "workspace:*"
+    "@velvetai/application": "workspace:*",
+    "@velvetai/tool-registry": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",

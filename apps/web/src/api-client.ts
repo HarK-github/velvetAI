@@ -6,6 +6,7 @@ import {
   BookingHoldResponse,
   ProblemDetails,
 } from "@velvetai/contracts";
+import { isAuth0Configured, isMockAuthEnabled, computeAuthDiagnostic } from "./lib/auth-config.js";
 
 export interface ApiClientConfig {
   baseUrl?: string;
@@ -35,15 +36,65 @@ export class VelvetApiClient {
     this.authToken = config?.authToken;
   }
 
+  private tokenProvider?: () => Promise<string | undefined>;
+
   setAuthToken(token: string): void {
     this.authToken = token;
+    computeAuthDiagnostic(token);
+  }
+
+  getAuthToken(): string | undefined {
+    return this.authToken;
+  }
+
+  setTokenProvider(provider: () => Promise<string | undefined>): void {
+    this.tokenProvider = provider;
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    let token = this.authToken;
+
+    if (this.tokenProvider) {
+      try {
+        const acquired = await this.tokenProvider();
+        if (acquired) {
+          token = acquired;
+          this.authToken = acquired;
+          computeAuthDiagnostic(acquired);
+        }
+      } catch (_err) {
+        if (isAuth0Configured()) {
+          throw new ApiError(401, {
+            type: "https://api.velvetai.example/problems/unauthorized",
+            title: "Authentication Failed",
+            status: 401,
+            code: "auth_token_acquisition_failed",
+            detail: "Failed to acquire Auth0 access token. Please sign in again.",
+          });
+        }
+      }
+    }
+
     const headers = new Headers(options.headers);
     headers.set("content-type", "application/json");
-    if (this.authToken) {
-      headers.set("authorization", `Bearer ${this.authToken}`);
+
+    if (token) {
+      headers.set("authorization", `Bearer ${token}`);
+    } else if (isAuth0Configured()) {
+      // Never fall back to dev token when Auth0 is configured
+      throw new ApiError(401, {
+        type: "https://api.velvetai.example/problems/unauthorized",
+        title: "Unauthorized",
+        status: 401,
+        code: "unauthorized",
+        detail: "Authentication required. Please sign in with Auth0.",
+      });
+    } else if (isMockAuthEnabled()) {
+      // Explicit offline test mode only
+      headers.set(
+        "authorization",
+        "Bearer test-token:01932b10-0000-7000-8000-000000000002:01932b10-0000-7000-8000-000000000001:BUYER:1",
+      );
     }
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
@@ -164,6 +215,56 @@ export class VelvetApiClient {
     providerCaptureId?: string;
   }> {
     return this.request(`/v1/operations/${operationId}`);
+  }
+
+  async prepareBooking(params: {
+    serviceId: string;
+    locationId: string;
+    startsAt: string;
+    timeZone: string;
+    customer: { email: string; displayName?: string };
+    note?: string;
+  }): Promise<{
+    bookingId: string;
+    status: "HELD";
+    holdExpiresAt: string;
+    version: number;
+    intent: string;
+    approvalLocator: string;
+    terms: any;
+  }> {
+    return this.request("/v1/bookings/prepare", {
+      method: "POST",
+      headers: {
+        "idempotency-key": `prep-${Date.now()}-${Math.random()}`,
+      },
+      body: JSON.stringify(params),
+    });
+  }
+
+  async commitBooking(params: {
+    intent: string;
+    confirmation: string;
+    idempotencyKey?: string;
+  }): Promise<{
+    bookingId: string;
+    status: string;
+    version: number;
+  }> {
+    return this.request("/v1/bookings/commit", {
+      method: "POST",
+      headers: {
+        "idempotency-key": params.idempotencyKey || `commit-${Date.now()}-${Math.random()}`,
+      },
+      body: JSON.stringify({
+        intent: params.intent,
+        confirmation: params.confirmation,
+      }),
+    });
+  }
+
+  async getBooking(bookingId: string): Promise<any> {
+    return this.request(`/v1/bookings/${bookingId}`);
   }
 }
 

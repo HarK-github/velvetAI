@@ -6,11 +6,11 @@ import {
   createDatabaseClient,
   migrateToLatest,
   withTenantTransaction,
+  getTestDatabaseUrl,
 } from "@velvetai/db";
 import { HoldReaperProcessor } from "../hold-reaper.js";
 
-const TEST_DB_URL =
-  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+const TEST_DB_URL = getTestDatabaseUrl();
 
 describe("Hold Reaper Processor (Requirement 6: Concurrent Replicas & Crash Recovery)", () => {
   let db: Kysely<Database>;

@@ -25,6 +25,7 @@ export class CatalogService {
         .innerJoin("service_versions", "service_versions.id", "services.current_version_id")
         .where("services.tenant_id", "=", tenantId)
         .where("services.status", "=", "ACTIVE")
+        .where("services.current_version_id", "is not", null)
         .select([
           "services.id as service_id",
           "services.tenant_id as tenant_id",
@@ -46,11 +47,20 @@ export class CatalogService {
         .orderBy("service_versions.name", "asc")
         .execute();
 
-      return rows.map((r) => {
+      // Authoritative deduplication by ServiceId:
+      // Guarantees strictly unique service IDs in result, preserving distinct services with identical names.
+      const serviceMap = new Map<ServiceId, ServiceDTO>();
+
+      for (const r of rows) {
+        const sId = r.service_id as ServiceId;
+        if (serviceMap.has(sId)) {
+          continue;
+        }
+
         const version: ServiceVersionDTO = {
           id: r.version_id as ServiceVersionId,
           tenantId: r.tenant_id as TenantId,
-          serviceId: r.service_id as ServiceId,
+          serviceId: sId,
           version: r.version_num,
           name: r.version_name,
           description: r.version_description ?? undefined,
@@ -64,14 +74,16 @@ export class CatalogService {
           publishedAt: new Date(r.published_at).toISOString(),
         };
 
-        return {
-          id: r.service_id as ServiceId,
+        serviceMap.set(sId, {
+          id: sId,
           tenantId: r.tenant_id as TenantId,
           status: r.service_status as "ACTIVE" | "DRAFT" | "ARCHIVED",
           currentVersionId: r.current_version_id as ServiceVersionId,
           versions: [version],
-        };
-      });
+        });
+      }
+
+      return Array.from(serviceMap.values());
     });
   }
 

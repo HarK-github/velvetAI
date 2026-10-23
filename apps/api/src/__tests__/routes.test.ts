@@ -6,12 +6,12 @@ import {
   migrateToLatest,
   withTenantTransaction,
   Database,
+  getTestDatabaseUrl,
 } from "@velvetai/db";
 import { Kysely } from "kysely";
 import { buildApp } from "../app.js";
 
-const TEST_DB_URL =
-  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+const TEST_DB_URL = getTestDatabaseUrl();
 
 const DEV_TENANT_ID = "01932b10-0000-7000-8000-000000000001";
 const DEV_USER_ID = "01932b10-0000-7000-8000-000000000002";
@@ -149,9 +149,11 @@ describe("API Frontend Endpoints & Middleware", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.total).toBeGreaterThanOrEqual(1);
-    expect(body.services[0].versions[0].name).toBe("Executive Haircut & Beard Sculpt");
-    expect(body.services[0].versions[0].priceMinor).toBe("7500");
-    expect(body.services[0].versions[0].baseDepositMinor).toBe("2000");
+    const service = body.services.find((s: { id: string }) => s.id === DEV_SERVICE_ID);
+    expect(service).toBeDefined();
+    expect(service.versions[0].name).toBe("Executive Haircut & Beard Sculpt");
+    expect(service.versions[0].priceMinor).toBe("7500");
+    expect(service.versions[0].baseDepositMinor).toBe("2000");
   });
 
   it("GET /v1/availability returns conflict-free slots from real PostgreSQL resources", async () => {

@@ -12,14 +12,23 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@ai-sdk/google": "4.0.102",
     "@fastify/cors": "^10.0.2",
     "@fastify/sensible": "^6.0.3",
+    "@modelcontextprotocol/fastify": "2.0.1",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "@velvetai/application": "workspace:*",
     "@velvetai/contracts": "workspace:*",
     "@velvetai/db": "workspace:*",
     "@velvetai/integrations-paypal": "workspace:*",
     "@velvetai/observability": "workspace:*",
-    "fastify": "^5.2.1"
+    "@velvetai/tool-registry": "workspace:*",
+    "ai": "7.0.148",
+    "fastify": "^5.2.1",
+    "jose": "6.2.13",
+    "kysely": "0.27.6",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",

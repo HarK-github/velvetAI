@@ -1,6 +1,6 @@
 # velvetAI Sprint Epic 4 Prompt
 
-```text
+````text
 Act as the Lead Agentic Systems Engineer, OAuth Security Engineer, and Product Implementation Lead for velvetAI.
 
 Repository root: current working directory
@@ -187,7 +187,7 @@ Mount:
 
 ```text
 POST /mcp
-```
+````
 
 Required protocol behavior:
 
@@ -234,6 +234,7 @@ MCP budgets:
 - Maximum input/output sizes from spec.
 
 # ==================================================
+
 W3 — SHARED TOOL EXECUTION BRIDGE
 
 The existing ToolRegistry remains the source of tool metadata.
@@ -284,6 +285,7 @@ Every transport must invoke the same BookingService/PaymentService methods and d
 Do not duplicate business logic in MCP, WebMCP or Ask AI adapters.
 
 # ==================================================
+
 W4 — MCP TWO-PHASE HUMAN APPROVAL
 
 prepare_booking.v1 shall:
@@ -292,10 +294,12 @@ prepare_booking.v1 shall:
 2. Resolve real DB-backed service/availability.
 3. Create the hold and immutable snapshot.
 4. Return:
-  - opaque hold/intent reference
-  - approval interaction URL
-  - exact non-sensitive terms
-  - expiry
+
+- opaque hold/intent reference
+- approval interaction URL
+- exact non-sensitive terms
+- expiry
+
 5. Never return a raw confirmation token to the model.
 
 MCP approval flow:
@@ -321,6 +325,7 @@ If the official SDK does not support the desired approval pattern cleanly:
 - Do not invent a proprietary response that is mislabeled standard MCP.
 
 # ==================================================
+
 W5 — IN-PAGE ASK AI WITH GEMINI
 
 Use Vercel AI SDK with:
@@ -398,18 +403,13 @@ Add:
 Do not commit or print the Gemini key.
 
 # ==================================================
+
 W6 — WEBMCP PROGRESSIVE ENHANCEMENT
 
 Use:
 
 ```text
 document.modelContext
-```
-
-Do not use:
-
-```text
-navigator.modelContext
 ```
 
 Feature detect:
@@ -456,6 +456,7 @@ Fallback:
 - UI clearly indicates WebMCP availability for judge diagnostics without presenting it as an error.
 
 # ==================================================
+
 W7 — SECURITY MIDDLEWARE AND ABUSE LAB
 
 Runtime enforcement:
@@ -500,6 +501,7 @@ Every Critical and High assertion must be deterministic.
 Model refusal alone is not a passing control.
 
 # ==================================================
+
 W8 — TRANSPORT EQUIVALENCE TESTS
 
 For the same authenticated buyer and inputs, verify:
@@ -532,6 +534,7 @@ Required tests:
 - cancellation preparation.
 
 # ==================================================
+
 W9 — USER EXPERIENCE
 
 Ask AI drawer shall:
@@ -551,6 +554,7 @@ Ask AI drawer shall:
 Do not attempt final Bryntum integration in this epic.
 
 # ==================================================
+
 W10 — AUTH0 AND GEMINI MANUAL SETUP GATES
 
 Create setup documentation before asking for credentials.
@@ -575,6 +579,7 @@ Gemini real E2E status shall remain BLOCKED/NOT_RUN until:
 Never request that the user paste credentials into chat.
 
 # ==================================================
+
 OUT OF SCOPE
 
 Do not implement:
@@ -597,6 +602,7 @@ Do not implement:
 - Autonomous commit without human approval.
 
 # ==================================================
+
 DEFINITION OF DONE
 
 Epic 4 is complete only when:
@@ -635,6 +641,7 @@ Stop after Epic 4.
 Do not begin Epic 5.
 
 # ==================================================
+
 FINAL HANDOFF
 
 Report:
@@ -663,4 +670,3 @@ Do not hide failures or skipped checks.
 ```
 
 ```
-

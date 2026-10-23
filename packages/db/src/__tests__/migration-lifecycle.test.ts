@@ -305,6 +305,18 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
   });
 
   it("4. Migration Rollback and Re-apply Proof: verifies down() and up() idempotency", async () => {
+    // Rollback migration 0005
+    await migrateDown(adminDb);
+
+    // After rollback of 0005, self_membership_select_policy should be absent
+    const rolledBackPolicy = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM pg_policies
+        WHERE tablename = 'memberships' AND policyname = 'self_membership_select_policy'
+      ) as exists
+    `.execute(adminDb);
+    expect(rolledBackPolicy.rows[0]?.exists).toBe(false);
+
     // Rollback migration 0004
     await migrateDown(adminDb);
 
@@ -361,6 +373,14 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     `.execute(adminDb);
     expect(restoredOps.rows[0]?.exists).toBe(true);
 
+    const restoredPolicy = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM pg_policies
+        WHERE tablename = 'memberships' AND policyname = 'self_membership_select_policy'
+      ) as exists
+    `.execute(adminDb);
+    expect(restoredPolicy.rows[0]?.exists).toBe(true);
+
     // Verify CHECK constraint restored
     const checkConstraint = await sql<{ conname: string }>`
       SELECT conname
@@ -368,7 +388,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       WHERE conname = 'chk_resource_claim_blocking_state'
     `.execute(adminDb);
     expect(checkConstraint.rows.length).toBe(1);
-  });
+  }, 30_000);
 
   it("5. Payment core ledger migration 0003 schema, constraints and append-only rules proof", async () => {
     // 1. Verify CHECK constraints for payment state machines & payload limits
@@ -601,8 +621,13 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
   });
 
   it("7. Canonical RLS setting consistency: all tenant policies inspect app.tenant_id", async () => {
-    const policies = await sql<{ tablename: string; qual: string; with_check: string }>`
-      SELECT tablename, qual, with_check
+    const policies = await sql<{
+      tablename: string;
+      policyname: string;
+      qual: string;
+      with_check: string;
+    }>`
+      SELECT tablename, policyname, qual, with_check
       FROM pg_policies
       WHERE schemaname = 'public'
     `.execute(adminDb);
@@ -610,6 +635,11 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     expect(policies.rows.length).toBeGreaterThan(0);
 
     for (const row of policies.rows) {
+      if (row.policyname === "self_membership_select_policy") {
+        expect(row.qual).toContain("app.user_id");
+        expect(row.with_check ?? "").toBe("");
+        continue;
+      }
       if (row.qual) {
         expect(row.qual).toContain("app.tenant_id");
         expect(row.qual).not.toContain("app.current_tenant_id");

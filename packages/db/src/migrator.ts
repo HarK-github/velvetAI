@@ -4,6 +4,7 @@ import * as initialSchema from "./migrations/0001_initial_schema.js";
 import * as slotClaimRlsHardening from "./migrations/0002_slot_claim_rls_hardening.js";
 import * as paymentCoreLedger from "./migrations/0003_payment_core_ledger.js";
 import * as outboxLeaseHardening from "./migrations/0004_outbox_lease_hardening.js";
+import * as selfMembershipRls from "./migrations/0005_self_membership_rls.js";
 
 class StaticMigrationProvider implements MigrationProvider {
   async getMigrations(): Promise<Record<string, Migration>> {
@@ -23,6 +24,10 @@ class StaticMigrationProvider implements MigrationProvider {
       "0004_outbox_lease_hardening": {
         up: outboxLeaseHardening.up,
         down: outboxLeaseHardening.down,
+      },
+      "0005_self_membership_rls": {
+        up: selfMembershipRls.up,
+        down: selfMembershipRls.down,
       },
     };
   }

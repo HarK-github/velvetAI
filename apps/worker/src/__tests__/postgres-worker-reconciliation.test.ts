@@ -6,6 +6,7 @@ import {
   migrateToLatest,
   withTenantTransaction,
   Database,
+  getTestDatabaseUrl,
 } from "@velvetai/db";
 import {
   TenantId,
@@ -37,8 +38,7 @@ import { ReconciliationProcessor } from "../reconciliation-processor.js";
 import { OutboxProcessor, InMemoryOutboxStore } from "../outbox-processor.js";
 import { OutboxWorker } from "../index.js";
 
-const TEST_DB_URL =
-  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+const TEST_DB_URL = getTestDatabaseUrl();
 
 class MockPaymentPort implements PaymentPort {
   captureStatus = "COMPLETED";

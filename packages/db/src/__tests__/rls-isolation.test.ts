@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "node:crypto";
 import { sql, Kysely } from "kysely";
 import { Database } from "../schema.js";
-import { withTenantTransaction } from "../index.js";
+import { withTenantTransaction, withUserTransaction } from "../index.js";
 import {
   setupTestDatabase,
   createRestrictedSingleConnectionDb,
@@ -155,5 +155,112 @@ describe("RLS Pool Leakage & Isolation Tests (Restricted Role, Single Connection
     });
 
     expect(checkViolation).toBe(true);
+  });
+
+  it("7. User A cannot read User B memberships under self-membership RLS policy", async () => {
+    // Under User A context, only User A's membership is returned
+    await withUserTransaction(singleDb, tenantA.actorUserId, async (trx) => {
+      const rows = await trx.selectFrom("memberships").selectAll().execute();
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      expect(rows.every((m) => m.user_id === tenantA.actorUserId)).toBe(true);
+      expect(rows.some((m) => m.user_id === tenantB.actorUserId)).toBe(false);
+    });
+
+    // Under User B context, only User B's membership is returned
+    await withUserTransaction(singleDb, tenantB.actorUserId, async (trx) => {
+      const rows = await trx.selectFrom("memberships").selectAll().execute();
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      expect(rows.every((m) => m.user_id === tenantB.actorUserId)).toBe(true);
+      expect(rows.some((m) => m.user_id === tenantA.actorUserId)).toBe(false);
+    });
+  });
+
+  it("8. Missing app.user_id exposes zero memberships", async () => {
+    // When neither app.tenant_id nor app.user_id is set, direct select exposes zero rows
+    const memberships = await singleDb.selectFrom("memberships").selectAll().execute();
+    expect(memberships.length).toBe(0);
+
+    const setting = await sql<{
+      val: string | null;
+    }>`SELECT current_setting('app.user_id', true) AS val`.execute(singleDb);
+    expect(setting.rows[0]?.val ?? "").toBe("");
+  });
+
+  it("9. app.user_id is cleared after commit/rollback on pool size one", async () => {
+    // A: Successful commit
+    await withUserTransaction(singleDb, tenantA.actorUserId, async (trx) => {
+      const rows = await trx.selectFrom("memberships").selectAll().execute();
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+    });
+
+    // Context must be empty on next query
+    let setting = await sql<{
+      val: string | null;
+    }>`SELECT current_setting('app.user_id', true) AS val`.execute(singleDb);
+    expect(setting.rows[0]?.val ?? "").toBe("");
+    let zeroCheck = await singleDb.selectFrom("memberships").selectAll().execute();
+    expect(zeroCheck.length).toBe(0);
+
+    // B: Transaction rollback
+    try {
+      await withUserTransaction(singleDb, tenantA.actorUserId, async (_trx) => {
+        throw new Error("intentional rollback for user context");
+      });
+    } catch {
+      // expected
+    }
+
+    // Context must still be empty on next query
+    setting = await sql<{
+      val: string | null;
+    }>`SELECT current_setting('app.user_id', true) AS val`.execute(singleDb);
+    expect(setting.rows[0]?.val ?? "").toBe("");
+    zeroCheck = await singleDb.selectFrom("memberships").selectAll().execute();
+    expect(zeroCheck.length).toBe(0);
+  });
+
+  it("10. Self-membership policy cannot insert, update, or delete memberships", async () => {
+    await withUserTransaction(singleDb, tenantA.actorUserId, async (trx) => {
+      // 1. SELECT is allowed
+      const rows = await trx.selectFrom("memberships").selectAll().execute();
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+
+      // 2. UPDATE is not authorized by FOR SELECT policy (0 rows updated)
+      const updateResult = await trx
+        .updateTable("memberships")
+        .set({ role: "SCHEDULER" })
+        .where("user_id", "=", tenantA.actorUserId)
+        .executeTakeFirst();
+      expect(updateResult.numUpdatedRows).toBe(0n);
+
+      // 3. DELETE is not authorized by FOR SELECT policy (0 rows deleted)
+      const deleteResult = await trx
+        .deleteFrom("memberships")
+        .where("user_id", "=", tenantA.actorUserId)
+        .executeTakeFirst();
+      expect(deleteResult.numDeletedRows).toBe(0n);
+
+      // 4. INSERT is not authorized by FOR SELECT policy (throws 42501 RLS violation)
+      let insertRejected = false;
+      try {
+        await trx
+          .insertInto("memberships")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: tenantA.tenantId,
+            user_id: tenantA.actorUserId,
+            role: "BUYER",
+            role_version: 1,
+            revoked_at: null,
+          })
+          .execute();
+      } catch (err: unknown) {
+        const pgErr = err as { code?: string };
+        if (pgErr.code === "42501") {
+          insertRejected = true;
+        }
+      }
+      expect(insertRejected).toBe(true);
+    });
   });
 });

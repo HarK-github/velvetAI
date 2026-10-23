@@ -60,6 +60,29 @@ export class ImmutabilityViolationError extends DomainError {
   }
 }
 
+export class MembershipRevokedError extends DomainError {
+  constructor(message = "Membership has been revoked") {
+    super(message, "membership_revoked", 403);
+  }
+}
+
+export class StaleRoleVersionError extends DomainError {
+  constructor(message = "Stale role version; permissions have changed") {
+    super(message, "stale_role_version", 403);
+  }
+}
+
+export class InsufficientScopeError extends DomainError {
+  constructor(requiredScopes: string[], presentScopes: string[] = []) {
+    super(
+      `Insufficient scope. Required: ${requiredScopes.join(", ")}. Present: ${presentScopes.join(", ")}`,
+      "insufficient_scope",
+      403,
+      { requiredScopes, presentScopes },
+    );
+  }
+}
+
 export class OverRefundError extends DomainError {
   constructor(message = "Cumulative refund amount cannot exceed captured deposit") {
     super(message, "over_refund_prohibited", 422);

@@ -8,3 +8,4 @@ export * from "./idempotency.js";
 export * from "./outbox.js";
 export * from "./audit.js";
 export * from "./errors.js";
+export * from "./money.js";

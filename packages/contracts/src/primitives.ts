@@ -234,3 +234,56 @@ export const roleSchema = z.enum([
   "ABUSE_LAB",
 ]);
 export type Role = z.infer<typeof roleSchema>;
+
+// Fine-grained OAuth / MCP scopes per Specification Section E and Sprint Epic 4
+export const scopeSchema = z.enum([
+  "booking:read",
+  "booking:quote",
+  "booking:prepare",
+  "booking:commit",
+  "booking:cancel",
+  "merchant:schedule",
+  "merchant:refund",
+]);
+export type Scope = z.infer<typeof scopeSchema>;
+
+export const DEFAULT_ROLE_SCOPES: Record<Role, Scope[]> = {
+  BUYER: ["booking:read", "booking:quote", "booking:prepare", "booking:commit", "booking:cancel"],
+  SCHEDULER: [
+    "booking:read",
+    "booking:quote",
+    "booking:prepare",
+    "booking:commit",
+    "booking:cancel",
+    "merchant:schedule",
+  ],
+  MANAGER: [
+    "booking:read",
+    "booking:quote",
+    "booking:prepare",
+    "booking:commit",
+    "booking:cancel",
+    "merchant:schedule",
+    "merchant:refund",
+  ],
+  OWNER: [
+    "booking:read",
+    "booking:quote",
+    "booking:prepare",
+    "booking:commit",
+    "booking:cancel",
+    "merchant:schedule",
+    "merchant:refund",
+  ],
+  SUPPORT: ["booking:read", "booking:cancel", "merchant:refund"],
+  WORKER: ["booking:read", "merchant:schedule"],
+  ABUSE_LAB: [
+    "booking:read",
+    "booking:quote",
+    "booking:prepare",
+    "booking:commit",
+    "booking:cancel",
+    "merchant:schedule",
+    "merchant:refund",
+  ],
+};

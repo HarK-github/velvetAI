@@ -5,11 +5,12 @@ import {
   createDatabaseClient,
   migrateToLatest,
   withTenantTransaction,
+  getTestDatabaseUrl,
+  assertSafeTestDatabaseTeardown,
 } from "../index.js";
 import { TenantId, LocationId, ServiceId, ResourceId, UserId } from "@velvetai/contracts";
 
-export const TEST_DB_URL =
-  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+export const TEST_DB_URL = getTestDatabaseUrl();
 
 export async function setupTestDatabase(): Promise<Kysely<Database>> {
   const db = createDatabaseClient(TEST_DB_URL, { min: 2, max: 20 });
@@ -47,6 +48,7 @@ export async function createRestrictedSingleConnectionDb(
   const client = createDatabaseClient(parsedUrl.toString(), { min: 1, max: 1 });
   const originalDestroy = client.destroy.bind(client);
   client.destroy = async () => {
+    assertSafeTestDatabaseTeardown(TEST_DB_URL);
     await originalDestroy();
     try {
       await sql.raw(`DROP ROLE IF EXISTS ${ephemeralRole};`).execute(effectiveAdmin);

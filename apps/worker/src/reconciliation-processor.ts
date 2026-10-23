@@ -34,10 +34,7 @@ export class ReconciliationProcessor {
       query = query.where("tenant_id", "=", tenantId);
     }
 
-    const ops = await query
-      .selectAll()
-      .limit(limit)
-      .execute();
+    const ops = await query.selectAll().limit(limit).execute();
 
     let reconciled = 0;
     let failed = 0;

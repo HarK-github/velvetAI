@@ -397,6 +397,7 @@ export class BookingService {
         intent: signedIntent,
         approvalLocator: `/v1/booking-approvals/${interactionLocator}`,
         interactionToken,
+        requiresHumanConfirmation: true as const,
       };
     });
   }
@@ -630,32 +631,70 @@ export class BookingService {
         );
       }
 
-      // 3. Lock and verify buyer confirmation record per Section D.1/D.6
-      const confTokenHash = sha256Hex(input.confirmation);
-      const confirmation = await trx
-        .selectFrom("buyer_confirmations")
-        .where("token_hash", "=", confTokenHash)
-        .where("tenant_id", "=", tenantId)
-        .selectAll()
-        .forUpdate()
-        .executeTakeFirst();
+      // 3. Lock and verify buyer confirmation record per Section D.1/D.6 and Audit Section 5
+      let confirmation;
+      if (input.confirmation) {
+        // Direct / explicit confirmation token path (e.g., from browser confirm endpoint)
+        const confTokenHash = sha256Hex(input.confirmation);
+        confirmation = await trx
+          .selectFrom("buyer_confirmations")
+          .where("token_hash", "=", confTokenHash)
+          .where("tenant_id", "=", tenantId)
+          .selectAll()
+          .forUpdate()
+          .executeTakeFirst();
 
-      if (!confirmation || confirmation.booking_id !== claims.hold_id) {
-        throw new DomainError(
-          "Invalid buyer confirmation token or confirmation does not match booking hold",
-          "INVALID_CONFIRMATION",
-          400,
-        );
+        if (!confirmation || confirmation.booking_id !== claims.hold_id) {
+          throw new DomainError(
+            "Invalid buyer confirmation token or confirmation does not match booking hold",
+            "INVALID_CONFIRMATION",
+            400,
+          );
+        }
+
+        // Constant-time token hash verification
+        const providedHashBuf = Buffer.from(confTokenHash, "hex");
+        const storedHashBuf = Buffer.from(confirmation.token_hash, "hex");
+        if (
+          providedHashBuf.length !== storedHashBuf.length ||
+          !crypto.timingSafeEqual(providedHashBuf, storedHashBuf)
+        ) {
+          throw new DomainError("Invalid buyer confirmation token", "INVALID_CONFIRMATION", 400);
+        }
+      } else {
+        // Preferred Agent Pattern (Audit Section 5): MCP agent / model provides only intent and idempotency key;
+        // Server resolves and validates confirmation record bound to claims.hold_id internally.
+        confirmation = await trx
+          .selectFrom("buyer_confirmations")
+          .where("booking_id", "=", claims.hold_id)
+          .where("tenant_id", "=", tenantId)
+          .selectAll()
+          .forUpdate()
+          .executeTakeFirst();
+
+        if (!confirmation) {
+          throw new DomainError(
+            "No confirmation record found for booking hold",
+            "CONFIRMATION_NOT_FOUND",
+            404,
+          );
+        }
+
+        // Check whether browser confirmation actually occurred (i.e. token_hash is not the pending placeholder)
+        const pendingPlaceholderHash = sha256Hex(`pending_${confirmation.interaction_locator}`);
+        if (confirmation.token_hash === pendingPlaceholderHash) {
+          throw new DomainError(
+            "Approval incomplete: Human buyer confirmation has not yet occurred",
+            "APPROVAL_INCOMPLETE",
+            400,
+          );
+        }
       }
 
-      // Constant-time token hash verification
-      const providedHashBuf = Buffer.from(confTokenHash, "hex");
-      const storedHashBuf = Buffer.from(confirmation.token_hash, "hex");
-      if (
-        providedHashBuf.length !== storedHashBuf.length ||
-        !crypto.timingSafeEqual(providedHashBuf, storedHashBuf)
-      ) {
-        throw new DomainError("Invalid buyer confirmation token", "INVALID_CONFIRMATION", 400);
+      // Verify expiration
+      const now = new Date();
+      if (confirmation.expires_at.getTime() <= now.getTime()) {
+        throw new DomainError("Buyer confirmation has expired", "CONFIRMATION_EXPIRED", 410);
       }
 
       if (confirmation.consumed_at) {

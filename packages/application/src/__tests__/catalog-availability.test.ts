@@ -6,18 +6,13 @@ import {
   migrateToLatest,
   withTenantTransaction,
   Database,
+  getTestDatabaseUrl,
 } from "@velvetai/db";
 import { CatalogService } from "../catalog-service.js";
 import { AvailabilityService } from "../availability-service.js";
-import {
-  TenantId,
-  ServiceId,
-  LocationId,
-  ResourceId,
-} from "@velvetai/contracts";
+import { TenantId, ServiceId, LocationId, ResourceId } from "@velvetai/contracts";
 
-const TEST_DB_URL =
-  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+const TEST_DB_URL = getTestDatabaseUrl();
 
 describe("W2: PostgreSQL Catalog and Availability Integration", () => {
   let db: Kysely<Database>;
@@ -209,6 +204,64 @@ describe("W2: PostgreSQL Catalog and Availability Integration", () => {
       locationId: locationA,
     });
     expect(crossAvailability.slots.length).toBe(0);
+  });
+
+  it("4b. Duplicate-query & version isolation: listServices returns strictly unique service IDs for published versions", async () => {
+    // Add a second service with the exact same display name ("Signature Precision Cut")
+    const serviceA2 = crypto.randomUUID() as ServiceId;
+    const serviceA2V1 = crypto.randomUUID();
+
+    await withTenantTransaction(db, tenantA, async (trx) => {
+      await trx
+        .insertInto("services")
+        .values({
+          id: serviceA2,
+          tenant_id: tenantA,
+          status: "ACTIVE",
+          current_version_id: null,
+        })
+        .execute();
+
+      await trx
+        .insertInto("service_versions")
+        .values({
+          id: serviceA2V1,
+          tenant_id: tenantA,
+          service_id: serviceA2,
+          version: 1,
+          name: "Signature Precision Cut", // Same display name as serviceA
+          description: "Distinct tier cut",
+          duration_minutes: 45,
+          price_minor: "9500",
+          base_deposit_minor: "2500",
+          currency: "USD",
+          cancellation_policy_id: crypto.randomUUID(),
+        })
+        .execute();
+
+      await trx
+        .updateTable("services")
+        .set({ current_version_id: serviceA2V1 })
+        .where("id", "=", serviceA2)
+        .execute();
+    });
+
+    const services = await catalogService.listServices(tenantA);
+    // Both legitimate distinct services are returned despite identical display names
+    const matchingByName = services.filter(
+      (s) => s.versions?.[0]?.name === "Signature Precision Cut",
+    );
+    expect(matchingByName.length).toBe(2);
+
+    // Each service ID is strictly unique
+    const uniqueIds = new Set(services.map((s) => s.id));
+    expect(uniqueIds.size).toBe(services.length);
+
+    // Only current published version is returned
+    for (const s of services) {
+      expect(s.versions?.length).toBe(1);
+      expect(s.currentVersionId).toBe(s.versions?.[0]?.id);
+    }
   });
 
   it("5. Availability removes held and confirmed claims (half-open intervals)", async () => {

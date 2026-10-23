@@ -16,7 +16,7 @@ export const envSchema = z.object({
   // Redis
   REDIS_URL: z.string().default("redis://localhost:6379"),
 
-  // OIDC
+  // OIDC & Auth0
   OIDC_ISSUER: z.string().default("https://auth.example.test"),
   OIDC_AUDIENCE: z.string().default("velvetai-api"),
   OIDC_MOCK_ENABLED: z
@@ -24,6 +24,24 @@ export const envSchema = z.object({
     .transform((val) => val === "true" || val === "1")
     .or(z.boolean())
     .default(true),
+  AUTH0_ISSUER: z.string().default("https://auth.example.test/"),
+  AUTH0_AUDIENCE: z.string().default("https://velvetai.example/api"),
+  AUTH0_JWKS_URI: z.string().optional(),
+
+  // AI Provider & Gemini
+  AI_PROVIDER: z.enum(["gemini", "fake"]).default("fake"),
+  GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
+  AI_MODEL: z.string().default("gemini-2.5-flash"),
+
+  // Host & Origin Security Allowlist
+  ALLOWED_HOSTS: z
+    .string()
+    .default(
+      "localhost,localhost:80,localhost:3000,127.0.0.1,127.0.0.1:80,127.0.0.1:3000,localhost:5173,127.0.0.1:5173,velvetai-api.onrender.com",
+    ),
+  ALLOWED_ORIGINS: z
+    .string()
+    .default("http://localhost:5173,http://localhost:3000,https://velvetai.onrender.com"),
 
   // Cryptography & Signing
   INTENT_SIGNING_KEY: z

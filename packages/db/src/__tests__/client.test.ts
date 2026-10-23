@@ -1,9 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { createDatabaseClient, createMigrator } from "../index.js";
+import { createDatabaseClient, createMigrator, getTestDatabaseUrl } from "../index.js";
 
 describe("Database Client & Migrations", () => {
-  const testUrl =
-    process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+  const testUrl = getTestDatabaseUrl();
 
   it("instantiates Kysely client with postgres dialect", () => {
     const db = createDatabaseClient(testUrl);

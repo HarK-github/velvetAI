@@ -4,16 +4,31 @@ import { createLogger, validateEnv } from "@velvetai/observability";
 import { createProblemDetails, DomainError } from "@velvetai/contracts";
 import crypto from "node:crypto";
 
-import { parseJsonRejectingDuplicates } from "@velvetai/application";
-import { servicesRoutes } from "./routes/services.js";
-import { availabilityRoutes } from "./routes/availability.js";
-import { bookingsRoutes } from "./routes/bookings.js";
+import {
+  parseJsonRejectingDuplicates,
+  ModelProviderPort,
+  CatalogService,
+  AvailabilityService,
+  BookingService,
+} from "@velvetai/application";
+import { servicesRoutes, setCatalogService } from "./routes/services.js";
+import { availabilityRoutes, setAvailabilityService } from "./routes/availability.js";
+import { bookingsRoutes, setBookingService } from "./routes/bookings.js";
 import { riskRoutes } from "./routes/risk.js";
-import { paymentsRoutes, webhookRoutes } from "./routes/payments.js";
+import { paymentsRoutes, webhookRoutes, paymentService } from "./routes/payments.js";
+import { mcpRoutes, setMcpDb } from "./routes/mcp.js";
+import { aiRoutes } from "./routes/ai.js";
 import { registerAuth } from "./plugins/auth.js";
 import { registerIdempotency } from "./plugins/idempotency.js";
+import { Kysely } from "kysely";
+import { Database } from "@velvetai/db";
 
-export function buildApp(): FastifyInstance {
+export interface AppOptions {
+  modelProvider?: ModelProviderPort;
+  db?: Kysely<Database>;
+}
+
+export function buildApp(options: AppOptions = {}): FastifyInstance {
   const env = validateEnv();
   const logger = createLogger();
 
@@ -23,6 +38,22 @@ export function buildApp(): FastifyInstance {
       const headerReqId = req.headers["x-request-id"];
       return typeof headerReqId === "string" ? headerReqId : crypto.randomUUID();
     },
+  });
+
+  // Global Transport Security Headers per Section 11
+  app.addHook("onSend", async (_request, reply) => {
+    if (!reply.hasHeader("x-content-type-options")) {
+      reply.header("x-content-type-options", "nosniff");
+    }
+    if (!reply.hasHeader("x-frame-options")) {
+      reply.header("x-frame-options", "DENY");
+    }
+    if (!reply.hasHeader("referrer-policy")) {
+      reply.header("referrer-policy", "strict-origin-when-cross-origin");
+    }
+    if (!reply.hasHeader("permissions-policy")) {
+      reply.header("permissions-policy", "tools=(self)");
+    }
   });
 
   // Secure Content-Type Parser: Reject duplicate JSON keys before standard object parsing
@@ -53,6 +84,18 @@ export function buildApp(): FastifyInstance {
   registerAuth(app);
   registerIdempotency(app);
 
+  // Root info endpoint
+  app.get("/", async () => {
+    return {
+      name: "velvetAI API",
+      status: "running",
+      version: "1.0.0",
+      health: "/health/live",
+      spec: "/v1/system/spec",
+      docs: "https://velvetai.example/docs",
+    };
+  });
+
   // Health checks
   app.get("/health/live", async () => {
     return {
@@ -79,6 +122,14 @@ export function buildApp(): FastifyInstance {
     };
   });
 
+  // Inject test or custom DB into services if provided
+  if (options.db) {
+    setCatalogService(new CatalogService(options.db));
+    setAvailabilityService(new AvailabilityService(options.db));
+    setBookingService(new BookingService(options.db, paymentService));
+    setMcpDb(options.db);
+  }
+
   // Business & frontend endpoints
   app.register(servicesRoutes);
   app.register(availabilityRoutes);
@@ -86,6 +137,8 @@ export function buildApp(): FastifyInstance {
   app.register(riskRoutes);
   app.register(paymentsRoutes);
   app.register(webhookRoutes);
+  app.register(mcpRoutes);
+  app.register(aiRoutes, options);
 
   // RFC 9457 Problem Details error handler
   app.setErrorHandler((error: FastifyError | Error | unknown, request, reply) => {

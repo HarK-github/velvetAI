@@ -6,6 +6,7 @@ import {
   migrateToLatest,
   withTenantTransaction,
   Database,
+  getTestDatabaseUrl,
 } from "@velvetai/db";
 import { Kysely } from "kysely";
 import { buildApp } from "../app.js";
@@ -36,8 +37,7 @@ import {
 } from "@velvetai/contracts";
 import { setPaymentService } from "../routes/payments.js";
 
-const TEST_DB_URL =
-  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+const TEST_DB_URL = getTestDatabaseUrl();
 
 const DEV_TENANT_ID = "01932b10-0000-7000-8000-000000000001";
 const DEV_USER_ID = "01932b10-0000-7000-8000-000000000002";

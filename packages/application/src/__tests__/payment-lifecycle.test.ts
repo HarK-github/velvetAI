@@ -6,6 +6,7 @@ import {
   createDatabaseClient,
   migrateToLatest,
   withTenantTransaction,
+  getTestDatabaseUrl,
 } from "@velvetai/db";
 import {
   TenantId,
@@ -55,8 +56,7 @@ try {
   // .env may not exist in CI or offline test runs
 }
 
-const TEST_DB_URL =
-  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+const TEST_DB_URL = getTestDatabaseUrl();
 
 /**
  * Deterministic Mock PaymentPort for testing fault injection, state branches, and ledger effects.

@@ -45,25 +45,80 @@ describe("ToolRegistry", () => {
     expect("execute" in (list[0] ?? {})).toBe(false);
   });
 
-  it("sharedToolRegistry contains Epic 2 booking tools with commit_booking disabled", async () => {
+  it("sharedToolRegistry contains Epic 4 versioned tools with consequential boundaries", async () => {
     const tools = sharedToolRegistry.list();
     const toolNames = tools.map((t) => t.name);
 
-    expect(toolNames).toContain("find_available_slots");
-    expect(toolNames).toContain("quote_booking");
-    expect(toolNames).toContain("prepare_booking");
-    expect(toolNames).toContain("get_booking");
-    expect(toolNames).toContain("prepare_cancellation");
-    expect(toolNames).toContain("commit_booking");
+    expect(toolNames).toContain("find_available_slots.v1");
+    expect(toolNames).toContain("quote_booking.v1");
+    expect(toolNames).toContain("prepare_booking.v1");
+    expect(toolNames).toContain("get_booking.v1");
+    expect(toolNames).toContain("prepare_cancellation.v1");
+    expect(toolNames).toContain("commit_booking.v1");
+    expect(toolNames).toContain("commit_cancellation.v1");
 
-    const commitTool = sharedToolRegistry.get("commit_booking", "1.0.0");
+    const commitTool = sharedToolRegistry.get("commit_booking.v1", "1.0.0");
     expect(commitTool).toBeDefined();
-    expect(commitTool?.enabled).toBe(false);
+    expect(commitTool?.enabled).toBe(true);
     expect(commitTool?.riskLevel).toBe("CONSEQUENTIAL");
     expect(commitTool?.requiresConfirmation).toBe(true);
+    expect(commitTool?.consequentialHint).toBe(true);
 
+    // Consequential commit requires booking service and valid confirmation
     await expect(
-      commitTool?.execute({ intent: "mock", confirmation: "mock", idempotency_key: "mock" }, {}),
-    ).rejects.toThrow(/Direct MCP execution of commit_booking is disabled until Epic 4/);
+      commitTool?.execute(
+        {
+          intent: "mock-intent-token-12345",
+          confirmation: "mock-conf-token-12345",
+          idempotency_key: "idemp-1",
+        },
+        {},
+      ),
+    ).rejects.toThrow(/BookingService required for commit_booking/);
+  });
+
+  it("list_services.v1 outputs canonical money wire shape with formatted prices", async () => {
+    const listTool = sharedToolRegistry.get("list_services.v1");
+    expect(listTool).toBeDefined();
+
+    const mockCatalogService = {
+      listServices: async () => [
+        {
+          id: "01932b10-0000-7000-8000-000000000010",
+          status: "ACTIVE",
+          currentVersionId: "01932b10-0000-7000-8000-000000000011",
+          versions: [
+            {
+              id: "01932b10-0000-7000-8000-000000000011",
+              name: "Signature Styling",
+              description: "Full cut and styling",
+              durationMinutes: 60,
+              priceMinor: "7500",
+              baseDepositMinor: "2000",
+              currency: "USD",
+              cancellationPolicyId: "01932b10-0000-7000-8000-000000000012",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res: any = await listTool?.execute(
+      {},
+      {
+        tenantId: "01932b10-0000-7000-8000-000000000001",
+        catalogService: mockCatalogService,
+      },
+    );
+
+    expect(res.total).toBe(1);
+    expect(res.services).toHaveLength(1);
+    const service = res.services[0];
+    expect(service.name).toBe("Signature Styling");
+    expect(service.durationMinutes).toBe(60);
+    expect(service.price).toEqual({ valueMinor: "7500", currency: "USD" });
+    expect(service.deposit).toEqual({ valueMinor: "2000", currency: "USD" });
+    expect(service.formattedPrice).toBe("$75.00");
+    expect(service.formattedDeposit).toBe("$20.00");
   });
 });

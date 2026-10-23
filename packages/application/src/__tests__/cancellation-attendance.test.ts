@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "node:crypto";
 import { sql, Kysely } from "kysely";
-import { createDatabaseClient, migrateToLatest, Database } from "@velvetai/db";
+import { createDatabaseClient, migrateToLatest, Database, getTestDatabaseUrl } from "@velvetai/db";
 import { BookingService, BookingActor } from "../booking-service.js";
 import { PaymentService } from "../payment-service.js";
 import {
@@ -148,8 +148,7 @@ class MockPaymentPort implements PaymentPort {
   }
 }
 
-const TEST_DB_URL =
-  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+const TEST_DB_URL = getTestDatabaseUrl();
 
 describe("W4: Cancellation and Attendance Minimum Lifecycle", () => {
   let db: Kysely<Database>;

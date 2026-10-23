@@ -1,27 +1,39 @@
 import fs from "node:fs";
 import path from "node:path";
 
-try {
-  if (typeof process.loadEnvFile === "function") {
-    if (fs.existsSync(".env")) {
-      process.loadEnvFile(".env");
-    } else if (fs.existsSync("../../.env")) {
-      process.loadEnvFile("../../.env");
-    } else {
-      // Traverse up to find root .env
-      let dir = process.cwd();
-      for (let i = 0; i < 5; i++) {
-        const candidate = path.join(dir, ".env");
-        if (fs.existsSync(candidate)) {
-          process.loadEnvFile(candidate);
-          break;
-        }
-        const parent = path.dirname(dir);
-        if (parent === dir) break;
-        dir = parent;
-      }
+function loadIfExists(filePath: string) {
+  if (fs.existsSync(filePath) && typeof process.loadEnvFile === "function") {
+    try {
+      process.loadEnvFile(filePath);
+    } catch {
+      // Ignore parse/read errors
     }
   }
-} catch {
-  // .env may not exist
+}
+
+// Find repository root
+let rootDir = process.cwd();
+for (let i = 0; i < 5; i++) {
+  if (fs.existsSync(path.join(rootDir, "pnpm-workspace.yaml"))) {
+    break;
+  }
+  const parent = path.dirname(rootDir);
+  if (parent === rootDir) break;
+  rootDir = parent;
+}
+
+if (process.env.NODE_ENV === "test") {
+  // 1. In test environment, load isolated test environment
+  loadIfExists(path.join(rootDir, ".env.test"));
+  const testDbUrl =
+    process.env.TEST_DATABASE_URL ||
+    process.env.DATABASE_URL ||
+    "postgresql://localhost:5432/velvetai_test?sslmode=disable";
+  process.env.DATABASE_URL = testDbUrl;
+  process.env.TEST_DATABASE_URL = testDbUrl;
+} else {
+  // 1. Load base .env
+  loadIfExists(path.join(rootDir, ".env"));
+  // 2. Load .env.local override if present
+  loadIfExists(path.join(rootDir, ".env.local"));
 }

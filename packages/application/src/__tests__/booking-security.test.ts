@@ -6,6 +6,7 @@ import {
   createDatabaseClient,
   migrateToLatest,
   withTenantTransaction,
+  getTestDatabaseUrl,
 } from "@velvetai/db";
 import {
   signBookingIntent,
@@ -28,8 +29,7 @@ import {
   CancellationPolicyId,
 } from "@velvetai/contracts";
 
-const TEST_DB_URL =
-  process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+const TEST_DB_URL = getTestDatabaseUrl();
 
 describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)", () => {
   let db: Kysely<Database>;

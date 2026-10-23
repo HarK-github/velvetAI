@@ -2,6 +2,7 @@ import {
   TenantId,
   UserId,
   Role,
+  Scope,
   Money,
   BookingId,
   PaymentIntentId,
@@ -17,6 +18,7 @@ export interface AuthenticatedPrincipal {
   roleVersion: number;
   authTime: string;
   mfaVerified: boolean;
+  scopes?: Scope[];
 }
 
 export interface AuthenticationPort {

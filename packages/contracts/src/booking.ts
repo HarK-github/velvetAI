@@ -166,6 +166,7 @@ export const prepareBookingResponseSchema = z.object({
   intent: z.string(),
   approvalLocator: z.string(),
   interactionToken: z.string(),
+  requiresHumanConfirmation: z.literal(true).default(true),
 });
 export type PrepareBookingResponse = z.infer<typeof prepareBookingResponseSchema>;
 
@@ -195,7 +196,7 @@ export type ConfirmBookingApprovalResponse = z.infer<typeof confirmBookingApprov
 export const commitBookingInputSchema = z
   .object({
     intent: z.string().min(10),
-    confirmation: z.string().min(10),
+    confirmation: z.string().min(10).optional(),
     idempotency_key: z.string().min(1),
   })
   .strict();

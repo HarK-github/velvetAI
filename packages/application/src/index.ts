@@ -9,3 +9,4 @@ export * from "./booking-service.js";
 export * from "./payment-service.js";
 export * from "./catalog-service.js";
 export * from "./availability-service.js";
+export * from "./ai/index.js";
