@@ -193,15 +193,20 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
 
     // D. Extract & validate Bearer Token
     const authHeader = request.headers.authorization;
+    const resourceMetadataUrl = `${request.protocol}://${request.host}/.well-known/oauth-protected-resource`;
+
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return reply.status(401).send({
-        jsonrpc: "2.0",
-        error: {
-          code: -32001,
-          message: "Unauthorized: Missing Bearer token in Authorization header",
-        },
-        id: requestId,
-      });
+      return reply
+        .status(401)
+        .header("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadataUrl}"`)
+        .send({
+          jsonrpc: "2.0",
+          error: {
+            code: -32001,
+            message: "Unauthorized: Missing Bearer token in Authorization header",
+          },
+          id: requestId,
+        });
     }
     const token = authHeader.slice(7).trim();
 
@@ -220,14 +225,20 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
       principal = await getAuthAdapter().authenticateBearerToken(token, requestedTenantId);
     } catch (err: unknown) {
       const error = err as Error;
-      return reply.status(401).send({
-        jsonrpc: "2.0",
-        error: {
-          code: -32001,
-          message: `Authentication failed: ${error.message}`,
-        },
-        id: requestId,
-      });
+      return reply
+        .status(401)
+        .header(
+          "WWW-Authenticate",
+          `Bearer error="invalid_token", resource_metadata="${resourceMetadataUrl}"`,
+        )
+        .send({
+          jsonrpc: "2.0",
+          error: {
+            code: -32001,
+            message: `Authentication failed: ${error.message}`,
+          },
+          id: requestId,
+        });
     }
 
     // E. Rate Limits & Concurrency Budgets (60 calls/min/client, 10 concurrent)

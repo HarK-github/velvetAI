@@ -28,8 +28,8 @@ AI_PROVIDER=gemini
 # Secret server-side API key
 GOOGLE_GENERATIVE_AI_API_KEY=AIzaSy...
 
-# Optional model selection (defaults to gemini-2.5-flash)
-AI_MODEL=gemini-2.5-flash
+# Optional model selection (defaults to gemini-3.5-flash-lite)
+AI_MODEL=gemini-3.5-flash-lite
 ```
 
 For staging / Render deployments, add `GOOGLE_GENERATIVE_AI_API_KEY` to your environment secrets in the Render dashboard.

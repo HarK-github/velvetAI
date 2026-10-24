@@ -68,11 +68,24 @@ describe("Test Database Isolation Guard", () => {
 
     try {
       process.env.TEST_DATABASE_URL = "postgresql://localhost:5432/velvetai_test";
-      expect(getTestDatabaseUrl()).toBe("postgresql://localhost:5432/velvetai_test");
+      expect(getTestDatabaseUrl("")).toBe("postgresql://localhost:5432/velvetai_test");
+      expect(getTestDatabaseUrl("api")).toBe("postgresql://localhost:5432/velvetai_test_api");
+      expect(getTestDatabaseUrl("application")).toBe(
+        "postgresql://localhost:5432/velvetai_test_application",
+      );
+      expect(getTestDatabaseUrl("worker")).toBe("postgresql://localhost:5432/velvetai_test_worker");
+      expect(getTestDatabaseUrl("abuse-lab")).toBe(
+        "postgresql://localhost:5432/velvetai_test_abuse_lab",
+      );
+      expect(getTestDatabaseUrl("migration")).toBe(
+        "postgresql://localhost:5432/velvetai_test_migration",
+      );
 
       delete process.env.TEST_DATABASE_URL;
       process.env.DATABASE_URL = "postgresql://localhost:5432/velvetai";
-      expect(() => getTestDatabaseUrl()).toThrowError(/points to development database "velvetai"/);
+      expect(() => getTestDatabaseUrl("")).toThrowError(
+        /points to development database "velvetai"/,
+      );
     } finally {
       process.env.TEST_DATABASE_URL = origTestDb;
       process.env.DATABASE_URL = origDb;

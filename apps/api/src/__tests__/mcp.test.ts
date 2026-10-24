@@ -13,6 +13,7 @@ import {
   PROTOCOL_VERSION_META_KEY,
   CLIENT_CAPABILITIES_META_KEY,
 } from "@modelcontextprotocol/server";
+import { setMcpDb } from "../routes/mcp.js";
 
 describe("W2, W3, W4: Stateless MCP 2026-07-28 Streamable HTTP & Two-Phase Human Approval", () => {
   let app: FastifyInstance;
@@ -85,8 +86,46 @@ describe("W2, W3, W4: Stateless MCP 2026-07-28 Streamable HTTP & Two-Phase Human
         })
         .onConflict((oc) => oc.columns(["tenant_id", "user_id"]).doNothing())
         .execute();
+
+      await trx
+        .insertInto("services")
+        .values({
+          id: serviceId,
+          tenant_id: tenantId,
+          status: "ACTIVE",
+          current_version_id: null,
+        })
+        .onConflict((oc) => oc.columns(["tenant_id", "id"]).doNothing())
+        .execute();
+
+      const serviceVersionId = "01932b10-0002-7000-8000-000000000001";
+      await trx
+        .insertInto("service_versions")
+        .values({
+          id: serviceVersionId,
+          tenant_id: tenantId,
+          service_id: serviceId,
+          version: 1,
+          name: "MCP Haircut Service",
+          duration_minutes: 45,
+          buffer_before_minutes: 0,
+          buffer_after_minutes: 15,
+          price_minor: "7500",
+          base_deposit_minor: "2000",
+          currency: "USD",
+          cancellation_policy_id: "01932b10-0003-7000-8000-000000000001",
+        })
+        .onConflict((oc) => oc.columns(["tenant_id", "id"]).doNothing())
+        .execute();
+
+      await trx
+        .updateTable("services")
+        .set({ current_version_id: serviceVersionId })
+        .where("id", "=", serviceId)
+        .execute();
     });
 
+    setMcpDb(testDb);
     app = buildApp();
     await app.ready();
   });

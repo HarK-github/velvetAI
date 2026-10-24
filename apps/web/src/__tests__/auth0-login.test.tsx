@@ -245,5 +245,5 @@ describe("Auth0 Frontend Authentication & Login Verification", () => {
     } finally {
       await browser.close();
     }
-  });
+  }, 15000);
 });

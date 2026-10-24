@@ -25,10 +25,23 @@ for (let i = 0; i < 5; i++) {
 if (process.env.NODE_ENV === "test") {
   // 1. In test environment, load isolated test environment
   loadIfExists(path.join(rootDir, ".env.test"));
-  const testDbUrl =
+  const rawTestDbUrl =
     process.env.TEST_DATABASE_URL ||
     process.env.DATABASE_URL ||
     "postgresql://localhost:5432/velvetai_test?sslmode=disable";
+  let testDbUrl = rawTestDbUrl;
+  try {
+    const parsed = new URL(rawTestDbUrl);
+    const dbName = parsed.pathname.replace(/^\//, "").split("?")[0] || "";
+    if (dbName && (dbName.endsWith("_test") || dbName.includes("_test_"))) {
+      if (!dbName.endsWith("_api")) {
+        parsed.pathname = `/${dbName}_api`;
+        testDbUrl = parsed.toString();
+      }
+    }
+  } catch {
+    // Keep rawTestDbUrl
+  }
   process.env.DATABASE_URL = testDbUrl;
   process.env.TEST_DATABASE_URL = testDbUrl;
 } else {

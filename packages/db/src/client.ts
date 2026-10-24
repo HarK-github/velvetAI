@@ -1,9 +1,14 @@
 import { Kysely, PostgresDialect, sql } from "kysely";
 export { Kysely, PostgresDialect, sql };
 import pg from "pg";
+export { pg };
 import { Database } from "./schema.js";
 
-const { Pool } = pg;
+const { Pool, Client } = pg;
+
+export function createRawPgClient(connectionString: string): pg.Client {
+  return new Client({ connectionString });
+}
 
 export function createDatabaseClient(
   connectionString: string,

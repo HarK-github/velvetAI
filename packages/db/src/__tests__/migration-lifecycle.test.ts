@@ -2,15 +2,18 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { sql, Kysely } from "kysely";
 import crypto from "node:crypto";
 import { Database } from "../schema.js";
-import { TEST_DB_URL, seedTenantContext } from "./test-helper.js";
+import { seedTenantContext } from "./test-helper.js";
 import { migrateToLatest, migrateDown } from "../migrator.js";
 import { createDatabaseClient, withTenantTransaction } from "../client.js";
+import { getTestDatabaseUrl } from "../test-db.js";
+
+const MIGRATION_TEST_DB_URL = getTestDatabaseUrl("migration");
 
 describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", () => {
   let adminDb: Kysely<Database>;
 
   beforeAll(async () => {
-    adminDb = createDatabaseClient(TEST_DB_URL, { min: 1, max: 5 });
+    adminDb = createDatabaseClient(MIGRATION_TEST_DB_URL, { min: 1, max: 5 });
     // Ensure migrated to latest
     await migrateToLatest(adminDb);
   });

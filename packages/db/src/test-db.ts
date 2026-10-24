@@ -17,6 +17,38 @@ export function extractDatabaseName(dbUrl: string): string {
 }
 
 /**
+ * Detects the calling workspace package name to provide isolated test databases.
+ */
+export function detectCurrentPackageName(): string | undefined {
+  if (process.env.TEST_PACKAGE_NAME) {
+    return process.env.TEST_PACKAGE_NAME;
+  }
+  if (process.env.npm_package_name) {
+    return process.env.npm_package_name.replace(/^@velvetai\//, "").replace(/-/g, "_");
+  }
+  const cwd = process.cwd();
+  if (cwd.includes("packages/db")) return "db";
+  if (cwd.includes("packages/application")) return "application";
+  if (cwd.includes("apps/api")) return "api";
+  if (cwd.includes("apps/worker")) return "worker";
+  if (cwd.includes("apps/abuse-lab")) return "abuse_lab";
+  return undefined;
+}
+
+/**
+ * Resolves the isolated per-package test database name based on base name and package.
+ */
+export function resolvePackageTestDatabaseName(baseName: string, packageName?: string): string {
+  const pkg = (packageName !== undefined ? packageName : detectCurrentPackageName() || "").trim();
+  if (!pkg) return baseName;
+  const cleanPkg = pkg.replace(/^@velvetai\//, "").replace(/-/g, "_");
+  if (baseName.endsWith(`_${cleanPkg}`)) {
+    return baseName;
+  }
+  return `${baseName}_${cleanPkg}`;
+}
+
+/**
  * Asserts that a database URL points to an isolated test database.
  *
  * Safety invariants:
@@ -63,34 +95,47 @@ export function assertSafeTestDatabaseTeardown(dbUrl: string): void {
  * Resolves the authoritative test database URL.
  * Checks TEST_DATABASE_URL first, then falls back to DATABASE_URL if safe,
  * or defaults to the local test database `postgresql://localhost:5432/velvetai_test?sslmode=disable`.
+ * In multitenant turbo parallel execution, derives per-package isolated database URLs
+ * (e.g. velvetai_test_db, velvetai_test_application, velvetai_test_api, velvetai_test_worker, velvetai_test_abuse_lab).
  * Throws if the resolved URL does not pass safety checks.
  */
-export function getTestDatabaseUrl(): string {
+export function getTestDatabaseUrl(packageName?: string): string {
   const envTestUrl = process.env.TEST_DATABASE_URL;
+  let resolvedUrl: string;
+
   if (envTestUrl && envTestUrl.trim().length > 0) {
-    assertSafeTestDatabaseUrl(envTestUrl.trim());
-    return envTestUrl.trim();
+    resolvedUrl = envTestUrl.trim();
+  } else {
+    const envDbUrl = process.env.DATABASE_URL;
+    if (envDbUrl && envDbUrl.trim().length > 0) {
+      const dbName = extractDatabaseName(envDbUrl.trim());
+      // If DATABASE_URL itself is already pointing to a test db, use it
+      if (dbName.toLowerCase().endsWith("_test") || dbName.toLowerCase().includes("_test_")) {
+        resolvedUrl = envDbUrl.trim();
+      } else if (DEV_DATABASE_NAMES.has(dbName.toLowerCase())) {
+        throw new Error(
+          `TEST STARTUP BLOCKED: DATABASE_URL points to development database "${dbName}". Set TEST_DATABASE_URL to an isolated database ending in "_test" (e.g. postgresql://localhost:5432/velvetai_test?sslmode=disable).`,
+        );
+      } else {
+        resolvedUrl = "postgresql://localhost:5432/velvetai_test?sslmode=disable";
+      }
+    } else {
+      resolvedUrl = "postgresql://localhost:5432/velvetai_test?sslmode=disable";
+    }
   }
 
-  const envDbUrl = process.env.DATABASE_URL;
-  if (envDbUrl && envDbUrl.trim().length > 0) {
-    const dbName = extractDatabaseName(envDbUrl.trim());
-    // If DATABASE_URL itself is already pointing to a test db, use it
-    if (dbName.toLowerCase().endsWith("_test") || dbName.toLowerCase().includes("_test_")) {
-      assertSafeTestDatabaseUrl(envDbUrl.trim());
-      return envDbUrl.trim();
-    }
-    // If DATABASE_URL points to dev db, fail immediately as required by Phase 2 rule 2
-    if (DEV_DATABASE_NAMES.has(dbName.toLowerCase())) {
-      throw new Error(
-        `TEST STARTUP BLOCKED: DATABASE_URL points to development database "${dbName}". Set TEST_DATABASE_URL to an isolated database ending in "_test" (e.g. postgresql://localhost:5432/velvetai_test?sslmode=disable).`,
-      );
-    }
+  // Derive per-package database if package detected or specified
+  const pkg = packageName !== undefined ? packageName : detectCurrentPackageName();
+  if (pkg) {
+    const parsed = new URL(resolvedUrl);
+    const baseDbName = extractDatabaseName(resolvedUrl);
+    const targetDbName = resolvePackageTestDatabaseName(baseDbName, pkg);
+    parsed.pathname = `/${targetDbName}`;
+    resolvedUrl = parsed.toString();
   }
 
-  const defaultTestUrl = "postgresql://localhost:5432/velvetai_test?sslmode=disable";
-  assertSafeTestDatabaseUrl(defaultTestUrl);
-  return defaultTestUrl;
+  assertSafeTestDatabaseUrl(resolvedUrl);
+  return resolvedUrl;
 }
 
 /**

@@ -137,7 +137,14 @@ pnpm docker:up
 pnpm install
 ```
 
-### 5. Run Verification Checks
+### 5. Prepare Test Databases
+
+```bash
+# Prepares and migrates all isolated test databases (see docs/testing.md)
+pnpm db:test:prepare
+```
+
+### 6. Run Verification Checks
 
 ```powershell
 # Typecheck all packages and apps (strict TypeScript)
