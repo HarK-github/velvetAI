@@ -111,16 +111,21 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
     return this.jwks;
   }
 
+  getAudience(): string {
+    return this.audience;
+  }
+
   async authenticateBearerToken(
     token: string,
     requestedTenantId?: string,
+    expectedAudience?: string,
   ): Promise<AuthenticatedPrincipal> {
     // 1. Dev / Offline Test Token Fast Path
     if (token.startsWith("test-token:") || token === "test-token") {
       if (!this.allowDevTokens) {
         throw new DomainError("Dev tokens not allowed in this environment", "unauthorized", 401);
       }
-      return await this.authenticateDevToken(token, requestedTenantId);
+      return await this.authenticateDevToken(token, requestedTenantId, expectedAudience);
     }
 
     // 2. Auth0 JWT Verification
@@ -128,7 +133,8 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
     try {
       const keySet = this.getJWKS();
       const normalizedIssuer = this.issuer.replace(/\/+$/, "");
-      const normalizedAudience = this.audience.replace(/\/+$/, "");
+      const audienceToCheck = expectedAudience || this.audience;
+      const normalizedAudience = audienceToCheck.replace(/\/+$/, "");
       const verified = await jose.jwtVerify(token, keySet, {
         issuer: [normalizedIssuer, `${normalizedIssuer}/`],
         audience: [normalizedAudience, `${normalizedAudience}/`],
@@ -156,7 +162,11 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
   private async authenticateDevToken(
     token: string,
     requestedTenantId?: string,
+    expectedAudience?: string,
   ): Promise<AuthenticatedPrincipal> {
+    const targetAud = (expectedAudience || this.audience).toLowerCase();
+    const isMcpTarget = targetAud.endsWith("/mcp");
+
     if (token === "test-token") {
       const tenantId = (requestedTenantId || "01932b10-0000-7000-8000-000000000001") as TenantId;
       const role: Role = "OWNER";
@@ -174,6 +184,22 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
 
     // Format: test-token:<userId>:<tenantId>:<role>:<roleVersion>:<revoked?>:<scopes>
     const parts = token.split(":");
+
+    // Audience isolation check for dev tokens: e.g. "aud=mcp" or "aud=rest"
+    const audPart = parts.find((p) => p.startsWith("aud="));
+    if (audPart) {
+      const tokenAud = audPart.slice(4).toLowerCase();
+      if (tokenAud === "mcp" && !isMcpTarget) {
+        throw new DomainError("Audience mismatch: token intended for MCP only", "invalid_jwt", 401);
+      }
+      if (tokenAud === "rest" && isMcpTarget) {
+        throw new DomainError(
+          "Audience mismatch: token intended for REST only",
+          "invalid_jwt",
+          401,
+        );
+      }
+    }
     const userId = (parts[1] || "01932b10-0000-7000-8000-000000000002") as UserId;
     const tenantId = (parts[2] ||
       requestedTenantId ||
@@ -421,7 +447,7 @@ export function registerAuth(app: FastifyInstance): void {
     return authAdapter.authenticateBearerToken(token, requestedTenantId);
   });
 
-  // RFC 9728: OAuth 2.0 Protected Resource Metadata
+  // RFC 9728: OAuth 2.0 Protected Resource Metadata (REST API audience)
   app.get("/.well-known/oauth-protected-resource", async (_request, reply) => {
     const currentEnv = validateEnv();
     return reply
@@ -443,6 +469,22 @@ export function registerAuth(app: FastifyInstance): void {
       });
   });
 
+  // RFC 9728: OAuth 2.0 Protected Resource Metadata (MCP path-specific audience per F2)
+  app.get("/.well-known/oauth-protected-resource/mcp", async (request, reply) => {
+    const currentEnv = validateEnv();
+    const hostHeader = (request.headers.host as string) || "localhost:3000";
+    const resourceUrl = currentEnv.MCP_RESOURCE_URL || `http://${hostHeader}/mcp`;
+    return reply
+      .header("content-type", "application/json")
+      .header("cache-control", "public, max-age=3600")
+      .send({
+        resource: resourceUrl,
+        authorization_servers: [currentEnv.AUTH0_ISSUER],
+        bearer_methods_supported: ["header"],
+        scopes_supported: ["booking:read", "booking:quote", "booking:prepare", "booking:commit"],
+      });
+  });
+
   app.addHook("preHandler", async (request: FastifyRequest, reply: FastifyReply) => {
     // Skip public paths
     if (
@@ -450,9 +492,11 @@ export function registerAuth(app: FastifyInstance): void {
       request.url.startsWith("/health") ||
       request.url === "/v1/system/spec" ||
       request.url === "/.well-known/oauth-protected-resource" ||
+      request.url.startsWith("/.well-known/oauth-protected-resource") ||
       request.url === "/v1/ai/status" ||
       request.url === "/mcp" ||
-      request.url.startsWith("/mcp?")
+      request.url.startsWith("/mcp?") ||
+      (request.method === "GET" && request.url.startsWith("/v1/booking-approvals/"))
     ) {
       return;
     }

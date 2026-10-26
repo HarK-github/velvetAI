@@ -184,6 +184,7 @@ export const bookingApprovalDetailsSchema = z.object({
   cancellationSummary: z.string(),
   requestingAgent: z.string(),
   expiresAt: rfc3339TimestampSchema,
+  status: z.enum(["PENDING", "APPROVED", "CONSUMED"]).optional(),
 });
 export type BookingApprovalDetails = z.infer<typeof bookingApprovalDetailsSchema>;
 

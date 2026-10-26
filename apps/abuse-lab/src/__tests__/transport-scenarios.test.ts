@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { transportScenarios } from "../transport-scenarios.js";
 
-describe("W7: Abuse Lab Transport-Level Security Scenarios (20 Deterministically Proven)", () => {
-  it("includes all 20 required transport-level scenarios", () => {
-    expect(transportScenarios).toHaveLength(20);
+describe("W7: Abuse Lab Transport-Level Security Scenarios (23 Deterministically Proven)", () => {
+  it("includes all 23 required transport-level scenarios", () => {
+    expect(transportScenarios).toHaveLength(23);
     const ids = transportScenarios.map((s) => s.id);
-    for (let i = 1; i <= 20; i++) {
+    for (let i = 1; i <= 23; i++) {
       const expectedId = `TRANS-${String(i).padStart(3, "0")}`;
       expect(ids).toContain(expectedId);
     }

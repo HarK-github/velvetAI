@@ -193,7 +193,7 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
 
     // D. Extract & validate Bearer Token
     const authHeader = request.headers.authorization;
-    const resourceMetadataUrl = `${request.protocol}://${request.host}/.well-known/oauth-protected-resource`;
+    const resourceMetadataUrl = `${request.protocol}://${request.host}/.well-known/oauth-protected-resource/mcp`;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return reply
@@ -220,9 +220,15 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
         ? request.headers["x-tenant-id"]
         : undefined;
 
+    const mcpExpectedAudience = env.MCP_RESOURCE_URL || `http://${request.host}/mcp`;
+
     let principal;
     try {
-      principal = await getAuthAdapter().authenticateBearerToken(token, requestedTenantId);
+      principal = await getAuthAdapter().authenticateBearerToken(
+        token,
+        requestedTenantId,
+        mcpExpectedAudience,
+      );
     } catch (err: unknown) {
       const error = err as Error;
       return reply

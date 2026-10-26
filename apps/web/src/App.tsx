@@ -10,6 +10,7 @@ import { BookingPage } from "./pages/BookingPage.js";
 import { SchedulePage } from "./pages/SchedulePage.js";
 import { PolicyPage } from "./pages/PolicyPage.js";
 import { StatusPage } from "./pages/StatusPage.js";
+import { ApprovalPage } from "./pages/ApprovalPage.js";
 import { computeAuthDiagnostic } from "./lib/auth-config.js";
 
 const AppContent: FC = () => {
@@ -71,6 +72,10 @@ const AppContent: FC = () => {
   }, []);
 
   const renderCurrentPage = () => {
+    if (currentPath.startsWith("/approve/")) {
+      const locator = currentPath.slice("/approve/".length);
+      return <ApprovalPage locator={locator} />;
+    }
     switch (currentPath) {
       case "/book":
         return <BookingPage />;

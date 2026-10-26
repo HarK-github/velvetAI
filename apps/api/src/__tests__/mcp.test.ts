@@ -243,7 +243,7 @@ describe("W2, W3, W4: Stateless MCP 2026-07-28 Streamable HTTP & Two-Phase Human
       expect(body.error.message).toMatch(/headers and body disagree/i);
     });
 
-    it("rejects missing Authorization header with 401 Unauthorized", async () => {
+    it("rejects missing Authorization header with 401 Unauthorized and points to MCP resource metadata", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/mcp",
@@ -266,8 +266,75 @@ describe("W2, W3, W4: Stateless MCP 2026-07-28 Streamable HTTP & Two-Phase Human
       });
 
       expect(res.statusCode).toBe(401);
+      const wwwAuth = res.headers["www-authenticate"];
+      expect(wwwAuth).toBeDefined();
+      expect(wwwAuth).toContain("/.well-known/oauth-protected-resource/mcp");
       const body = JSON.parse(res.body);
       expect(body.error.code).toBe(-32001);
+    });
+
+    it("rejects wrong-audience token on /mcp with 401 Unauthorized", async () => {
+      const restOnlyAuthHeader = `Bearer test-token:${userId}:${tenantId}:BUYER:1:false::aud=rest`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          authorization: restOnlyAuthHeader,
+          "content-type": "application/json",
+          "mcp-protocol-version": "2026-07-28",
+          "mcp-method": "server/discover",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "server/discover",
+          params: {
+            _meta: {
+              [PROTOCOL_VERSION_META_KEY]: "2026-07-28",
+              [CLIENT_CAPABILITIES_META_KEY]: {},
+            },
+          },
+        }),
+      });
+
+      expect(res.statusCode).toBe(401);
+      const body = JSON.parse(res.body);
+      expect(body.error.message).toMatch(/Audience mismatch/i);
+    });
+
+    it("rejects MCP-audience token on REST routes with 401 Unauthorized", async () => {
+      const mcpOnlyAuthHeader = `Bearer test-token:${userId}:${tenantId}:BUYER:1:false::aud=mcp`;
+      const res = await app.inject({
+        method: "GET",
+        url: "/v1/services",
+        headers: {
+          authorization: mcpOnlyAuthHeader,
+        },
+      });
+
+      expect(res.statusCode).toBe(401);
+      const body = JSON.parse(res.body);
+      expect(body.detail).toMatch(/Audience mismatch/i);
+    });
+
+    it("proves /.well-known/oauth-protected-resource/mcp serves resource = MCP_RESOURCE_URL", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/.well-known/oauth-protected-resource/mcp",
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.resource).toBe("http://localhost:3000/mcp");
+      expect(body.authorization_servers).toBeDefined();
+      expect(body.scopes_supported).toEqual(
+        expect.arrayContaining([
+          "booking:read",
+          "booking:quote",
+          "booking:prepare",
+          "booking:commit",
+        ]),
+      );
     });
   });
 

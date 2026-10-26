@@ -41,7 +41,7 @@ describe("Auth0 Frontend Authentication & Login Verification", () => {
       loginWithPopup: vi.fn(),
       handleRedirectCallback: vi.fn(),
       getAccessTokenWithPopup: vi.fn(),
-    });
+    } as unknown as auth0React.Auth0ContextInterface);
   });
 
   afterEach(() => {
@@ -54,7 +54,8 @@ describe("Auth0 Frontend Authentication & Login Verification", () => {
 
     const auth0ProviderMock = vi.mocked(auth0React.Auth0Provider);
     expect(auth0ProviderMock).toHaveBeenCalled();
-    const lastCallProps = auth0ProviderMock.mock.calls[0]![0];
+    const lastCallProps = auth0ProviderMock.mock
+      .calls[0]![0] as auth0React.Auth0ProviderWithConfigOptions;
 
     expect(typeof lastCallProps.domain).toBe("string");
     expect(lastCallProps.domain.length).toBeGreaterThan(0);
@@ -125,7 +126,7 @@ describe("Auth0 Frontend Authentication & Login Verification", () => {
     render(<App />);
 
     const auth0ProviderMock = vi.mocked(auth0React.Auth0Provider);
-    const props = auth0ProviderMock.mock.calls[0]![0];
+    const props = auth0ProviderMock.mock.calls[0]![0] as auth0React.Auth0ProviderWithConfigOptions;
     const params = props.authorizationParams;
 
     expect(params?.audience).toBe("https://velvetai.example/api");
@@ -223,8 +224,8 @@ describe("Auth0 Frontend Authentication & Login Verification", () => {
 
       try {
         await page.goto("http://localhost:5173", { timeout: 4000 });
-      } catch (err: any) {
-        if (err?.message?.includes("ERR_CONNECTION_REFUSED")) {
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("ERR_CONNECTION_REFUSED")) {
           // Dev server is not running during headless unit test run; skip live browser navigation
           return;
         }

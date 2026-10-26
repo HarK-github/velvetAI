@@ -348,6 +348,19 @@ export class BookingService {
       const confirmationSlotId = crypto.randomUUID();
       const placeholderHash = sha256Hex(`pending_${interactionLocator}`);
 
+      // Link to matching app_user if present, or actor userId (if human), or customer id
+      const matchingAppUser = await trx
+        .selectFrom("app_users")
+        .where("email_ciphertext", "=", input.customer.email)
+        .select(["id"])
+        .executeTakeFirst();
+
+      const initialBuyerUserId = matchingAppUser
+        ? matchingAppUser.id
+        : !actor.subject.endsWith("@clients")
+          ? actor.userId
+          : customer.id;
+
       await trx
         .insertInto("buyer_confirmations")
         .values({
@@ -356,7 +369,7 @@ export class BookingService {
           booking_id: bookingId,
           confirmation_jti: crypto.randomUUID(),
           token_hash: placeholderHash,
-          buyer_user_id: customer.id,
+          buyer_user_id: initialBuyerUserId,
           interaction_locator: interactionLocator,
           expires_at: holdExpiresAt,
         })
@@ -412,7 +425,7 @@ export class BookingService {
         .selectFrom("buyer_confirmations")
         .where("interaction_locator", "=", cleanLocator)
         .where("tenant_id", "=", tenantId)
-        .select(["booking_id", "expires_at"])
+        .selectAll()
         .executeTakeFirst();
 
       if (!conf) {
@@ -450,6 +463,14 @@ export class BookingService {
         throw new DomainError("Hold snapshot not found", "SNAPSHOT_NOT_FOUND", 404);
       }
 
+      const pendingPlaceholderHash = sha256Hex(`pending_${conf.interaction_locator}`);
+      const approvalStatus =
+        conf.token_hash === pendingPlaceholderHash
+          ? "PENDING"
+          : conf.consumed_at
+            ? "CONSUMED"
+            : "APPROVED";
+
       return {
         bookingId: snapshot.booking_id as BookingId,
         tenantId: snapshot.tenant_id as TenantId,
@@ -465,12 +486,14 @@ export class BookingService {
           "Full deposit refund if cancelled at least 24 hours prior to appointment.",
         requestingAgent: snapshot.client_id,
         expiresAt: conf.expires_at.toISOString() as Rfc3339Timestamp,
+        status: approvalStatus,
       };
     });
   }
 
   /**
    * Buyer approves terms -> issues a separate one-time opaque confirmation record per Section D.1 / D.6.
+   * Strictly enforces that only the buyer the hold was prepared for can approve.
    */
   async confirmApproval(
     tenantId: TenantId,
@@ -505,6 +528,45 @@ export class BookingService {
       const now = new Date();
       if (conf.expires_at.getTime() <= now.getTime()) {
         throw new DomainError("Approval session has expired", "APPROVAL_EXPIRED", 410);
+      }
+
+      // Verify that the approving buyer matches the buyer the hold was prepared for
+      const booking = await trx
+        .selectFrom("bookings")
+        .where("id", "=", conf.booking_id)
+        .where("tenant_id", "=", tenantId)
+        .select(["customer_id"])
+        .executeTakeFirst();
+
+      const holdCustomer = booking
+        ? await trx
+            .selectFrom("customers")
+            .where("id", "=", booking.customer_id)
+            .where("tenant_id", "=", tenantId)
+            .select(["email_ciphertext"])
+            .executeTakeFirst()
+        : null;
+
+      const approvingAppUser = await trx
+        .selectFrom("app_users")
+        .where("id", "=", buyerUserId)
+        .select(["id", "email_ciphertext"])
+        .executeTakeFirst();
+
+      const isDirectMatch = conf.buyer_user_id === buyerUserId;
+      const isEmailMatch = Boolean(
+        approvingAppUser &&
+        holdCustomer &&
+        approvingAppUser.email_ciphertext.toLowerCase() ===
+          holdCustomer.email_ciphertext.toLowerCase(),
+      );
+
+      if (!isDirectMatch && !isEmailMatch) {
+        throw new DomainError(
+          "The approving buyer does not match the buyer for this booking hold",
+          "BUYER_MISMATCH",
+          403,
+        );
       }
 
       // Generate opaque one-time confirmation token
@@ -684,7 +746,7 @@ export class BookingService {
         const pendingPlaceholderHash = sha256Hex(`pending_${confirmation.interaction_locator}`);
         if (confirmation.token_hash === pendingPlaceholderHash) {
           throw new DomainError(
-            "Approval incomplete: Human buyer confirmation has not yet occurred",
+            "Approval incomplete: The buyer has not approved this booking yet. Ask them to open the approval link.",
             "APPROVAL_INCOMPLETE",
             400,
           );

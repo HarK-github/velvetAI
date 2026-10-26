@@ -37,7 +37,8 @@ async function fetchM2mToken(): Promise<string> {
     (process.env.AUTH0_ISSUER_URL ? new URL(process.env.AUTH0_ISSUER_URL).hostname : null);
   const clientId = process.env.AUTH0_AGENT_CLIENT_ID;
   const clientSecret = process.env.AUTH0_AGENT_CLIENT_SECRET;
-  const audience = process.env.AUTH0_AUDIENCE || "https://velvetai.example/api";
+  const audience =
+    process.env.MCP_RESOURCE_URL || process.env.AUTH0_MCP_AUDIENCE || "http://localhost:3000/mcp";
 
   if (!domain || !clientId || !clientSecret) {
     throw new Error(
@@ -316,60 +317,85 @@ export async function runMcpSmoke(options?: {
   // f. Pause and print approval locator URL
   // ----------------------------------------------------
   const locatorId = approvalLocator.replace("/v1/booking-approvals/", "").trim();
-  const approvalUrl = `${baseUrl}/v1/booking-approvals/${locatorId}`;
+  const webApprovalUrl = `http://localhost:5173/approve/${locatorId}`;
+  const apiApprovalUrl = `${baseUrl}/v1/booking-approvals/${locatorId}`;
+
   console.log("\n========================================================");
-  console.log("HUMAN APPROVAL REQUIRED (Section D.4 / Epic 4 C5)");
-  console.log("Approval Locator URL:", approvalUrl);
-  console.log("API-level approval; styled approval page arrives in Epic 5 W1.");
+  console.log("HUMAN BUYER APPROVAL REQUIRED (Section D.4 / Epic 4 F1)");
+  console.log("Web Approval URL: ", webApprovalUrl);
+  console.log("API Inspection:   ", apiApprovalUrl);
+  console.log("--------------------------------------------------------");
+  console.log("Please open the Web Approval URL in your browser, sign in");
+  console.log("with Auth0 as the buyer, and click 'Approve Booking Hold'.");
+  console.log("Polling authoritative ledger for human buyer approval...");
   console.log("========================================================\n");
 
-  if (!autoApprove) {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    await new Promise<void>((resolve) => {
-      rl.question(
-        "Please confirm approval in your browser or press Enter to auto-confirm via API... ",
-        () => {
-          rl.close();
-          resolve();
+  let isApproved = false;
+
+  if (autoApprove && process.env.NODE_ENV === "test") {
+    // In-process test environment with test buyer identity
+    console.log("[mcp:smoke] Test environment detected: confirming via in-process test buyer...");
+    try {
+      const confirmRes = await fetch(`${baseUrl}/v1/booking-approvals/${locatorId}/confirm`, {
+        method: "POST",
+        headers: {
+          Authorization:
+            "Bearer test-token:01932b10-0000-7000-8000-000000000002:01932b10-0000-7000-8000-000000000001:BUYER:1",
+          "Content-Type": "application/json",
+          "idempotency-key": crypto.randomUUID(),
         },
+        body: JSON.stringify({}),
+      });
+      if (confirmRes.ok) {
+        isApproved = true;
+        const confirmData = (await confirmRes.json()) as {
+          confirmation?: string;
+          confirmationToken?: string;
+        };
+        confirmationToken = confirmData.confirmation || confirmData.confirmationToken || "";
+      }
+    } catch (err: unknown) {
+      console.error("[mcp:smoke] Test confirmation failed:", err);
+    }
+  } else {
+    if (autoApprove && process.env.NODE_ENV !== "test") {
+      console.log(
+        "[mcp:smoke] Note: --auto-approve is strictly ignored against non-test environment per F1 security invariant.",
       );
-    });
+      console.log("[mcp:smoke] A human buyer must authorize the hold via the web approval page.");
+    }
+
+    const pollStart = Date.now();
+    const timeoutMs = 120_000; // 2 minutes
+
+    while (Date.now() - pollStart < timeoutMs) {
+      try {
+        const checkRes = await fetch(apiApprovalUrl);
+        if (checkRes.ok) {
+          const checkData = (await checkRes.json()) as { status?: string };
+          if (checkData.status === "APPROVED" || checkData.status === "CONSUMED") {
+            isApproved = true;
+            console.log("\n[mcp:smoke] ✓ Human approval detected on authoritative ledger!");
+            break;
+          }
+        }
+      } catch {
+        // Retry
+      }
+      process.stdout.write(".");
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    console.log("");
   }
 
-  // Fetch or confirm approval through the API
-  try {
-    const confirmRes = await fetch(`${baseUrl}/v1/booking-approvals/${locatorId}/confirm`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "idempotency-key": crypto.randomUUID(),
-      },
-      body: JSON.stringify({}),
-    });
-    if (confirmRes.ok) {
-      const confirmData = (await confirmRes.json()) as {
-        confirmation?: string;
-        confirmationToken?: string;
-      };
-      confirmationToken = confirmData.confirmation || confirmData.confirmationToken || "";
-      logStep(
-        "f",
-        "Approval confirmation",
-        !!confirmationToken,
-        `One-time confirmation token issued: ${redact(confirmationToken)}`,
-      );
-    } else {
-      logStep(
-        "f",
-        "Approval confirmation",
-        false,
-        `Approval endpoint returned HTTP ${confirmRes.status}`,
-      );
-    }
-  } catch (err: unknown) {
-    logStep("f", "Approval confirmation", false, (err as Error).message);
-  }
+  logStep(
+    "f",
+    "Approval confirmation",
+    isApproved,
+    isApproved
+      ? "Booking hold terms approved by authenticated human buyer"
+      : "Timed out waiting for human buyer approval (exceeded 120s)",
+  );
 
   // ----------------------------------------------------
   // g. commit_booking.v1 after approval -> succeeds once
@@ -380,7 +406,7 @@ export async function runMcpSmoke(options?: {
       name: "commit_booking.v1",
       arguments: {
         intent: signedIntent,
-        confirmation: confirmationToken,
+        ...(confirmationToken ? { confirmation: confirmationToken } : {}),
         idempotency_key: idempotencyKey,
       },
     })) as Record<string, unknown>;
@@ -415,7 +441,7 @@ export async function runMcpSmoke(options?: {
       name: "commit_booking.v1",
       arguments: {
         intent: signedIntent,
-        confirmation: confirmationToken,
+        ...(confirmationToken ? { confirmation: confirmationToken } : {}),
         idempotency_key: crypto.randomUUID(), // New idempotency key -> MUST NOT re-consume confirmation token
       },
     })) as Record<string, unknown>;
@@ -425,6 +451,7 @@ export async function runMcpSmoke(options?: {
     const raw = content[0]?.text || "";
     const isReplayBlocked =
       raw.includes("CONFIRMATION_REPLAY_BLOCKED") ||
+      raw.includes("INTENT_REPLAY_BLOCKED") ||
       raw.includes("consumed") ||
       raw.includes("already");
 
@@ -436,7 +463,11 @@ export async function runMcpSmoke(options?: {
     );
   } catch (err: unknown) {
     const msg = (err as Error).message;
-    const passed = msg.includes("CONFIRMATION_REPLAY_BLOCKED") || msg.includes("consumed");
+    const passed =
+      msg.includes("CONFIRMATION_REPLAY_BLOCKED") ||
+      msg.includes("INTENT_REPLAY_BLOCKED") ||
+      msg.includes("consumed") ||
+      msg.includes("already");
     logStep("h", "commit_booking.v1 (replay prevention)", passed, `Error thrown: ${msg}`);
   }
 

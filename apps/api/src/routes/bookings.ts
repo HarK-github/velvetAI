@@ -172,10 +172,66 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
   app.post("/v1/booking-approvals/:locator/confirm", async (request, reply) => {
     const { locator } = request.params as { locator: string };
     const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
-    const buyerUserId =
-      request.principal?.userId || ("01932b10-0000-7000-8000-000000000002" as UserId);
 
-    const confirmation = await bookingService.confirmApproval(tenantId, locator, buyerUserId);
+    // Human Buyer Authorization Guard (Invariant F1):
+    // 1. Unauthenticated requests are rejected with 401 HUMAN_APPROVAL_REQUIRED
+    if (!request.headers.authorization) {
+      return reply.status(401).send({
+        title: "Unauthorized",
+        status: 401,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail:
+          "Authentication credentials missing. Human buyer session required to approve booking.",
+      });
+    }
+
+    const principal = request.principal;
+    if (!principal) {
+      return reply.status(401).send({
+        title: "Unauthorized",
+        status: 401,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail: "Authentication credentials missing or invalid. Human buyer session required.",
+      });
+    }
+
+    // 2. Agents / M2M clients (subject ending in "@clients") cannot approve booking holds
+    if (principal.subject.endsWith("@clients")) {
+      return reply.status(403).send({
+        title: "Forbidden",
+        status: 403,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail:
+          "Agents and machine-to-machine clients cannot approve booking holds. Human buyer approval is required.",
+      });
+    }
+
+    // 3. Dev tokens are forbidden outside test environment
+    if (principal.subject.startsWith("dev|") && process.env.NODE_ENV !== "test") {
+      return reply.status(403).send({
+        title: "Forbidden",
+        status: 403,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail: "Dev tokens are not permitted for booking approvals outside test environment.",
+      });
+    }
+
+    // 4. Must possess BUYER or OWNER role
+    if (!principal.roles.includes("BUYER") && !principal.roles.includes("OWNER")) {
+      return reply.status(403).send({
+        title: "Forbidden",
+        status: 403,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail: "Buyer membership required to approve booking holds.",
+      });
+    }
+
+    const confirmation = await bookingService.confirmApproval(tenantId, locator, principal.userId);
     return reply.status(200).send(confirmation);
   });
 

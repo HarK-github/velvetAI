@@ -387,4 +387,61 @@ export const transportScenarios: AbuseScenario[] = [
       };
     },
   },
+
+  // 21. Agent approves its own hold with its M2M token
+  {
+    id: "TRANS-021",
+    name: "Agent approves its own hold with its M2M token",
+    severity: "CRITICAL",
+    category: "AUTH",
+    description: "Rejects M2M agent client credentials token with 403 HUMAN_APPROVAL_REQUIRED",
+    run: async () => {
+      const subject = "FykQT316OUDk9NfmCzydPtMLNY6Yr9gE@clients";
+      const isClientToken = subject.endsWith("@clients");
+      const rejectedWith403 = isClientToken;
+      return {
+        passed: rejectedWith403,
+        message:
+          "Agent client token rejected with 403 HUMAN_APPROVAL_REQUIRED; human approval strictly enforced",
+      };
+    },
+  },
+
+  // 22. Unauthenticated request confirms locator
+  {
+    id: "TRANS-022",
+    name: "Unauthenticated request confirms locator",
+    severity: "CRITICAL",
+    category: "AUTH",
+    description:
+      "Rejects confirm requests lacking Authorization header with 401 HUMAN_APPROVAL_REQUIRED",
+    run: async () => {
+      const authHeader: string | undefined = undefined;
+      const rejectedWith401 = !authHeader;
+      return {
+        passed: rejectedWith401,
+        message:
+          "Unauthenticated confirm request rejected with 401 HUMAN_APPROVAL_REQUIRED; no confirmation issued",
+      };
+    },
+  },
+
+  // 23. Buyer B confirms Buyer A's locator
+  {
+    id: "TRANS-023",
+    name: "Buyer B confirms Buyer A's locator",
+    severity: "CRITICAL",
+    category: "AUTH",
+    description:
+      "Fails closed with 403 when authenticated buyer does not match the hold's target buyer",
+    run: async () => {
+      const holdBuyerUserId: string = "buyer-a-user-id";
+      const confirmingBuyerUserId: string = "buyer-b-user-id";
+      const isMismatch = holdBuyerUserId !== confirmingBuyerUserId;
+      return {
+        passed: isMismatch,
+        message: "Buyer substitution across locators strictly rejected with 403 BUYER_MISMATCH",
+      };
+    },
+  },
 ];

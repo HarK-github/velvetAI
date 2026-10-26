@@ -241,7 +241,10 @@ describe("API Frontend Endpoints & Middleware", () => {
     const confirmRes = await app.inject({
       method: "POST",
       url: `${prepBody.approvalLocator}/confirm`,
-      headers: { "idempotency-key": `confirm-idemp-${Date.now()}` },
+      headers: {
+        "idempotency-key": `confirm-idemp-${Date.now()}`,
+        authorization: "Bearer test-token",
+      },
     });
 
     expect(confirmRes.statusCode).toBe(200);

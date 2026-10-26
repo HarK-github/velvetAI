@@ -31,7 +31,7 @@ export const envSchema = z.object({
   // AI Provider & Gemini
   AI_PROVIDER: z.enum(["gemini", "fake"]).default("fake"),
   GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
-  AI_MODEL: z.string().default("gemini-2.5-flash"),
+  AI_MODEL: z.string().default("gemini-3.5-flash-lite"),
 
   // Host & Origin Security Allowlist
   ALLOWED_HOSTS: z
@@ -72,6 +72,7 @@ export const envSchema = z.object({
   // App URLs
   WEB_BASE_URL: z.string().default("http://localhost:5173"),
   API_BASE_URL: z.string().default("http://localhost:3000"),
+  MCP_RESOURCE_URL: z.string().default("http://localhost:3000/mcp"),
 });
 
 export type Env = z.infer<typeof envSchema>;
