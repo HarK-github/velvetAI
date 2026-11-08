@@ -16,6 +16,7 @@
     "test:sandbox:e2e": "vitest run packages/application/src/__tests__/payment-lifecycle.test.ts -t \"Opt-in sandbox test\"",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
+    "secrets:scan": "bash scripts/scan-secrets.sh",
     "dev": "turbo run dev",
     "start": "turbo run dev",
     "auth:provision-test-user": "tsx scripts/provision-test-user.ts",

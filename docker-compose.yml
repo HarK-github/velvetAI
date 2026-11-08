@@ -3,8 +3,9 @@ services:
     image: postgres:17-alpine
     container_name: velvetai-postgres
     restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=300"]
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-velvet}
+      POSTGRES_USER: ${POSTGRES_USER:-velvetai}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-velvetai}
     ports:
@@ -13,7 +14,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U velvet -d velvetai"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-velvetai} -d ${POSTGRES_DB:-velvetai}"]
       interval: 5s
       timeout: 5s
       retries: 5

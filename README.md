@@ -81,7 +81,7 @@ graph TD
 ### Applications (`apps/`)
 
 - **`apps/api`**: Fastify 5 REST API, RFC 9457 Problem Details, OpenAPI generation, mutation idempotency, tenant context.
-- **`apps/web`**: React 19, Vite, TanStack Router/Query, booking and schedule interfaces.
+- **`apps/web`**: React 19, Vite, lightweight custom context-based router (History API), booking and schedule interfaces.
 - **`apps/worker`**: Background worker for PostgreSQL transactional outbox dispatching (`FOR UPDATE SKIP LOCKED`, fenced leases), hold reaping, and PayPal provider reconciliation.
 - **`apps/abuse-lab`**: Automated security validation suite executing 20+ deterministic attack scenarios.
 
@@ -100,8 +100,8 @@ graph TD
 
 ## Prerequisites
 
-- **Node.js**: `v24.x LTS` (pinned via `mise.toml` to `24.22.1`)
-- **pnpm**: `v12.14.0` (pinned via `mise.toml` and root `packageManager`)
+- **Node.js**: Node 24 LTS (pinned via `mise.toml` to `24.22.1`, activated via `mise`)
+- **pnpm**: `12.14.0` (pinned via `mise.toml` and root `packageManager`)
 - **Docker & Docker Compose**: For local PostgreSQL 17 (`btree_gist` extension) and Redis 7
 
 ---

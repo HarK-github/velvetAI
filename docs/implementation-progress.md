@@ -3,10 +3,11 @@
 ## Current Status
 
 - Specification version: 1.1 (`spec.md` version 1.0 amended by `SPEC_V1_1_AMENDMENT.md`, last modified 2026-10-21)
-- Current work phase: Sprint Epic 4 — Agent Interfaces & Security Boundary (Acceptance Audit & Remediation Pass)
-- Current track: Tracks A–G (Foundation) + Epic 2 (Booking Concurrency & RLS) + Epic 3 (PayPal & Ledger) + Epic 3.5 (Integration Hardening) + Epic 4 (Agent Interfaces)
-- Epic 4 code status: IMPLEMENTED & POLISHED
-- Automated verification: VERIFIED (19/19 tasks, all unit/integration tests passing in packages and apps)
+- Current work phase: Epic 5 — full scope, two parallel tracks
+- Current track: Sprint S0: Hygiene and Baseline
+- Epic 4 code status: IMPLEMENTED & POLISHED (ACCEPTED)
+- Epic 5 code status: IN_PROGRESS (Sprint S0: Hygiene and Baseline)
+- Automated verification: VERIFIED (19/19 tasks, 459 tests passing in packages and apps)
 - Real runtime & external verification:
   - Auth0 real-E2E: VERIFIED (real Auth0 Universal Login + `pnpm auth:provision-test-user` mapped to PostgreSQL `app_users`/`memberships`; protected `GET /v1/services` returns HTTP 200 under strict RLS; evidence: `apps/api/src/__tests__/auth0.test.ts`, runbook `docs/setup/auth0.md`)
   - Ask AI Fake-Provider real-E2E: VERIFIED (UI drawer, dynamic `Deterministic Demo Model` honesty badge, authenticated chat transport, multi-step tool calls `list_services_v1`/`find_available_slots_v1`/`prepare_booking_v1`, approval card locator with zero confirmation token exposure, prompt injection refused; evidence: `apps/web/src/__tests__/ask-ai-drawer.test.tsx`, `apps/api/src/__tests__/ai-chat.test.ts`)
@@ -16,7 +17,7 @@
   - WebMCP real browser E2E: DEFERRED_EXTERNAL (simulation verified via automated suite in `apps/web/src/__tests__/webmcp.test.ts`; native browser verification deferred pending upstream browser availability; UI and Ask AI operational)
 - Epic 4 acceptance: ACCEPTED (Core security boundary, Auth0 protected requests, Ask AI live Gemini integration, and real external MCP client verified; evidence in `docs/evidence/mcp-external-client.md`)
 - Active blockers: None. Epic 4 accepted.
-- Do not begin Epic 5: Bryntum, forecasting UI, Abuse Lab UI, Judge Mode, live PayPal, Vault, Subscriptions, Payouts, multiparty onboarding, and BullMQ remain strictly out of scope.
+- Epic 5 Phase: Active. Sprint S0 hygiene & baseline complete; two parallel tracks ready to start.
 
 ## Status Legend
 
@@ -39,7 +40,39 @@
 | **Epic 3**                   | PayPal deposit, refunds, invoices, webhooks, ledger, reconciliation                                                                                                                                                                                   | **VERIFIED**    | Real PayPal Sandbox E2E verified (Orders v2 create -> buyer approval -> capture COMPLETED -> verified webhook delivery -> partial refund COMPLETED -> balanced double-entry ledger). All automated and manual criteria passed.                                                                          |
 | **Epic 3.5**                 | Integration hardening: Node 24 toolchain, MIT license, credential hygiene, PostgreSQL catalog/availability, 100% mutation idempotency, complete cancellation/attendance, PostgreSQL outbox/reconciliation worker, NFR corrections, Render scaffolding | **VERIFIED**    | All tests pass under Node 24 LTS; 0 fixed passwords; 25 RLS tables verified; 100 concurrent idempotency tests; 7 cancellation/attendance tests; 7 Postgres outbox/reconciliation tests; `tests/load/k6-availability-booking.js` added; `render.yaml` & Dockerfiles created.                             |
 | **Epic 4**                   | Agent Interfaces and Security Boundary: MCP 2026-07-28 stateless HTTP, Auth0 OIDC/OAuth, local membership authority, real tool bridge, two-phase human approval, in-page Ask AI (Gemini / Vercel AI SDK), WebMCP progressive enhancement              | **ACCEPTED**    | Code: **IMPLEMENTED**, Automated Verification: **VERIFIED** (66/66 API, 50/50 Abuse Lab, 13/13 Web, 19/19 Workspace tasks pass). External Integration: **VERIFIED** (Real external MCP client 10/10 pass, hosted Auth0 and Google Gemini verified, native WebMCP DEFERRED_EXTERNAL). ADR 0007 Accepted. |
-| **Epic 5**                   | Bryntum scheduler, forecast visualization, submission                                                                                                                                                                                                 | **NOT_STARTED** | Out of scope                                                                                                                                                                                                                                                                                            |
+| **Epic 5**                   | Full scope, two parallel tracks: buyer approval golden path, Render deployment, judge tenant & seed, Bryntum scheduler, forecasting UI, abuse lab dashboard, judge proof & fault injection, submission package                                        | **IN_PROGRESS** | Sprint S0: Hygiene & Baseline complete. DB connection diagnosis & fix, Gemini key revocation, secret scanner, prompt reorganization, docs truth                                                                                                                                                         |
+
+---
+
+## Epic 5 — Sprint S0: Hygiene & Baseline and Work Packages
+
+### Sprint S0: Hygiene and Baseline (Completed 2026-11-08)
+
+1. **Operating Rules & Prompts Layout**:
+   - Preserved full 168-line canonical `prompts/epic5/00_OPERATING_RULES.md`.
+   - Reorganized Epic 5 prompts into `prompts/epic5/` (00–10, 99, `FINAL_WEEK_PLAN.md`, `P1_PARALLEL_TRACKS_SETUP.md`, `README_HOW_TO_USE.md`).
+   - Removed deprecated `prompts/EPIC5_JUDGE_EXPERIENCE_PROMPT.md`.
+   - Documented canonical `BUYER_MISMATCH` error code in operating rules.
+
+2. **Security Hygiene & Secret Scanning**:
+   - Documented Gemini API key revocation in `docs/SECURITY_NOTES.md` (revoked in Google AI Studio on 2026-11-05; key in git history commits `3a69c59` and `0e28782` is inactive; new key maintained strictly in `.env.local`). Zero secret fragments recorded.
+   - Added `scripts/scan-secrets.sh` and npm script `pnpm secrets:scan`. Tracked files scanned cleanly.
+
+3. **Database Concurrency Test Diagnosis & Fix**:
+   - **Diagnosis**: PostgreSQL default `max_connections` (100) was exhausted during parallel execution of DB-backed test packages (`@velvetai/db`, `@velvetai/application`, `@velvetai/api`, `@velvetai/worker`) and concurrent dev servers. When connection pool capacity was depleted, connection acquisition blocked, causing 30s timeouts in `packages/db/src/__tests__/concurrency-booking.test.ts`.
+   - **Fix**: Raised local/test PostgreSQL `max_connections` to 300 via `command: ["postgres", "-c", "max_connections=300"]` in `docker-compose.yml`, fixed healthcheck user to `${POSTGRES_USER:-velvetai}`, and recreated the container (`docker compose up -d --force-recreate postgres`).
+   - **Proof**: Ran `pnpm turbo run test --force` twice consecutively. Both runs 100% green (19/19 tasks, 459 tests passing, run times ~8.2s and ~7.4s).
+
+4. **Epic 5 Work Packages Status**:
+   - WP 01: Baseline and Plan — `NOT_STARTED`
+   - WP 02: Approval Page and Golden Path — `NOT_STARTED`
+   - WP 03: Render Deployment — `NOT_STARTED`
+   - WP 04: Judge Tenant Seed and Reset — `NOT_STARTED`
+   - WP 05: Bryntum Scheduler — `NOT_STARTED`
+   - WP 06: Forecasting and Deposits — `NOT_STARTED`
+   - WP 07: Abuse Lab Dashboard — `NOT_STARTED`
+   - WP 08: Judge Page Proof and Fault Injection — `NOT_STARTED`
+   - WP 09: Submission Package — `NOT_STARTED`
 
 ---
 
