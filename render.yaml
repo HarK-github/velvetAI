@@ -1,30 +1,19 @@
 # Render Blueprint Deployment Specification for velvetAI
 # Documentation: https://render.com/docs/blueprint-spec
 
-services:
-  # 1. velvetAI REST API Service
-  - type: web
-    name: velvetai-api
-    runtime: node
-    plan: starter
-    region: oregon
-    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @velvetai/contracts... build && pnpm --filter @velvetai/api build
-    preDeployCommand: pnpm --filter @velvetai/db db:migrate
-    startCommand: pnpm --filter @velvetai/api start
-    healthCheckPath: /healthz
+databases:
+  - name: velvetai-db
+    plan: basic-256mb
+    postgresMajorVersion: "17"
+    databaseName: velvetai
+    user: velvetai_owner
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: external-connection-for-bootstrap-and-seed
+
+envVarGroups:
+  - name: velvetai-sandbox-secrets
     envVars:
-      - key: NODE_ENV
-        value: production
-      - key: PORT
-        value: 3000
-      - key: DATABASE_URL
-        fromDatabase:
-          name: velvetai-db
-          property: connectionString
-      - key: DATABASE_POOL_MIN
-        value: 2
-      - key: DATABASE_POOL_MAX
-        value: 10
       - key: PAYPAL_ENVIRONMENT
         value: sandbox
       - key: PAYPAL_CLIENT_ID
@@ -33,70 +22,98 @@ services:
         sync: false
       - key: PAYPAL_WEBHOOK_ID
         sync: false
+      - key: GOOGLE_GENERATIVE_AI_API_KEY
+        sync: false
       - key: INTENT_SIGNING_KEY
-        generateValue: true
+        sync: false
       - key: CONFIRMATION_TOKEN_SECRET
-        generateValue: true
+        sync: false
       - key: ENVELOPE_ENCRYPTION_KEY
-        generateValue: true
-      - key: WEB_BASE_URL
-        fromService:
-          type: web
-          name: velvetai-web
-          property: url
+        sync: false
 
-  # 2. velvetAI Background Worker (Transactional Outbox & PayPal Reconciliation)
-  - type: worker
-    name: velvetai-worker
-    runtime: node
+services:
+  - type: web
+    name: velvetai-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.api
     plan: starter
-    region: oregon
-    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @velvetai/contracts... build && pnpm --filter @velvetai/worker build
-    startCommand: pnpm --filter @velvetai/worker start
+    healthCheckPath: /health/ready
+    preDeployCommand: pnpm --filter @velvetai/db db:migrate
     envVars:
+      - fromGroup: velvetai-sandbox-secrets
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_MIGRATION_URL
         fromDatabase:
           name: velvetai-db
           property: connectionString
-      - key: DATABASE_POOL_MIN
-        value: 1
-      - key: DATABASE_POOL_MAX
-        value: 5
-      - key: PAYPAL_ENVIRONMENT
-        value: sandbox
-      - key: PAYPAL_CLIENT_ID
+      - key: OIDC_MOCK_ENABLED
+        value: "false"
+      - key: AUTH0_ISSUER
+        value: https://dev-ru8k002bt7vgmtj5.us.auth0.com/
+      - key: AUTH0_AUDIENCE
+        value: https://velvetai.example/api
+      - key: MCP_RESOURCE_URL
         sync: false
-      - key: PAYPAL_CLIENT_SECRET
+      - key: PUBLIC_WEB_ORIGIN
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: AI_PROVIDER
+        value: gemini
+      - key: AI_MODEL
+        value: gemini-3.5-flash-lite
+      - key: AI_DAILY_TURN_BUDGET
+        value: "1500"
+
+  - type: worker
+    name: velvetai-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile.worker
+    plan: starter
+    envVars:
+      - fromGroup: velvetai-sandbox-secrets
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
         sync: false
 
-  # 3. velvetAI React 19 Frontend Static Site
   - type: web
     name: velvetai-web
     runtime: static
-    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @velvetai/contracts... build && pnpm --filter @velvetai/web build
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @velvetai/web build
     staticPublishPath: ./apps/web/dist
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Content-Security-Policy
+        value: frame-ancestors 'none'
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
     envVars:
+      - key: NODE_VERSION
+        value: "24"
       - key: VITE_API_BASE_URL
-        fromService:
-          type: web
-          name: velvetai-api
-          property: url
+        sync: false
+      - key: VITE_AUTH0_DOMAIN
+        value: dev-ru8k002bt7vgmtj5.us.auth0.com
+      - key: VITE_AUTH0_CLIENT_ID
+        value: UDUndVMtt7rVZS874ztyNbcrRBSKNhMc
+      - key: VITE_AUTH0_AUDIENCE
+        value: https://velvetai.example/api
       - key: VITE_PAYPAL_CLIENT_ID
         sync: false
-      - key: VITE_PAYPAL_ENVIRONMENT
-        value: sandbox
-
-# Managed PostgreSQL Database
-databases:
-  - name: velvetai-db
-    databaseName: velvetai
-    user: velvet
-    plan: starter
-    region: oregon
-    postgresMajorVersion: "16"

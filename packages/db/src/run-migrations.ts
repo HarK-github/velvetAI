@@ -3,7 +3,8 @@ import { migrateToLatest } from "./migrator.js";
 import { requireDatabaseUrl, extractDatabaseName } from "@velvetai/observability";
 
 async function main() {
-  const databaseUrl = requireDatabaseUrl("Database Migrations");
+  const databaseUrl =
+    process.env.DATABASE_MIGRATION_URL?.trim() || requireDatabaseUrl("Database Migrations");
   const dbName = extractDatabaseName(databaseUrl);
 
   console.log(`Target database: ${dbName}`);

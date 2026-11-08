@@ -25,9 +25,23 @@ export function resetAiVerifiedStatus(): void {
   serverProcessRealProviderVerified = false;
 }
 
+const userRateWindows = new Map<string, number[]>();
+const ipRateWindows = new Map<string, number[]>();
+const globalDailyTurns: number[] = [];
+
+export function resetAiRateLimitsForTesting() {
+  tenantRateWindows.clear();
+  tenantConcurrency.clear();
+  userRateWindows.clear();
+  ipRateWindows.clear();
+  globalDailyTurns.length = 0;
+}
+
 export interface AiChatRouteOptions {
   modelProvider?: ModelProviderPort;
   db?: Kysely<Database>;
+  clock?: () => number;
+  dailyTurnBudget?: number;
 }
 
 // Allowlisted tools for Ask AI
@@ -111,7 +125,7 @@ export async function aiRoutes(app: FastifyInstance, options: AiChatRouteOptions
     const tenantId = principal.tenantId;
     const clientId = request.headers["x-client-id"]?.toString() || "web-ask-ai";
 
-    // 3. Rate limiting (60 req/min/tenant) & Concurrency budgeting (max 10)
+    // 3. Concurrency budgeting (max 10 per tenant)
     const currentConcurrent = tenantConcurrency.get(tenantId) || 0;
     if (currentConcurrent >= 10) {
       return reply.status(429).send({
@@ -120,7 +134,9 @@ export async function aiRoutes(app: FastifyInstance, options: AiChatRouteOptions
       });
     }
 
-    const now = Date.now();
+    const now = options.clock ? options.clock() : Date.now();
+
+    // 4. Rate limiting per tenant (60 req/min)
     const rateWindow = (tenantRateWindows.get(tenantId) || []).filter((ts) => now - ts < 60_000);
     if (rateWindow.length >= 60) {
       return reply.status(429).send({
@@ -128,11 +144,96 @@ export async function aiRoutes(app: FastifyInstance, options: AiChatRouteOptions
         message: "Rate limit exceeded (max 60 requests per minute).",
       });
     }
-    rateWindow.push(now);
-    tenantRateWindows.set(tenantId, rateWindow);
-    tenantConcurrency.set(tenantId, currentConcurrent + 1);
 
-    // 4. Validate input body
+    // 5. Public demo limits: Global daily turn budget
+    const globalLimitWindowMs = 24 * 60 * 60 * 1000; // 24 hours
+    const dailyBudget =
+      options.dailyTurnBudget ?? (Number(process.env.AI_DAILY_TURN_BUDGET) || 1500);
+    const activeGlobalTurns = globalDailyTurns.filter((ts) => now - ts < globalLimitWindowMs);
+    if (activeGlobalTurns.length >= dailyBudget) {
+      const oldestTurn = activeGlobalTurns[0] ?? now;
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((oldestTurn + globalLimitWindowMs - now) / 1000),
+      );
+      return reply
+        .status(429)
+        .header("Retry-After", String(retryAfterSeconds))
+        .header("content-type", "application/problem+json")
+        .send({
+          type: "https://velvetai.example/errors/ai-quota-exceeded",
+          title: "AI Quota Exceeded",
+          status: 429,
+          code: "ai_quota_exceeded",
+          error: "ai_quota_exceeded",
+          detail: `AI daily turn budget reached (${dailyBudget} turns). Try again in ${retryAfterSeconds}s.`,
+          message: `AI daily turn budget reached (${dailyBudget} turns). Try again in ${retryAfterSeconds}s.`,
+          retryAfter: retryAfterSeconds,
+        });
+    }
+
+    // 6. Public demo limits: Per-user turn limit (10 turns per 10 minutes)
+    const userLimitWindowMs = 10 * 60 * 1000; // 10 minutes
+    const userKey = principal.userId || principal.subject;
+    const activeUserTurns = (userRateWindows.get(userKey) || []).filter(
+      (ts) => now - ts < userLimitWindowMs,
+    );
+    if (activeUserTurns.length >= 10) {
+      const oldestTurn = activeUserTurns[0] ?? now;
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((oldestTurn + userLimitWindowMs - now) / 1000),
+      );
+      return reply
+        .status(429)
+        .header("Retry-After", String(retryAfterSeconds))
+        .header("content-type", "application/problem+json")
+        .send({
+          type: "https://velvetai.example/errors/ai-quota-exceeded",
+          title: "AI Quota Exceeded",
+          status: 429,
+          code: "ai_quota_exceeded",
+          error: "ai_quota_exceeded",
+          detail: `AI rate limit exceeded for user (10 turns per 10 minutes). Try again in ${retryAfterSeconds}s.`,
+          message: `AI rate limit exceeded for user (10 turns per 10 minutes). Try again in ${retryAfterSeconds}s.`,
+          retryAfter: retryAfterSeconds,
+        });
+    }
+
+    // 7. Public demo limits: Per-IP turn limit (30 turns per 10 minutes)
+    const ipLimitWindowMs = 10 * 60 * 1000; // 10 minutes
+    const rawForwarded = request.headers["x-forwarded-for"];
+    const clientIp =
+      (typeof rawForwarded === "string"
+        ? rawForwarded.split(",")[0]?.trim()
+        : Array.isArray(rawForwarded)
+          ? rawForwarded[0]
+          : undefined) ||
+      request.ip ||
+      "127.0.0.1";
+    const activeIpTurns = (ipRateWindows.get(clientIp) || []).filter(
+      (ts) => now - ts < ipLimitWindowMs,
+    );
+    if (activeIpTurns.length >= 30) {
+      const oldestTurn = activeIpTurns[0] ?? now;
+      const retryAfterSeconds = Math.max(1, Math.ceil((oldestTurn + ipLimitWindowMs - now) / 1000));
+      return reply
+        .status(429)
+        .header("Retry-After", String(retryAfterSeconds))
+        .header("content-type", "application/problem+json")
+        .send({
+          type: "https://velvetai.example/errors/ai-quota-exceeded",
+          title: "AI Quota Exceeded",
+          status: 429,
+          code: "ai_quota_exceeded",
+          error: "ai_quota_exceeded",
+          detail: `AI rate limit exceeded for IP (30 turns per 10 minutes). Try again in ${retryAfterSeconds}s.`,
+          message: `AI rate limit exceeded for IP (30 turns per 10 minutes). Try again in ${retryAfterSeconds}s.`,
+          retryAfter: retryAfterSeconds,
+        });
+    }
+
+    // 8. Validate input body
     const body = request.body as {
       messages?: Array<{
         id?: string;
@@ -144,12 +245,25 @@ export async function aiRoutes(app: FastifyInstance, options: AiChatRouteOptions
     };
 
     if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
-      tenantConcurrency.set(tenantId, Math.max(0, (tenantConcurrency.get(tenantId) || 1) - 1));
       return reply.status(400).send({
         error: "BAD_REQUEST",
         message: "Body must contain a non-empty messages array.",
       });
     }
+
+    // Record turn against budgets and track concurrency
+    rateWindow.push(now);
+    tenantRateWindows.set(tenantId, rateWindow);
+    activeUserTurns.push(now);
+    userRateWindows.set(userKey, activeUserTurns);
+    activeIpTurns.push(now);
+    ipRateWindows.set(clientIp, activeIpTurns);
+    globalDailyTurns.push(now);
+
+    tenantConcurrency.set(tenantId, currentConcurrent + 1);
+    reply.raw.on("close", () => {
+      tenantConcurrency.set(tenantId, Math.max(0, (tenantConcurrency.get(tenantId) || 1) - 1));
+    });
 
     // 5. Build ToolExecutionContext
     const toolExecutionContext: ToolExecutionContext = {

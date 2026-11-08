@@ -114,4 +114,21 @@ describe("Authoritative Root Env Loader", () => {
       /DATABASE_URL is required for Unit Test Runner but was not found/,
     );
   });
+
+  it("works reliably when no .env files exist and only process.env is set (hosted/Docker runtime)", () => {
+    // Ensure tempDir contains NO .env, .env.local, or .env.test files
+    process.env.DATABASE_URL =
+      "postgresql://velvet_runtime:secret@dpg-abc-a.oregon-postgres.render.com/velvetai?sslmode=require";
+    process.env.NODE_ENV = "production";
+    process.env.PORT = "3000";
+
+    const result = loadRootEnv({ rootDir: tempDir, forceReload: true, isTest: false });
+
+    expect(result.loadedFiles).toHaveLength(0);
+    expect(result.databaseName).toBe("velvetai");
+    expect(process.env.DATABASE_URL).toBe(
+      "postgresql://velvet_runtime:secret@dpg-abc-a.oregon-postgres.render.com/velvetai?sslmode=require",
+    );
+    expect(requireDatabaseUrl("Render Container", tempDir)).toBe(process.env.DATABASE_URL);
+  });
 });

@@ -70,6 +70,23 @@ export async function ensureSyntheticDevTenant(db: Kysely<Database>): Promise<vo
       })
       .onConflict((oc) => oc.column("id").doNothing())
       .execute();
+
+    // 3. Ensure default sandbox provider connection exists for webhook routing
+    await trx
+      .insertInto("provider_connections")
+      .values({
+        id: "01932b10-0008-7000-8000-000000000001",
+        tenant_id: SYNTHETIC_DEV_TENANT_ID,
+        provider: "PAYPAL",
+        environment: "sandbox",
+        connection_key: "default",
+        client_id: process.env.PAYPAL_CLIENT_ID || "mock_paypal_client_id",
+        client_secret_ciphertext: "env:PAYPAL_CLIENT_SECRET",
+        webhook_id: process.env.PAYPAL_WEBHOOK_ID || "mock_webhook_id",
+        status: "ACTIVE",
+      })
+      .onConflict((oc) => oc.columns(["tenant_id", "connection_key"]).doNothing())
+      .execute();
   });
 }
 
@@ -96,9 +113,9 @@ export async function provisionTestUser(
   },
 ): Promise<ProvisionResult> {
   const currentEnv = options?.nodeEnv ?? process.env.NODE_ENV;
-  if (currentEnv === "production") {
+  if (currentEnv === "production" && process.env.ALLOW_HOSTED_SEED !== "1") {
     throw new Error(
-      "REFUSED: auth:provision-test-user cannot be run in production environment (NODE_ENV=production).",
+      "REFUSED: auth:provision-test-user cannot be run in production environment (NODE_ENV=production). Set ALLOW_HOSTED_SEED=1 to provision hosted demo tenant.",
     );
   }
 
@@ -114,6 +131,15 @@ export async function provisionTestUser(
   if (!databaseUrl || databaseUrl.trim().length === 0) {
     throw new Error(
       "DATABASE_URL is required to provision test user but was not found in environment, .env.local, or .env.",
+    );
+  }
+
+  const parsed = new URL(databaseUrl);
+  const host = parsed.hostname.toLowerCase();
+  const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  if (!isLocalHost && process.env.ALLOW_HOSTED_SEED !== "1") {
+    throw new Error(
+      `REFUSED: Database host "${host}" is not localhost. To provision against a hosted demo database, set ALLOW_HOSTED_SEED=1.`,
     );
   }
 
@@ -282,9 +308,9 @@ const isMain =
 if (isMain) {
   (async () => {
     try {
-      if (process.env.NODE_ENV === "production") {
+      if (process.env.NODE_ENV === "production" && process.env.ALLOW_HOSTED_SEED !== "1") {
         console.error(
-          "FATAL: auth:provision-test-user cannot be run in production environment (NODE_ENV=production).",
+          "FATAL: auth:provision-test-user cannot be run in production environment (NODE_ENV=production) without ALLOW_HOSTED_SEED=1.",
         );
         process.exit(1);
       }
