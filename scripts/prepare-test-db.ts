@@ -17,8 +17,9 @@ const TEST_PACKAGES = [
 ];
 
 async function main() {
+  const port = process.env.POSTGRES_PORT || "5432";
   const baseTestUrl =
-    process.env.TEST_DATABASE_URL || "postgresql://localhost:5432/velvetai_test?sslmode=disable";
+    process.env.TEST_DATABASE_URL || `postgresql://localhost:${port}/velvetai_test?sslmode=disable`;
   const parsed = new URL(baseTestUrl);
   parsed.pathname = "/postgres";
   const maintenanceUrl = parsed.toString();

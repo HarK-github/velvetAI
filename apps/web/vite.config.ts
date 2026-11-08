@@ -6,7 +6,8 @@ export default defineConfig({
   envDir: fileURLToPath(new URL("../../", import.meta.url)),
   plugins: [react()],
   server: {
-    port: 5173,
+    port: Number(process.env.WEB_PORT ?? 5173),
+    strictPort: true,
     host: "0.0.0.0",
   },
 });

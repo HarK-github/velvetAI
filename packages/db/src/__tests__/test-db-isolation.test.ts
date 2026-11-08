@@ -91,4 +91,46 @@ describe("Test Database Isolation Guard", () => {
       process.env.DATABASE_URL = origDb;
     }
   });
+
+  it("assertSafeTestDatabaseUrl accepts velvetai_test_api_b and rejects velvetai_b", () => {
+    expect(() =>
+      assertSafeTestDatabaseUrl("postgresql://localhost:5433/velvetai_test_api_b"),
+    ).not.toThrow();
+
+    expect(() => assertSafeTestDatabaseUrl("postgresql://localhost:5433/velvetai_b")).toThrowError(
+      /must end with "_test" or contain "_test_" safe marker/,
+    );
+  });
+
+  it("getTestDatabaseUrl supports TEST_DB_SUFFIX for parallel worktrees", () => {
+    const origSuffix = process.env.TEST_DB_SUFFIX;
+    const origTestDb = process.env.TEST_DATABASE_URL;
+
+    try {
+      process.env.TEST_DB_SUFFIX = "_b";
+      process.env.TEST_DATABASE_URL = "postgresql://localhost:5433/velvetai_test";
+      expect(getTestDatabaseUrl("")).toBe("postgresql://localhost:5433/velvetai_test_b");
+      expect(getTestDatabaseUrl("api")).toBe("postgresql://localhost:5433/velvetai_test_api_b");
+      expect(getTestDatabaseUrl("db")).toBe("postgresql://localhost:5433/velvetai_test_db_b");
+      expect(getTestDatabaseUrl("application")).toBe(
+        "postgresql://localhost:5433/velvetai_test_application_b",
+      );
+      expect(getTestDatabaseUrl("worker")).toBe(
+        "postgresql://localhost:5433/velvetai_test_worker_b",
+      );
+      expect(getTestDatabaseUrl("abuse-lab")).toBe(
+        "postgresql://localhost:5433/velvetai_test_abuse_lab_b",
+      );
+      expect(getTestDatabaseUrl("migration")).toBe(
+        "postgresql://localhost:5433/velvetai_test_migration_b",
+      );
+    } finally {
+      if (origSuffix !== undefined) {
+        process.env.TEST_DB_SUFFIX = origSuffix;
+      } else {
+        delete process.env.TEST_DB_SUFFIX;
+      }
+      process.env.TEST_DATABASE_URL = origTestDb;
+    }
+  });
 });

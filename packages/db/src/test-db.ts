@@ -40,12 +40,24 @@ export function detectCurrentPackageName(): string | undefined {
  */
 export function resolvePackageTestDatabaseName(baseName: string, packageName?: string): string {
   const pkg = (packageName !== undefined ? packageName : detectCurrentPackageName() || "").trim();
-  if (!pkg) return baseName;
+  const suffix = (process.env.TEST_DB_SUFFIX ?? "").trim();
   const cleanPkg = pkg.replace(/^@velvetai\//, "").replace(/-/g, "_");
-  if (baseName.endsWith(`_${cleanPkg}`)) {
+
+  if (!cleanPkg) {
+    if (suffix && !baseName.endsWith(suffix)) {
+      return `${baseName}${suffix}`;
+    }
     return baseName;
   }
-  return `${baseName}_${cleanPkg}`;
+
+  const expectedSuffix = `${cleanPkg}${suffix}`;
+  if (baseName.endsWith(`_${expectedSuffix}`)) {
+    return baseName;
+  }
+  if (suffix && baseName.endsWith(`_${cleanPkg}`)) {
+    return `${baseName}${suffix}`;
+  }
+  return `${baseName}_${expectedSuffix}`;
 }
 
 /**
@@ -117,16 +129,21 @@ export function getTestDatabaseUrl(packageName?: string): string {
           `TEST STARTUP BLOCKED: DATABASE_URL points to development database "${dbName}". Set TEST_DATABASE_URL to an isolated database ending in "_test" (e.g. postgresql://localhost:5432/velvetai_test?sslmode=disable).`,
         );
       } else {
-        resolvedUrl = "postgresql://localhost:5432/velvetai_test?sslmode=disable";
+        const host = process.env.POSTGRES_HOST || "localhost";
+        const port = process.env.POSTGRES_PORT || "5432";
+        resolvedUrl = `postgresql://${host}:${port}/velvetai_test?sslmode=disable`;
       }
     } else {
-      resolvedUrl = "postgresql://localhost:5432/velvetai_test?sslmode=disable";
+      const host = process.env.POSTGRES_HOST || "localhost";
+      const port = process.env.POSTGRES_PORT || "5432";
+      resolvedUrl = `postgresql://${host}:${port}/velvetai_test?sslmode=disable`;
     }
   }
 
-  // Derive per-package database if package detected or specified
+  // Derive per-package database if package detected or specified, or if TEST_DB_SUFFIX is set
   const pkg = packageName !== undefined ? packageName : detectCurrentPackageName();
-  if (pkg) {
+  const suffix = (process.env.TEST_DB_SUFFIX ?? "").trim();
+  if (pkg !== undefined || suffix) {
     const parsed = new URL(resolvedUrl);
     const baseDbName = extractDatabaseName(resolvedUrl);
     const targetDbName = resolvePackageTestDatabaseName(baseDbName, pkg);
