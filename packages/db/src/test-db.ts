@@ -43,27 +43,29 @@ export function detectCurrentPackageName(): string | undefined {
 
 /**
  * Resolves the isolated per-package test database name based on base name and package.
+ * Strips any existing worktree suffix from baseName to prevent double-suffixing (e.g. velvetai_test_b + _b -> velvetai_test_b).
  */
 export function resolvePackageTestDatabaseName(baseName: string, packageName?: string): string {
   const pkg = (packageName !== undefined ? packageName : detectCurrentPackageName() || "").trim();
   const suffix = (process.env.TEST_DB_SUFFIX ?? "").trim();
   const cleanPkg = pkg.replace(/^@velvetai\//, "").replace(/-/g, "_");
 
+  // Strip trailing suffix from baseName if present to avoid duplication
+  const baseWithoutSuffix =
+    suffix && baseName.endsWith(suffix) ? baseName.slice(0, -suffix.length) : baseName;
+
   if (!cleanPkg) {
-    if (suffix && !baseName.endsWith(suffix)) {
-      return `${baseName}${suffix}`;
+    if (suffix) {
+      return `${baseWithoutSuffix}${suffix}`;
     }
     return baseName;
   }
 
-  const expectedSuffix = `${cleanPkg}${suffix}`;
-  if (baseName.endsWith(`_${expectedSuffix}`)) {
-    return baseName;
+  if (baseWithoutSuffix.endsWith(`_${cleanPkg}`)) {
+    return `${baseWithoutSuffix}${suffix}`;
   }
-  if (suffix && baseName.endsWith(`_${cleanPkg}`)) {
-    return `${baseName}${suffix}`;
-  }
-  return `${baseName}_${expectedSuffix}`;
+
+  return `${baseWithoutSuffix}_${cleanPkg}${suffix}`;
 }
 
 /**

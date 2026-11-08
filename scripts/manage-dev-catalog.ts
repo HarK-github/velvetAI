@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import {
   createDatabaseClient,
   withTenantTransaction,
@@ -8,6 +6,7 @@ import {
   type Kysely,
 } from "../packages/db/src/index.ts";
 import { loadRootEnv, extractDatabaseName } from "./load-env.js";
+import { ensureSyntheticDevTenant } from "./provision-test-user.js";
 
 export const SYNTHETIC_DEV_TENANT_ID = "01932b10-0000-7000-8000-000000000001";
 export const CANONICAL_SERVICES = [
@@ -57,32 +56,6 @@ export const CANONICAL_SERVICES = [
     cancellationPolicyId: "01932b10-0003-7000-8000-000000000001",
   },
 ];
-
-export function loadEnv(): void {
-  let rootDir = process.cwd();
-  for (let i = 0; i < 5; i++) {
-    if (fs.existsSync(path.join(rootDir, "pnpm-workspace.yaml"))) {
-      break;
-    }
-    const parent = path.dirname(rootDir);
-    if (parent === rootDir) break;
-    rootDir = parent;
-  }
-
-  const loadFile = (name: string) => {
-    const full = path.join(rootDir, name);
-    if (fs.existsSync(full) && typeof process.loadEnvFile === "function") {
-      try {
-        process.loadEnvFile(full);
-      } catch {
-        // ignore
-      }
-    }
-  };
-
-  loadFile(".env");
-  loadFile(".env.local");
-}
 
 export function assertSafeDevEnvironment(dbUrl: string): void {
   if (process.env.NODE_ENV === "production") {
@@ -136,6 +109,9 @@ export async function manageDevCatalog(options?: {
       `Mode:      ${isConfirmed ? "EXECUTE (MUTATION ENABLED)" : "PREVIEW ONLY (DRY RUN)"}`,
     );
     console.log("==================================================");
+
+    // 0. Idempotently ensure the synthetic development tenant and dependencies exist
+    await ensureSyntheticDevTenant(db);
 
     // 1. Audit existing records in synthetic development tenant within RLS tenant context
     const { existingServices, existingVersions, existingBookings, existingPaymentIntents } =

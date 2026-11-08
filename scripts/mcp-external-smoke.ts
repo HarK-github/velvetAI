@@ -233,19 +233,43 @@ export async function runMcpSmoke(options?: {
     const rawText = content[0]?.text || "{}";
 
     if (res.isError) {
-      throw new Error(`prepare_booking.v1 error: ${rawText}`);
+      const errMsg = `prepare_booking.v1 failed with isError=true: ${rawText}`;
+      logStep("d", "prepare_booking.v1", false, errMsg);
+      console.error(`\n[FATAL] ${errMsg}`);
+      process.exit(1);
     }
 
-    const data = JSON.parse(rawText);
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      const errMsg = `prepare_booking.v1 returned non-JSON payload: ${rawText}`;
+      logStep("d", "prepare_booking.v1", false, errMsg);
+      console.error(`\n[FATAL] ${errMsg}`);
+      process.exit(1);
+    }
 
-    signedIntent = data.intent || data.signedIntent || "";
-    approvalLocator = data.approvalLocator || "";
+    signedIntent = ((data.intent || data.signedIntent || "") as string).trim();
+    approvalLocator = ((data.approvalLocator || "") as string).trim();
+
+    if (!signedIntent || !approvalLocator) {
+      const errMsg = `prepare_booking.v1 returned empty locator or intent: intentPresent=${Boolean(signedIntent)}, locatorPresent=${Boolean(approvalLocator)}, raw=${rawText}`;
+      logStep("d", "prepare_booking.v1", false, errMsg);
+      console.error(`\n[FATAL] ${errMsg}`);
+      process.exit(1);
+    }
 
     const isHeld = data.status === "HELD";
-    const hasLocator =
-      typeof approvalLocator === "string" && approvalLocator.includes("/v1/booking-approvals/");
+    const hasLocator = approvalLocator.includes("/v1/booking-approvals/");
     const noRawConfirmationToken =
       !rawText.includes("confirmationToken") && !data.confirmationToken;
+
+    if (!isHeld || !hasLocator) {
+      const errMsg = `prepare_booking.v1 did not produce a valid HELD state with approval locator: status=${data.status}, locator=${approvalLocator}`;
+      logStep("d", "prepare_booking.v1", false, errMsg);
+      console.error(`\n[FATAL] ${errMsg}`);
+      process.exit(1);
+    }
 
     logStep(
       "d",
@@ -254,7 +278,13 @@ export async function runMcpSmoke(options?: {
       `Status: ${data.status}, Locator: ${approvalLocator}, Raw confirmation token leaked: ${!noRawConfirmationToken}`,
     );
   } catch (err: unknown) {
-    logStep("d", "prepare_booking.v1", false, (err as Error).message);
+    const errorMsg = (err as Error).message;
+    logStep("d", "prepare_booking.v1", false, errorMsg);
+    console.error(`\n[FATAL] MCP smoke test halted at step d (prepare_booking.v1): ${errorMsg}`);
+    console.error(
+      "Cannot proceed to approval or commit steps without a valid booking hold and locator.",
+    );
+    process.exit(1);
   }
 
   // ----------------------------------------------------
@@ -301,8 +331,19 @@ export async function runMcpSmoke(options?: {
   // ----------------------------------------------------
   // f. Pause and print approval locator URL
   // ----------------------------------------------------
-  const locatorId = approvalLocator.replace("/v1/booking-approvals/", "").trim();
-  const webApprovalUrl = `http://localhost:5173/approve/${locatorId}`;
+  if (!approvalLocator || !approvalLocator.includes("/v1/booking-approvals/")) {
+    console.error("[FATAL] Missing valid approval locator URL. Aborting smoke test.");
+    process.exit(1);
+  }
+
+  const locatorId = approvalLocator.replace(/^.*\/v1\/booking-approvals\//, "").trim();
+  if (!locatorId) {
+    console.error("[FATAL] Extracted locatorId is empty. Aborting smoke test.");
+    process.exit(1);
+  }
+
+  const webPort = process.env.WEB_PORT || "5173";
+  const webApprovalUrl = `http://localhost:${webPort}/approve/${locatorId}`;
   const apiApprovalUrl = `${baseUrl}/v1/booking-approvals/${locatorId}`;
 
   console.log("\n========================================================");

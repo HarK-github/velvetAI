@@ -15,4 +15,3 @@
 4. Never force-push. Never rebase a pushed branch.
 5. Pull main into your track at least once per day even without finishing a package.
 6. Only track A runs `pnpm mcp:smoke` and hosted PayPal tests; track B tests PayPal locally.
-

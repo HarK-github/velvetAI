@@ -1,12 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import {
   extractDatabaseName,
   assertSafeTestDatabaseUrl,
   assertSafeTestDatabaseTeardown,
   getTestDatabaseUrl,
+  resolvePackageTestDatabaseName,
 } from "../test-db.js";
+import { loadRootEnv } from "@velvetai/observability";
 
 describe("Test Database Isolation Guard", () => {
+  beforeAll(() => {
+    loadRootEnv({ isTest: true });
+  });
   it("extracts database name from valid PostgreSQL connection URLs", () => {
     expect(extractDatabaseName("postgresql://user:pass@localhost:5432/velvetai_test")).toBe(
       "velvetai_test",
@@ -65,8 +70,12 @@ describe("Test Database Isolation Guard", () => {
   it("getTestDatabaseUrl prefers TEST_DATABASE_URL and blocks unsafe DATABASE_URL", () => {
     const origTestDb = process.env.TEST_DATABASE_URL;
     const origDb = process.env.DATABASE_URL;
+    const origSuffix = process.env.TEST_DB_SUFFIX;
+    const origPkg = process.env.TEST_PACKAGE_NAME;
 
     try {
+      delete process.env.TEST_DB_SUFFIX;
+      delete process.env.TEST_PACKAGE_NAME;
       process.env.TEST_DATABASE_URL = "postgresql://localhost:5432/velvetai_test";
       expect(getTestDatabaseUrl("")).toBe("postgresql://localhost:5432/velvetai_test");
       expect(getTestDatabaseUrl("api")).toBe("postgresql://localhost:5432/velvetai_test_api");
@@ -89,6 +98,16 @@ describe("Test Database Isolation Guard", () => {
     } finally {
       process.env.TEST_DATABASE_URL = origTestDb;
       process.env.DATABASE_URL = origDb;
+      if (origSuffix !== undefined) {
+        process.env.TEST_DB_SUFFIX = origSuffix;
+      } else {
+        delete process.env.TEST_DB_SUFFIX;
+      }
+      if (origPkg !== undefined) {
+        process.env.TEST_PACKAGE_NAME = origPkg;
+      } else {
+        delete process.env.TEST_PACKAGE_NAME;
+      }
     }
   });
 
@@ -105,8 +124,10 @@ describe("Test Database Isolation Guard", () => {
   it("getTestDatabaseUrl supports TEST_DB_SUFFIX for parallel worktrees", () => {
     const origSuffix = process.env.TEST_DB_SUFFIX;
     const origTestDb = process.env.TEST_DATABASE_URL;
+    const origPkg = process.env.TEST_PACKAGE_NAME;
 
     try {
+      delete process.env.TEST_PACKAGE_NAME;
       process.env.TEST_DB_SUFFIX = "_b";
       process.env.TEST_DATABASE_URL = "postgresql://localhost:5433/velvetai_test";
       expect(getTestDatabaseUrl("")).toBe("postgresql://localhost:5433/velvetai_test_b");
@@ -131,6 +152,94 @@ describe("Test Database Isolation Guard", () => {
         delete process.env.TEST_DB_SUFFIX;
       }
       process.env.TEST_DATABASE_URL = origTestDb;
+      if (origPkg !== undefined) {
+        process.env.TEST_PACKAGE_NAME = origPkg;
+      } else {
+        delete process.env.TEST_PACKAGE_NAME;
+      }
+    }
+  });
+
+  it("resolves api DB as velvetai_test_api_b when TEST_DB_SUFFIX=_b and TEST_DATABASE_URL base is velvetai_test", () => {
+    const origSuffix = process.env.TEST_DB_SUFFIX;
+    const origTestDb = process.env.TEST_DATABASE_URL;
+    const origPkg = process.env.TEST_PACKAGE_NAME;
+
+    try {
+      delete process.env.TEST_PACKAGE_NAME;
+      process.env.TEST_DB_SUFFIX = "_b";
+      process.env.TEST_DATABASE_URL = "postgresql://localhost:5432/velvetai_test?sslmode=disable";
+      expect(getTestDatabaseUrl("api")).toBe(
+        "postgresql://localhost:5432/velvetai_test_api_b?sslmode=disable",
+      );
+    } finally {
+      if (origSuffix !== undefined) {
+        process.env.TEST_DB_SUFFIX = origSuffix;
+      } else {
+        delete process.env.TEST_DB_SUFFIX;
+      }
+      process.env.TEST_DATABASE_URL = origTestDb;
+      if (origPkg !== undefined) {
+        process.env.TEST_PACKAGE_NAME = origPkg;
+      } else {
+        delete process.env.TEST_PACKAGE_NAME;
+      }
+    }
+  });
+
+  it("never appends suffix twice if the base or resolved database name already ends with the suffix", () => {
+    const origSuffix = process.env.TEST_DB_SUFFIX;
+    const origTestDb = process.env.TEST_DATABASE_URL;
+    const origPkg = process.env.TEST_PACKAGE_NAME;
+
+    try {
+      delete process.env.TEST_PACKAGE_NAME;
+      process.env.TEST_DB_SUFFIX = "_b";
+
+      // 1. Base URL already ends with _b (e.g. velvetai_test_b)
+      process.env.TEST_DATABASE_URL = "postgresql://localhost:5432/velvetai_test_b?sslmode=disable";
+      expect(getTestDatabaseUrl("")).toBe(
+        "postgresql://localhost:5432/velvetai_test_b?sslmode=disable",
+      );
+      expect(getTestDatabaseUrl("api")).toBe(
+        "postgresql://localhost:5432/velvetai_test_api_b?sslmode=disable",
+      );
+      expect(getTestDatabaseUrl("db")).toBe(
+        "postgresql://localhost:5432/velvetai_test_db_b?sslmode=disable",
+      );
+
+      // 2. Base URL already has package and suffix (e.g. velvetai_test_api_b)
+      process.env.TEST_DATABASE_URL =
+        "postgresql://localhost:5432/velvetai_test_api_b?sslmode=disable";
+      expect(getTestDatabaseUrl("")).toBe(
+        "postgresql://localhost:5432/velvetai_test_api_b?sslmode=disable",
+      );
+      expect(getTestDatabaseUrl("api")).toBe(
+        "postgresql://localhost:5432/velvetai_test_api_b?sslmode=disable",
+      );
+
+      // 3. Direct resolvePackageTestDatabaseName invocations
+      expect(resolvePackageTestDatabaseName("velvetai_test_b", "")).toBe("velvetai_test_b");
+      expect(resolvePackageTestDatabaseName("velvetai_test_b", "api")).toBe("velvetai_test_api_b");
+      expect(resolvePackageTestDatabaseName("velvetai_test_api_b", "api")).toBe(
+        "velvetai_test_api_b",
+      );
+      expect(resolvePackageTestDatabaseName("velvetai_test_api_b", "")).toBe("velvetai_test_api_b");
+      expect(resolvePackageTestDatabaseName("velvetai_test_api", "api")).toBe(
+        "velvetai_test_api_b",
+      );
+    } finally {
+      if (origSuffix !== undefined) {
+        process.env.TEST_DB_SUFFIX = origSuffix;
+      } else {
+        delete process.env.TEST_DB_SUFFIX;
+      }
+      process.env.TEST_DATABASE_URL = origTestDb;
+      if (origPkg !== undefined) {
+        process.env.TEST_PACKAGE_NAME = origPkg;
+      } else {
+        delete process.env.TEST_PACKAGE_NAME;
+      }
     }
   });
 });

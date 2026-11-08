@@ -3,11 +3,75 @@ import path from "node:path";
 import readline from "node:readline";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { createDatabaseClient, sql, type Kysely, type Database } from "../packages/db/src/index.ts";
+import {
+  createDatabaseClient,
+  withTenantTransaction,
+  sql,
+  type Kysely,
+  type Database,
+} from "../packages/db/src/index.ts";
 import { loadRootEnv, extractDatabaseName } from "./load-env.js";
 
 export const SYNTHETIC_DEV_TENANT_ID = "01932b10-0000-7000-8000-000000000001";
+export const SYNTHETIC_DEV_LOCATION_ID = "01932b10-0002-7000-8000-000000000001";
+export const SYNTHETIC_DEV_RESOURCE_ID = "01932b10-0004-7000-8000-000000000001";
+export const SYNTHETIC_DEV_AVAILABILITY_RULE_ID = "01932b10-0006-7000-8000-000000000001";
 export const ALLOWED_ROLE = "BUYER" as const;
+
+export async function ensureSyntheticDevTenant(db: Kysely<Database>): Promise<void> {
+  // 1. Ensure tenant exists (tenants table is not tenant-partitioned)
+  await db
+    .insertInto("tenants")
+    .values({
+      id: SYNTHETIC_DEV_TENANT_ID,
+      name: "Velvet Flagship Manhattan",
+      default_currency: "USD",
+      status: "ACTIVE",
+    })
+    .onConflict((oc) => oc.column("id").doNothing())
+    .execute();
+
+  // 2. Ensure location, resource, and availability exist under tenant RLS context
+  await withTenantTransaction(db, SYNTHETIC_DEV_TENANT_ID as any, async (trx) => {
+    await trx
+      .insertInto("locations")
+      .values({
+        id: SYNTHETIC_DEV_LOCATION_ID,
+        tenant_id: SYNTHETIC_DEV_TENANT_ID,
+        name: "SoHo Flagship",
+        timezone: "America/New_York",
+        status: "ACTIVE",
+      })
+      .onConflict((oc) => oc.column("id").doNothing())
+      .execute();
+
+    await trx
+      .insertInto("resources")
+      .values({
+        id: SYNTHETIC_DEV_RESOURCE_ID,
+        tenant_id: SYNTHETIC_DEV_TENANT_ID,
+        location_id: SYNTHETIC_DEV_LOCATION_ID,
+        resource_type: "CHAIR",
+        display_name: "Master Chair 1",
+        status: "ACTIVE",
+      })
+      .onConflict((oc) => oc.column("id").doNothing())
+      .execute();
+
+    await trx
+      .insertInto("availability_rules")
+      .values({
+        id: SYNTHETIC_DEV_AVAILABILITY_RULE_ID,
+        tenant_id: SYNTHETIC_DEV_TENANT_ID,
+        resource_id: SYNTHETIC_DEV_RESOURCE_ID,
+        timezone: "America/New_York",
+        recurrence_rule: "RRULE:FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16,17",
+        effective_from: new Date("2026-01-01T00:00:00Z"),
+      })
+      .onConflict((oc) => oc.column("id").doNothing())
+      .execute();
+  });
+}
 
 export interface ProvisionResult {
   userId: string;
@@ -60,28 +124,12 @@ export async function provisionTestUser(
   let shouldDestroy = !options?.db;
 
   try {
+    // 1. Ensure the synthetic development tenant, location, and resource exist
+    await ensureSyntheticDevTenant(db);
+
     return await db.transaction().execute(async (trx) => {
       // Set transaction-local tenant context for RLS policy on tenant-isolated tables
       await sql`SELECT set_config('app.tenant_id', ${SYNTHETIC_DEV_TENANT_ID}, true)`.execute(trx);
-
-      // 1. Ensure the synthetic development tenant exists
-      const tenant = await trx
-        .selectFrom("tenants")
-        .where("id", "=", SYNTHETIC_DEV_TENANT_ID)
-        .select(["id", "name"])
-        .executeTakeFirst();
-
-      if (!tenant) {
-        await trx
-          .insertInto("tenants")
-          .values({
-            id: SYNTHETIC_DEV_TENANT_ID,
-            name: "Velvet Flagship Manhattan",
-            default_currency: "USD",
-            status: "ACTIVE",
-          })
-          .execute();
-      }
 
       // 2. Check if an app_user for this oidc_subject already exists
       let isNewUser = false;

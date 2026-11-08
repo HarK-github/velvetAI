@@ -29,6 +29,9 @@ Each workspace package is allocated an independent, fully isolated PostgreSQL te
 When running parallel tracks (e.g., Track A in `velvetAI` and Track B in `velvetAI-b`), test databases are further isolated by an optional suffix set via `TEST_DB_SUFFIX` in `.env.local` (e.g. `TEST_DB_SUFFIX=_b`).
 This derives isolated database names such as `velvetai_test_b`, `velvetai_test_api_b`, etc., allowing simultaneous test executions without cross-talk.
 
+> [!IMPORTANT]
+> **Base Database Invariant**: `TEST_DATABASE_URL` base remains `postgresql://localhost:5432/velvetai_test?sslmode=disable` in every worktree (both Track A and Track B). Do not manually append worktree suffixes to `TEST_DATABASE_URL` (e.g. do NOT set `TEST_DATABASE_URL=.../velvetai_test_b`). Only `TEST_DB_SUFFIX` changes in `.env.local` (e.g., `TEST_DB_SUFFIX=_b`). The database resolver automatically derives suffixed package databases (e.g., `velvetai_test_api_b`, `velvetai_test_db_b`) from `TEST_DATABASE_URL` and `TEST_DB_SUFFIX` while preventing duplicate suffixing.
+
 ### Authoritative Environment Loading & `TEST_DB_SUFFIX` Invariant
 
 Environment loading across scripts, workers, APIs, and Vitest runs is managed centrally by `@velvetai/observability` (`loadRootEnv`).
