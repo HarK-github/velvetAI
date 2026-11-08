@@ -291,4 +291,96 @@ describe("Gemini Protection: Per-User, Per-IP, and Global Daily Rate Limits", ()
 
     await budgetApp.close();
   });
+
+  it("assigns separate IP rate limit buckets to different X-Forwarded-For headers", async () => {
+    const ipA = "203.0.113.10";
+    const ipB = "198.51.100.20";
+
+    // Exhaust ipA (30 turns with unique users)
+    for (let i = 0; i < 30; i++) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/v1/ai/chat",
+        headers: {
+          authorization: `Bearer test-token:ipa-user-${i}:${tenantId}:BUYER:1`,
+          "content-type": "application/json",
+          "x-forwarded-for": ipA,
+        },
+        payload: {
+          messages: [{ role: "user", content: `Turn for IP A ${i}` }],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+    }
+
+    // 31st turn for ipA should be rate limited
+    const resIpABlocked = await app.inject({
+      method: "POST",
+      url: "/v1/ai/chat",
+      headers: {
+        authorization: `Bearer test-token:ipa-user-overflow:${tenantId}:BUYER:1`,
+        "content-type": "application/json",
+        "x-forwarded-for": ipA,
+      },
+      payload: {
+        messages: [{ role: "user", content: "Exceeded turn for IP A" }],
+      },
+    });
+    expect(resIpABlocked.statusCode).toBe(429);
+    expect(JSON.parse(resIpABlocked.body).message).toContain("30 turns per 10 minutes");
+
+    // ipB has a separate bucket and must still succeed
+    const resIpBOk = await app.inject({
+      method: "POST",
+      url: "/v1/ai/chat",
+      headers: {
+        authorization: `Bearer test-token:ipb-user-1:${tenantId}:BUYER:1`,
+        "content-type": "application/json",
+        "x-forwarded-for": ipB,
+      },
+      payload: {
+        messages: [{ role: "user", content: "First turn for IP B" }],
+      },
+    });
+    expect(resIpBOk.statusCode).toBe(200);
+  });
+
+  it("prevents spoofed X-Forwarded-For headers from bypassing the per-user turn limit", async () => {
+    // User 1 attempts to bypass their 10-turn limit by spoofing a different IP on every turn
+    for (let i = 0; i < 10; i++) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/v1/ai/chat",
+        headers: {
+          authorization: user1Auth,
+          "content-type": "application/json",
+          "x-forwarded-for": `10.200.${i}.1`, // Spoofing IP on every request
+        },
+        payload: {
+          messages: [{ role: "user", content: `User 1 attempt with spoofed IP ${i}` }],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+    }
+
+    // 11th turn with yet another fresh spoofed IP
+    const resSpoofed11 = await app.inject({
+      method: "POST",
+      url: "/v1/ai/chat",
+      headers: {
+        authorization: user1Auth,
+        "content-type": "application/json",
+        "x-forwarded-for": "10.200.99.1", // Fresh spoofed IP
+      },
+      payload: {
+        messages: [{ role: "user", content: "Turn 11 trying to bypass per-user limit" }],
+      },
+    });
+
+    // Still blocked! Per-user quota binds to the authenticated user ID, not the IP
+    expect(resSpoofed11.statusCode).toBe(429);
+    const body = JSON.parse(resSpoofed11.body);
+    expect(body.code).toBe("ai_quota_exceeded");
+    expect(body.message).toContain("10 turns per 10 minutes");
+  });
 });

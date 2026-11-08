@@ -291,9 +291,9 @@ const isMain =
 if (isMain) {
   (async () => {
     try {
-      if (process.env.NODE_ENV === "production") {
+      if (process.env.NODE_ENV === "production" && process.env.ALLOW_HOSTED_SEED !== "1") {
         console.error(
-          "FATAL: auth:provision-test-user cannot be run in production environment (NODE_ENV=production).",
+          "FATAL: auth:provision-test-user cannot be run in production environment (NODE_ENV=production) without ALLOW_HOSTED_SEED=1.",
         );
         process.exit(1);
       }

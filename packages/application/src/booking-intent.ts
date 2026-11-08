@@ -15,8 +15,41 @@ const intentKeyStore = new Map<string, IntentKeyConfig>();
 // Generate a default deterministic ES256 keypair for dev/testing if not supplied
 let defaultKeyPair: IntentKeyConfig | null = null;
 
+export function resetDefaultIntentKeysForTesting(): void {
+  defaultKeyPair = null;
+}
+
 export function getDefaultIntentKeys(): IntentKeyConfig {
   if (!defaultKeyPair) {
+    const rawKey = process.env.INTENT_SIGNING_KEY?.trim();
+    if (rawKey && !rawKey.startsWith("dev_secret_")) {
+      try {
+        let pem = rawKey;
+        if (!pem.includes("-----BEGIN")) {
+          const decoded = Buffer.from(pem, "base64").toString("utf8");
+          if (decoded.includes("-----BEGIN")) {
+            pem = decoded;
+          }
+        }
+        pem = pem.replace(/\\n/g, "\n");
+        const privKey = crypto.createPrivateKey(pem);
+        const pubKey = crypto.createPublicKey(privKey);
+        defaultKeyPair = {
+          kid: process.env.INTENT_SIGNING_KEY_ID || "key-velvetai-1",
+          privateKeyPem: privKey.export({ type: "pkcs8", format: "pem" }) as string,
+          publicKeyPem: pubKey.export({ type: "spki", format: "pem" }) as string,
+        };
+        registerIntentKey(defaultKeyPair);
+        return defaultKeyPair;
+      } catch (err) {
+        if (process.env.NODE_ENV === "production") {
+          throw new Error(
+            `Failed to parse INTENT_SIGNING_KEY in production: ${(err as Error).message}`,
+          );
+        }
+      }
+    }
+
     const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", {
       namedCurve: "prime256v1",
     });

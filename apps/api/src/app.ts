@@ -34,6 +34,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
 
   const app = Fastify({
     loggerInstance: logger as unknown as FastifyInstance["log"],
+    trustProxy: true,
     genReqId: (req) => {
       const headerReqId = req.headers["x-request-id"];
       return typeof headerReqId === "string" ? headerReqId : crypto.randomUUID();

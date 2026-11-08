@@ -7,11 +7,17 @@ This guide provides step-by-step instructions for configuring Auth0 for VelvetAI
 
 ---
 
-## 1. Create an Auth0 Tenant
+## 1. Auth0 Tenant & Architecture Overview
 
-1. Log in to the [Auth0 Dashboard](https://manage.auth0.com/).
-2. Click your tenant name in the top-right corner and select **Create Tenant**.
-3. Choose a domain name (e.g., `velvetai-demo` or your organization identifier) and select your preferred region.
+- **Active Tenant**: `dev-ru8k002bt7vgmtj5.us.auth0.com` (migrated 2026-11-08 from deprecated tenant `dev-o55m2ek822mgtiim`).
+- **Core Objects**:
+  - **API `velvetAI API`**: Identifier `https://velvetai.example/api`, RS256 signing, 7 fine-grained permissions.
+  - **SPA Application `velvetAI Web`**: Client ID `UDUndVMtt7rVZS874ztyNbcrRBSKNhMc`, User-delegated access 7/7 to `velvetAI API`.
+  - **Local MCP API `velvetAI MCP`**: Identifier `http://localhost:3000/mcp`, 4 permissions.
+  - **Hosted MCP API `velvetAI MCP (Render)`**: Identifier `https://<api-service>.onrender.com/mcp`, 4 permissions.
+  - **M2M Application `velvetAI MCP Agent`**: Client ID `ULbcuvsdRzS9hsNWRe9pgx7BQRhae8Ut`, Client Access 4/4 to MCP APIs.
+  - **Provisioned Test Buyer**: Auth0 subject `auth0|6af02be79968e1f8f05bcee2` (mapped to PostgreSQL synthetic dev tenant as `BUYER`).
+  - **Provisioned Agent Client**: Subject `ULbcuvsdRzS9hsNWRe9pgx7BQRhae8Ut@clients` (mapped to PostgreSQL synthetic dev tenant as `BUYER`).
 
 ---
 
@@ -62,17 +68,34 @@ This guide provides step-by-step instructions for configuring Auth0 for VelvetAI
 
 ---
 
-## 4. Pre-registered Demo MCP Client (Optional Machine-to-Machine)
+## 4. Machine-to-Machine MCP Applications & Hosted Render Configuration
 
-For testing external MCP clients with OAuth 2.0 Client Credentials:
+### A. Pre-configured Local M2M Agent (`velvetAI MCP Agent`)
 
-1. Under **Applications** > **Applications**, click **+ Create Application**.
-2. Select **Machine to Machine Applications**.
-3. Name it `VelvetAI MCP Demo Client`.
-4. Authorize the application for the `VelvetAI API` and select the appropriate scopes:
-   - Read-only demo client: `booking:read`, `booking:quote`
-   - Full booking agent: `booking:read`, `booking:quote`, `booking:prepare`, `booking:commit`, `booking:cancel`
-5. Note the generated Client ID and Client Secret in your local testing environment.
+- **Application**: `velvetAI MCP Agent` (Client ID: `ULbcuvsdRzS9hsNWRe9pgx7BQRhae8Ut`).
+- **Auth Method**: Client Secret (Post).
+- **Authorizations**:
+  - Local API `velvetAI MCP` (`http://localhost:3000/mcp`): Client Access 4/4 (`booking:read`, `booking:quote`, `booking:prepare`, `booking:commit`).
+
+### B. Hosted Render MCP API & Agent Authorization
+
+When deploying to Render:
+
+1. Navigate to **Applications** → **APIs** → **+ Create API**.
+2. Configure:
+   - **Name**: `velvetAI MCP (Render)`
+   - **Identifier**: `https://<api-service>.onrender.com/mcp`
+   - **Signing Algorithm**: `RS256`
+3. Under the **Permissions** tab, add 4 scopes:
+   - `booking:read`
+   - `booking:quote`
+   - `booking:prepare`
+   - `booking:commit`
+4. Under **Applications** → **Applications** → **`velvetAI MCP Agent`**, navigate to the **API Access** tab.
+5. In the table, locate **`velvetAI MCP (Render)`**.
+6. Under the **Client Access** column (not User-delegated), enable access and grant all 4 permissions (`4/4`): `booking:read`, `booking:quote`, `booking:prepare`, `booking:commit`.
+7. Click **Save**.
+8. Set the Render API service environment variable `MCP_RESOURCE_URL` to `https://<api-service>.onrender.com/mcp`.
 
 ---
 

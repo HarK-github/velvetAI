@@ -479,8 +479,19 @@ describe("W5: PostgreSQL Outbox Store & Reconciliation Worker", () => {
 
   it("7. Production configuration cannot silently select in-memory storage", () => {
     const originalEnv = process.env.NODE_ENV;
+    const origSigning = process.env.INTENT_SIGNING_KEY;
+    const origConfirm = process.env.CONFIRMATION_TOKEN_SECRET;
+    const origEnvelope = process.env.ENVELOPE_ENCRYPTION_KEY;
     try {
       process.env.NODE_ENV = "production";
+      process.env.INTENT_SIGNING_KEY = Buffer.from(
+        crypto
+          .generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+          .privateKey.export({ type: "pkcs8", format: "pem" }),
+      ).toString("base64");
+      process.env.CONFIRMATION_TOKEN_SECRET = "super_secret_confirmation_token_secret_32_chars";
+      process.env.ENVELOPE_ENCRYPTION_KEY =
+        "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
       const inMemoryStore = new InMemoryOutboxStore();
 
       expect(() => {
@@ -488,6 +499,12 @@ describe("W5: PostgreSQL Outbox Store & Reconciliation Worker", () => {
       }).toThrow(/InMemoryOutboxStore is prohibited in production/);
     } finally {
       process.env.NODE_ENV = originalEnv;
+      if (origSigning) process.env.INTENT_SIGNING_KEY = origSigning;
+      else delete process.env.INTENT_SIGNING_KEY;
+      if (origConfirm) process.env.CONFIRMATION_TOKEN_SECRET = origConfirm;
+      else delete process.env.CONFIRMATION_TOKEN_SECRET;
+      if (origEnvelope) process.env.ENVELOPE_ENCRYPTION_KEY = origEnvelope;
+      else delete process.env.ENVELOPE_ENCRYPTION_KEY;
     }
   });
 });

@@ -217,10 +217,10 @@ $ curl -s http://localhost:3000/v1/ai/status
 {"provider":"gemini","model":"gemini-3.5-flash-lite","realProviderConfigured":true,"realProviderVerified":false}
 
 $ curl -s http://localhost:3000/.well-known/oauth-protected-resource
-{"resource":"https://velvetai.example/api","authorization_servers":["https://dev-ru8k002bt7vgmtj5.us.auth0.com/"],"bearer_methods_supported":["header"],"scopes_supported":["booking:read","booking:quote","booking:prepare","booking:commit","booking:cancel","merchant:schedule","merchant:refund"]}
+{"resource":"https://velvetai.example/api","authorization_servers":["https://dev-o55m2ek822mgtiim.us.auth0.com/"],"bearer_methods_supported":["header"],"scopes_supported":["booking:read","booking:quote","booking:prepare","booking:commit","booking:cancel","merchant:schedule","merchant:refund"]}
 
 $ curl -s http://localhost:3000/.well-known/oauth-protected-resource/mcp
-{"resource":"http://localhost:3000/mcp","authorization_servers":["https://dev-ru8k002bt7vgmtj5.us.auth0.com/"],"bearer_methods_supported":["header"],"scopes_supported":["booking:read","booking:quote","booking:prepare","booking:commit"]}
+{"resource":"http://localhost:3000/mcp","authorization_servers":["https://dev-o55m2ek822mgtiim.us.auth0.com/"],"bearer_methods_supported":["header"],"scopes_supported":["booking:read","booking:quote","booking:prepare","booking:commit"]}
 
 $ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5173/
 200

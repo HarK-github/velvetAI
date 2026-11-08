@@ -188,9 +188,20 @@ describe("W1: Auth0 Identity and Local Membership Authority", () => {
     it("fails startup when allowDevTokens is configured in production environment", () => {
       const origEnv = process.env.NODE_ENV;
       const origMock = process.env.OIDC_MOCK_ENABLED;
+      const origSigning = process.env.INTENT_SIGNING_KEY;
+      const origConfirm = process.env.CONFIRMATION_TOKEN_SECRET;
+      const origEnvelope = process.env.ENVELOPE_ENCRYPTION_KEY;
       try {
         process.env.NODE_ENV = "production";
         process.env.OIDC_MOCK_ENABLED = "true";
+        process.env.INTENT_SIGNING_KEY = Buffer.from(
+          crypto
+            .generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+            .privateKey.export({ type: "pkcs8", format: "pem" }),
+        ).toString("base64");
+        process.env.CONFIRMATION_TOKEN_SECRET = "super_secret_confirmation_token_secret_32_chars";
+        process.env.ENVELOPE_ENCRYPTION_KEY =
+          "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
         expect(() => {
           new Auth0AuthenticationAdapter({
             issuer: testIssuer,
@@ -202,6 +213,12 @@ describe("W1: Auth0 Identity and Local Membership Authority", () => {
       } finally {
         process.env.NODE_ENV = origEnv;
         process.env.OIDC_MOCK_ENABLED = origMock;
+        if (origSigning) process.env.INTENT_SIGNING_KEY = origSigning;
+        else delete process.env.INTENT_SIGNING_KEY;
+        if (origConfirm) process.env.CONFIRMATION_TOKEN_SECRET = origConfirm;
+        else delete process.env.CONFIRMATION_TOKEN_SECRET;
+        if (origEnvelope) process.env.ENVELOPE_ENCRYPTION_KEY = origEnvelope;
+        else delete process.env.ENVELOPE_ENCRYPTION_KEY;
       }
     });
 
