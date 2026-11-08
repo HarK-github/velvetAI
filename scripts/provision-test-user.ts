@@ -70,6 +70,23 @@ export async function ensureSyntheticDevTenant(db: Kysely<Database>): Promise<vo
       })
       .onConflict((oc) => oc.column("id").doNothing())
       .execute();
+
+    // 3. Ensure default sandbox provider connection exists for webhook routing
+    await trx
+      .insertInto("provider_connections")
+      .values({
+        id: "01932b10-0008-7000-8000-000000000001",
+        tenant_id: SYNTHETIC_DEV_TENANT_ID,
+        provider: "PAYPAL",
+        environment: "sandbox",
+        connection_key: "default",
+        client_id: process.env.PAYPAL_CLIENT_ID || "mock_paypal_client_id",
+        client_secret_ciphertext: "env:PAYPAL_CLIENT_SECRET",
+        webhook_id: process.env.PAYPAL_WEBHOOK_ID || "mock_webhook_id",
+        status: "ACTIVE",
+      })
+      .onConflict((oc) => oc.columns(["tenant_id", "connection_key"]).doNothing())
+      .execute();
   });
 }
 

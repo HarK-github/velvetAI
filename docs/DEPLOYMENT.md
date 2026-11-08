@@ -241,12 +241,18 @@ unset DB_URL
 
 1. Go to [PayPal Developer Portal](https://developer.paypal.com/dashboard/applications/sandbox).
 2. Open your sandbox app → **Webhooks** → **Add Webhook**.
-3. URL: `https://<api-service>.onrender.com/v1/payments/webhooks/paypal`
-4. Subscribe to event:
+3. **Webhook URL**: `https://<api-service>.onrender.com/v1/webhooks/paypal/default`
+   _(Route is `POST /v1/webhooks/paypal/:connectionKey`, matching `provider_connections.connection_key = "default"` seeded for the synthetic development tenant)._
+4. **Event Types**: Check the 6 events processed by the authoritative payment reducer:
    - `CHECKOUT.ORDER.APPROVED`
-5. Save and copy the Webhook ID.
-6. In Render Dashboard, paste the ID into `PAYPAL_WEBHOOK_ID` in `velvetai-sandbox-secrets`.
-7. Trigger redeploy of `velvetai-api`.
+   - `CHECKOUT.PAYMENT-APPROVAL.REVERSED`
+   - `PAYMENT.CAPTURE.COMPLETED`
+   - `PAYMENT.CAPTURE.PENDING`
+   - `PAYMENT.CAPTURE.DENIED`
+   - `PAYMENT.CAPTURE.REFUNDED`
+5. Save and copy the Webhook ID (e.g. `WH-...`).
+6. In Render Dashboard, paste the ID into `PAYPAL_WEBHOOK_ID` under `velvetai-sandbox-secrets`.
+7. Trigger a redeploy of `velvetai-api` and `velvetai-worker`.
 
 ---
 
