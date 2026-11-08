@@ -58,9 +58,9 @@ export const CANONICAL_SERVICES = [
 ];
 
 export function assertSafeDevEnvironment(dbUrl: string): void {
-  if (process.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_HOSTED_SEED !== "1") {
     throw new Error(
-      "REFUSED: Catalog cleanup/seed cannot be run in production (NODE_ENV=production).",
+      "REFUSED: Catalog cleanup/seed cannot be run in production (NODE_ENV=production). Set ALLOW_HOSTED_SEED=1 to seed a hosted demo database.",
     );
   }
 
@@ -69,9 +69,9 @@ export function assertSafeDevEnvironment(dbUrl: string): void {
   const dbName = parsed.pathname.replace(/^\//, "").toLowerCase();
 
   const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1";
-  if (!isLocalHost) {
+  if (!isLocalHost && process.env.ALLOW_HOSTED_SEED !== "1") {
     throw new Error(
-      `REFUSED: Database host "${host}" is not localhost. Catalog cleanup is restricted to local development.`,
+      `REFUSED: Database host "${host}" is not localhost. Catalog cleanup is restricted to local development or hosted demo seeding with ALLOW_HOSTED_SEED=1.`,
     );
   }
 
