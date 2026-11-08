@@ -23,17 +23,22 @@ export class ApiError extends Error {
   }
 }
 
+export const API_BASE_URL =
+  typeof import.meta.env !== "undefined" && import.meta.env.VITE_API_BASE_URL
+    ? (import.meta.env.VITE_API_BASE_URL as string)
+    : "http://localhost:3000";
+
 export class VelvetApiClient {
   private readonly baseUrl: string;
   private authToken?: string;
 
   constructor(config?: ApiClientConfig) {
-    const envBaseUrl =
-      typeof import.meta.env !== "undefined"
-        ? (import.meta.env.VITE_API_BASE_URL as string | undefined)
-        : undefined;
-    this.baseUrl = config?.baseUrl ?? envBaseUrl ?? "http://localhost:3000";
+    this.baseUrl = config?.baseUrl ?? API_BASE_URL;
     this.authToken = config?.authToken;
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
   }
 
   private tokenProvider?: () => Promise<string | undefined>;

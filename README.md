@@ -102,7 +102,8 @@ graph TD
 
 - **Node.js**: Node 24 LTS (pinned via `mise.toml` to `24.22.1`, activated via `mise`)
 - **pnpm**: `12.14.0` (pinned via `mise.toml` and root `packageManager`)
-- **Docker & Docker Compose**: For local PostgreSQL 17 (`btree_gist` extension) and Redis 7
+- **PostgreSQL 17**: Local Homebrew PostgreSQL 17 (`brew services postgresql@17` on port 5432 with `max_connections 400`)
+- **Docker & Docker Compose**: For local Redis 7 (`docker compose up -d redis`). The `postgres` service in `docker-compose.yml` is optional and must not run simultaneously with Homebrew PostgreSQL.
 
 ---
 
@@ -125,11 +126,15 @@ Copy-Item .env.example .env
 
 _(On Linux/macOS: `cp .env.example .env`)_
 
-### 3. Start Local PostgreSQL and Redis
+### 3. Start Local Redis & Verify PostgreSQL
 
-```powershell
-pnpm docker:up
+Ensure Homebrew PostgreSQL 17 is running on port 5432, then start Redis:
+
+```bash
+docker compose up -d redis
 ```
+
+_(Note: `pnpm docker:up` starts Docker services. If using Homebrew PostgreSQL, do not start the Docker postgres container to prevent port 5432 collision)._
 
 ### 4. Install Dependencies
 

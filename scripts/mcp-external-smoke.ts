@@ -1,22 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
 import readline from "node:readline";
 import crypto from "node:crypto";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-
-function loadEnvFiles(): void {
-  const rootDir = process.cwd();
-  for (const envFile of [".env", ".env.local"]) {
-    const fullPath = path.join(rootDir, envFile);
-    if (fs.existsSync(fullPath) && typeof process.loadEnvFile === "function") {
-      try {
-        process.loadEnvFile(fullPath);
-      } catch {
-        // ignore
-      }
-    }
-  }
-}
+import { loadRootEnv } from "./load-env.js";
 
 export function redact(val: string | null | undefined): string {
   if (!val) return "(none)";
@@ -72,7 +57,7 @@ export async function runMcpSmoke(options?: {
   token?: string;
   autoApprove?: boolean;
 }): Promise<{ results: SmokeResult[]; allPassed: boolean }> {
-  loadEnvFiles();
+  loadRootEnv();
   const baseUrl = options?.baseUrl || "http://localhost:3000";
   const mcpUrl = new URL("/mcp", baseUrl);
   const autoApprove = options?.autoApprove ?? process.argv.includes("--auto-approve");

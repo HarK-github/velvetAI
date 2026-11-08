@@ -1,4 +1,4 @@
-import { createLogger, validateEnv } from "@velvetai/observability";
+import { createLogger, validateEnv, loadRootEnv } from "@velvetai/observability";
 import { createDatabaseClient, Database } from "@velvetai/db";
 import { Kysely } from "kysely";
 import { OutboxProcessor, InMemoryOutboxStore, OutboxStore } from "./outbox-processor.js";
@@ -20,6 +20,7 @@ export class OutboxWorker {
   readonly reconciliation?: ReconciliationProcessor;
 
   constructor(store?: OutboxStore, db?: Kysely<Database>) {
+    loadRootEnv();
     validateEnv();
 
     const isProduction = process.env.NODE_ENV === "production";
@@ -35,11 +36,11 @@ export class OutboxWorker {
     if (store) {
       effectiveStore = store;
     } else if (isProduction || process.env.DATABASE_URL) {
-      const dbClient =
-        db ||
-        createDatabaseClient(
-          process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable",
-        );
+      const dbUrl = process.env.DATABASE_URL;
+      if (!dbUrl) {
+        throw new Error("DATABASE_URL is required for production or PostgreSqlOutboxStore.");
+      }
+      const dbClient = db || createDatabaseClient(dbUrl);
       effectiveStore = new PostgreSqlOutboxStore(dbClient);
     } else {
       effectiveStore = new InMemoryOutboxStore();
@@ -48,11 +49,11 @@ export class OutboxWorker {
     this.processor = new OutboxProcessor(effectiveStore);
 
     if (db || process.env.DATABASE_URL) {
-      const dbClient =
-        db ||
-        createDatabaseClient(
-          process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable",
-        );
+      const dbUrl = process.env.DATABASE_URL;
+      if (!dbUrl) {
+        throw new Error("DATABASE_URL is required for HoldReaperProcessor.");
+      }
+      const dbClient = db || createDatabaseClient(dbUrl);
       this.holdReaper = new HoldReaperProcessor(dbClient);
     }
   }

@@ -24,15 +24,35 @@ Each workspace package is allocated an independent, fully isolated PostgreSQL te
 | **`@velvetai/worker`**                   | `velvetai_test_worker`      | Hold reaper and PostgreSQL outbox reconciliation tests          |
 | **`@velvetai/abuse-lab`**                | `velvetai_test_abuse_lab`   | Deterministic abuse scenarios and security attack suites        |
 
+### Parallel Worktree Support (`TEST_DB_SUFFIX`)
+
+When running parallel tracks (e.g., Track A in `velvetAI` and Track B in `velvetAI-b`), test databases are further isolated by an optional suffix set via `TEST_DB_SUFFIX` in `.env.local` (e.g. `TEST_DB_SUFFIX=_b`).
+This derives isolated database names such as `velvetai_test_b`, `velvetai_test_api_b`, etc., allowing simultaneous test executions without cross-talk.
+
+### Authoritative Environment Loading & `TEST_DB_SUFFIX` Invariant
+
+Environment loading across scripts, workers, APIs, and Vitest runs is managed centrally by `@velvetai/observability` (`loadRootEnv`).
+
+Precedence order:
+
+1. `process.env` (system/shell environment variables take highest precedence).
+2. `.env.local` (worktree-local overrides: ports, local database names, `TEST_DB_SUFFIX`).
+3. `.env.test` (applied when `NODE_ENV=test` for test defaults like `OIDC_MOCK_ENABLED=true`).
+4. `.env` (base repo defaults).
+
+> [!IMPORTANT]
+> **Decision on `TEST_DB_SUFFIX`**: `.env.test` must **NEVER** override `TEST_DB_SUFFIX`. `TEST_DB_SUFFIX` is a machine/worktree-local configuration defined in `.env.local` to isolate parallel test database clusters. Because `.env.test` is committed to version control and shared across all worktrees, allowing `.env.test` to override `TEST_DB_SUFFIX` would break test isolation between parallel tracks.
+
 ### Automatic Resolution via `getTestDatabaseUrl`
 
 The function `getTestDatabaseUrl(packageName?: string)` in `@velvetai/db`:
 
-1. Resolves the base connection URL from `process.env.TEST_DATABASE_URL` (falling back to `process.env.DATABASE_URL` or `postgresql://localhost:5432/velvetai_test?sslmode=disable`).
-2. Detects the calling package via `packageName` parameter, `process.env.TEST_PACKAGE_NAME`, `process.env.npm_package_name`, or `process.cwd()`.
-3. Derives the package-specific database name (e.g., `velvetai_test_api`, `velvetai_test_application`).
-4. Verifies database safety invariants:
-   - Throws immediately if connected to development databases (`velvetai`, `velvet_dev`, `velvet_development`).
+1. Invokes `loadRootEnv({ isTest: true })` to guarantee worktree configuration is active.
+2. Resolves the base connection URL from `process.env.TEST_DATABASE_URL` (falling back to `process.env.DATABASE_URL` or `postgresql://localhost:5432/velvetai_test?sslmode=disable`).
+3. Detects the calling package via `packageName` parameter, `process.env.TEST_PACKAGE_NAME`, `process.env.npm_package_name`, or `process.cwd()`.
+4. Derives the package-specific database name (e.g., `velvetai_test_api` or `velvetai_test_api_b`).
+5. Verifies database safety invariants:
+   - Throws immediately if connected to development databases (`velvetai`, `velvetai_b`, `velvet_dev`, `velvet_development`).
    - Requires database name to end with `_test` or contain the safe marker `_test_`.
 
 ### Intra-Package Sequential Execution
@@ -41,7 +61,19 @@ In packages with stateful database operations (`@velvetai/db`, `@velvetai/applic
 
 ---
 
-## 2. Test Environment Answers & Invariants
+## 2. Local Database & Service Architecture
+
+### Local PostgreSQL 17 (Homebrew)
+
+Local development and automated test databases run on **Homebrew PostgreSQL 17** (`brew services postgresql@17`) listening on `127.0.0.1:5432` / `[::1]:5432`.
+
+- `max_connections` is configured to **400** to sustain burst concurrency testing (100+ concurrent clients) alongside Turborepo's parallel multi-package test execution.
+- Docker is used exclusively for Redis 7 (`docker compose up -d redis`).
+- The `postgres` service in `docker-compose.yml` is optional and must **not** run simultaneously with Homebrew PostgreSQL to avoid port 5432 collision.
+
+---
+
+## 3. Test Environment Answers & Invariants
 
 ### Q1: Does `.env.test` contain a password?
 
@@ -66,9 +98,10 @@ pnpm db:test:prepare
 
 This script (`scripts/prepare-test-db.ts`):
 
-1. Connects to the PostgreSQL maintenance database.
-2. Creates any missing test databases (`velvetai_test`, `velvetai_test_db`, `velvetai_test_migration`, `velvetai_test_application`, `velvetai_test_api`, `velvetai_test_worker`, `velvetai_test_abuse_lab`).
-3. Runs all Kysely database migrations up to the latest version on each database.
+1. Loads the root environment via `loadRootEnv({ isTest: true })`.
+2. Connects to the PostgreSQL maintenance database.
+3. Creates any missing test databases (including suffixed variants like `velvetai_test_api_b` if `TEST_DB_SUFFIX` is set).
+4. Runs all Kysely database migrations up to the latest version on each database.
 
 ### Q3: Migration Lifecycle Test Isolation
 

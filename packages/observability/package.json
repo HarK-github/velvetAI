@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./env-loader": {
+      "types": "./dist/env-loader.d.ts",
+      "import": "./dist/env-loader.js"
     }
   },
   "scripts": {

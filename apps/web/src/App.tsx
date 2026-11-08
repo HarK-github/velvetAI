@@ -12,6 +12,7 @@ import { PolicyPage } from "./pages/PolicyPage.js";
 import { StatusPage } from "./pages/StatusPage.js";
 import { ApprovalPage } from "./pages/ApprovalPage.js";
 import { computeAuthDiagnostic } from "./lib/auth-config.js";
+import { API_BASE_URL } from "./api-client.js";
 
 const AppContent: FC = () => {
   const { currentPath } = useRouter();
@@ -25,7 +26,7 @@ const AppContent: FC = () => {
     const checkApi = async () => {
       const start = performance.now();
       try {
-        const res = await fetch("http://localhost:3000/health/live");
+        const res = await fetch(`${API_BASE_URL}/health/live`);
         const elapsed = Math.round(performance.now() - start);
         if (res.ok) {
           setApiHealthy(true);

@@ -4,7 +4,8 @@ import {
   migrateToLatest,
   getTestDatabaseUrl,
   extractDatabaseName,
-} from "../packages/db/src/index.js";
+} from "../packages/db/src/index.ts";
+import { loadRootEnv } from "./load-env.js";
 
 const TEST_PACKAGES = [
   "", // velvetai_test (base)
@@ -17,9 +18,18 @@ const TEST_PACKAGES = [
 ];
 
 async function main() {
-  const port = process.env.POSTGRES_PORT || "5432";
-  const baseTestUrl =
-    process.env.TEST_DATABASE_URL || `postgresql://localhost:${port}/velvetai_test?sslmode=disable`;
+  loadRootEnv({ isTest: true });
+
+  const baseTestUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+  if (!baseTestUrl || baseTestUrl.trim().length === 0) {
+    throw new Error(
+      "TEST_DATABASE_URL (or DATABASE_URL) is required to prepare test databases but was not found in environment, .env.local, or .env.",
+    );
+  }
+
+  const baseDbName = extractDatabaseName(baseTestUrl);
+  console.log(`Target database: ${baseDbName}`);
+
   const parsed = new URL(baseTestUrl);
   parsed.pathname = "/postgres";
   const maintenanceUrl = parsed.toString();

@@ -7,7 +7,7 @@
 - Current track: Sprint S0: Hygiene and Baseline
 - Epic 4 code status: IMPLEMENTED & POLISHED (ACCEPTED)
 - Epic 5 code status: IN_PROGRESS (Sprint S0: Hygiene and Baseline)
-- Automated verification: VERIFIED (19/19 tasks, 459 tests passing in packages and apps)
+- Automated verification: VERIFIED (19/19 tasks, 389 tests passing across 12 packages and apps)
 - Real runtime & external verification:
   - Auth0 real-E2E: VERIFIED (real Auth0 Universal Login + `pnpm auth:provision-test-user` mapped to PostgreSQL `app_users`/`memberships`; protected `GET /v1/services` returns HTTP 200 under strict RLS; evidence: `apps/api/src/__tests__/auth0.test.ts`, runbook `docs/setup/auth0.md`)
   - Ask AI Fake-Provider real-E2E: VERIFIED (UI drawer, dynamic `Deterministic Demo Model` honesty badge, authenticated chat transport, multi-step tool calls `list_services_v1`/`find_available_slots_v1`/`prepare_booking_v1`, approval card locator with zero confirmation token exposure, prompt injection refused; evidence: `apps/web/src/__tests__/ask-ai-drawer.test.tsx`, `apps/api/src/__tests__/ai-chat.test.ts`)
@@ -55,13 +55,13 @@
    - Documented canonical `BUYER_MISMATCH` error code in operating rules.
 
 2. **Security Hygiene & Secret Scanning**:
-   - Documented Gemini API key revocation in `docs/SECURITY_NOTES.md` (revoked in Google AI Studio on 2026-11-05; key in git history commits `3a69c59` and `0e28782` is inactive; new key maintained strictly in `.env.local`). Zero secret fragments recorded.
+   - Documented Gemini API key revocation in `docs/SECURITY_NOTES.md` (revoked in Google AI Studio on 2026-11-08; key in git history commits `3a69c59` and `0e28782` is inactive; new key maintained strictly in `.env.local`). Zero secret fragments recorded.
    - Added `scripts/scan-secrets.sh` and npm script `pnpm secrets:scan`. Tracked files scanned cleanly.
 
 3. **Database Concurrency Test Diagnosis & Fix**:
-   - **Diagnosis**: PostgreSQL default `max_connections` (100) was exhausted during parallel execution of DB-backed test packages (`@velvetai/db`, `@velvetai/application`, `@velvetai/api`, `@velvetai/worker`) and concurrent dev servers. When connection pool capacity was depleted, connection acquisition blocked, causing 30s timeouts in `packages/db/src/__tests__/concurrency-booking.test.ts`.
-   - **Fix**: Raised local/test PostgreSQL `max_connections` to 300 via `command: ["postgres", "-c", "max_connections=300"]` in `docker-compose.yml`, fixed healthcheck user to `${POSTGRES_USER:-velvetai}`, and recreated the container (`docker compose up -d --force-recreate postgres`).
-   - **Proof**: Ran `pnpm turbo run test --force` twice consecutively. Both runs 100% green (19/19 tasks, 459 tests passing, run times ~8.2s and ~7.4s).
+   - **Diagnosis**: Active local development and test databases run on Homebrew PostgreSQL 17 (`brew services postgresql@17`) on port 5432 (not Docker postgres). The default `max_connections` (100) was exhausted during concurrent execution of DB-backed test packages (`@velvetai/db`, `@velvetai/application`, `@velvetai/api`, `@velvetai/worker`) alongside background dev polling, causing connection timeouts in `packages/db/src/__tests__/concurrency-booking.test.ts`.
+   - **Fix**: Raised Homebrew PostgreSQL `max_connections` to 400 (`ALTER SYSTEM SET max_connections = 400` + restart). Docker runs Redis 7 only (`docker compose up -d redis`); the optional docker-compose postgres container was stopped to prevent shadowing port 5432.
+   - **Proof**: Ran `pnpm turbo run test --force` with all 12 packages passing 389/389 tests in ~8.3–9.0s.
 
 4. **Epic 5 Work Packages Status**:
    - WP 01: Baseline and Plan — `NOT_STARTED`

@@ -3,12 +3,6 @@ import { buildApp } from "./app.js";
 import { validateEnv } from "@velvetai/observability";
 
 async function main() {
-  try {
-    process.loadEnvFile?.();
-  } catch {
-    // .env may not exist if environment variables are provided via container/system
-  }
-
   const env = validateEnv();
   const app = buildApp();
 

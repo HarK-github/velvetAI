@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { FC } from "react";
 import { Link } from "../router.js";
+import { API_BASE_URL } from "../api-client.js";
 
 interface HealthLiveResponse {
   status: string;
@@ -28,7 +29,7 @@ export const StatusPage: FC = () => {
     setIsRefreshing(true);
     const start = performance.now();
     try {
-      const res = await fetch(`http://localhost:3000${endpoint}`);
+      const res = await fetch(`${API_BASE_URL}${endpoint}`);
       const elapsed = Math.round(performance.now() - start);
       setLatency(elapsed);
       const json = await res.json();
@@ -40,7 +41,7 @@ export const StatusPage: FC = () => {
         setReadyData(json);
       }
     } catch {
-      setRawResponse("// Error: Unable to reach Fastify API server at http://localhost:3000");
+      setRawResponse(`// Error: Unable to reach Fastify API server at ${API_BASE_URL}`);
     } finally {
       setIsRefreshing(false);
     }
@@ -49,7 +50,7 @@ export const StatusPage: FC = () => {
   useEffect(() => {
     pingEndpoint("/health/live");
     // Also fetch ready
-    fetch("http://localhost:3000/health/ready")
+    fetch(`${API_BASE_URL}/health/ready`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setReadyData(d))
       .catch(() => {});

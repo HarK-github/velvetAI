@@ -12,7 +12,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useAuth0 } from "@auth0/auth0-react";
 import { formatMoney } from "@velvetai/contracts";
-import { apiClient } from "../api-client.js";
+import { apiClient, API_BASE_URL } from "../api-client.js";
 import { isAuth0Configured, isMockAuthEnabled, computeAuthDiagnostic } from "../lib/auth-config.js";
 import { SafeMarkdown } from "./SafeMarkdown.js";
 
@@ -186,10 +186,7 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
     ? Boolean(isAuthLoading || !isAuthenticated || initialTokenPending)
     : Boolean(!isMockAuthEnabled() && !authToken);
 
-  const apiBaseUrl =
-    typeof import.meta.env !== "undefined"
-      ? (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:3000"
-      : "http://localhost:3000";
+  const apiBaseUrl = API_BASE_URL;
 
   // Keep latest tokenResolver in ref to prevent rebuilding transport while ensuring fresh resolution before every request
   const tokenResolverRef = useRef(tokenResolver);

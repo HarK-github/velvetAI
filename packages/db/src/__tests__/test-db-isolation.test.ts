@@ -98,7 +98,7 @@ describe("Test Database Isolation Guard", () => {
     ).not.toThrow();
 
     expect(() => assertSafeTestDatabaseUrl("postgresql://localhost:5433/velvetai_b")).toThrowError(
-      /must end with "_test" or contain "_test_" safe marker/,
+      /(must end with "_test" or contain "_test_" safe marker|is the development database)/,
     );
   });
 

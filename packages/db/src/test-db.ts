@@ -1,8 +1,14 @@
 import { createDatabaseClient } from "./client.js";
 import type { Database } from "./schema.js";
 import type { Kysely } from "kysely";
+import { loadRootEnv } from "@velvetai/observability";
 
-export const DEV_DATABASE_NAMES = new Set(["velvetai", "velvet_dev", "velvet_development"]);
+export const DEV_DATABASE_NAMES = new Set([
+  "velvetai",
+  "velvetai_b",
+  "velvet_dev",
+  "velvet_development",
+]);
 
 /**
  * Parses the database name from a PostgreSQL connection URI.
@@ -112,6 +118,7 @@ export function assertSafeTestDatabaseTeardown(dbUrl: string): void {
  * Throws if the resolved URL does not pass safety checks.
  */
 export function getTestDatabaseUrl(packageName?: string): string {
+  loadRootEnv({ isTest: true });
   const envTestUrl = process.env.TEST_DATABASE_URL;
   let resolvedUrl: string;
 

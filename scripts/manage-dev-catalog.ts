@@ -6,7 +6,8 @@ import {
   sql,
   type Database,
   type Kysely,
-} from "../packages/db/dist/index.js";
+} from "../packages/db/src/index.ts";
+import { loadRootEnv, extractDatabaseName } from "./load-env.js";
 
 export const SYNTHETIC_DEV_TENANT_ID = "01932b10-0000-7000-8000-000000000001";
 export const CANONICAL_SERVICES = [
@@ -111,13 +112,17 @@ export async function manageDevCatalog(options?: {
   databaseUrl?: string;
   db?: Kysely<Database>;
 }) {
-  loadEnv();
-  const dbUrl =
-    options?.databaseUrl ||
-    process.env.DATABASE_URL ||
-    "postgresql://localhost:5432/velvetai?sslmode=disable";
+  loadRootEnv();
+  const dbUrl = options?.databaseUrl || process.env.DATABASE_URL;
+  if (!dbUrl || dbUrl.trim().length === 0) {
+    throw new Error(
+      "DATABASE_URL is required for catalog manager but was not found in environment, .env.local, or .env.",
+    );
+  }
 
   assertSafeDevEnvironment(dbUrl);
+  const dbName = extractDatabaseName(dbUrl);
+  console.log(`Target database: ${dbName}`);
 
   const db = options?.db || createDatabaseClient(dbUrl);
   const isConfirmed = Boolean(options?.confirm);

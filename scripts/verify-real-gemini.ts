@@ -1,36 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
 import process from "node:process";
 import { buildApp } from "../apps/api/dist/app.js";
 import { GeminiModelProvider } from "../packages/application/dist/index.js";
 import { createDatabaseClient, withTenantTransaction } from "../packages/db/dist/index.js";
 import { setAuthAdapter, Auth0AuthenticationAdapter } from "../apps/api/dist/plugins/auth.js";
-
-function loadEnv(): void {
-  let rootDir = process.cwd();
-  for (let i = 0; i < 5; i++) {
-    if (fs.existsSync(path.join(rootDir, "pnpm-workspace.yaml"))) {
-      break;
-    }
-    const parent = path.dirname(rootDir);
-    if (parent === rootDir) break;
-    rootDir = parent;
-  }
-
-  const loadFile = (fileName: string) => {
-    const full = path.join(rootDir, fileName);
-    if (fs.existsSync(full) && typeof process.loadEnvFile === "function") {
-      try {
-        process.loadEnvFile(full);
-      } catch {
-        // ignore
-      }
-    }
-  };
-
-  loadFile(".env");
-  loadFile(".env.local");
-}
+import { loadRootEnv, extractDatabaseName } from "./load-env.js";
 
 function parseStreamEvents(sseBody: string): Array<{ type: string; [key: string]: any }> {
   const events: Array<{ type: string; [key: string]: any }> = [];
@@ -51,7 +24,7 @@ function parseStreamEvents(sseBody: string): Array<{ type: string; [key: string]
 }
 
 async function runRealGeminiVerification() {
-  loadEnv();
+  loadRootEnv();
 
   const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!apiKey) {
@@ -63,8 +36,15 @@ async function runRealGeminiVerification() {
   process.env.AI_MODEL = process.env.AI_MODEL || "gemini-3.5-flash-lite";
   process.env.OIDC_MOCK_ENABLED = "true";
 
-  const databaseUrl =
-    process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl || databaseUrl.trim().length === 0) {
+    throw new Error(
+      "DATABASE_URL is required for Gemini verification but was not found in environment, .env.local, or .env.",
+    );
+  }
+
+  const dbName = extractDatabaseName(databaseUrl);
+  console.log(`Target database: ${dbName}`);
   const db = createDatabaseClient(databaseUrl);
 
   const tenantId = "01932b10-0000-7000-8000-000000000001";

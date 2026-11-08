@@ -3,12 +3,8 @@ import path from "node:path";
 import readline from "node:readline";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import {
-  createDatabaseClient,
-  sql,
-  type Kysely,
-  type Database,
-} from "../packages/db/dist/index.js";
+import { createDatabaseClient, sql, type Kysely, type Database } from "../packages/db/src/index.ts";
+import { loadRootEnv, extractDatabaseName } from "./load-env.js";
 
 export const SYNTHETIC_DEV_TENANT_ID = "01932b10-0000-7000-8000-000000000001";
 export const ALLOWED_ROLE = "BUYER" as const;
@@ -25,33 +21,6 @@ export interface ProvisionResult {
 export function redactId(id: string): string {
   if (!id || id.length <= 8) return "***";
   return `${id.slice(0, 8)}...${id.slice(-4)}`;
-}
-
-export function loadRootEnv(): void {
-  // Find repository root
-  let rootDir = process.cwd();
-  for (let i = 0; i < 5; i++) {
-    if (fs.existsSync(path.join(rootDir, "pnpm-workspace.yaml"))) {
-      break;
-    }
-    const parent = path.dirname(rootDir);
-    if (parent === rootDir) break;
-    rootDir = parent;
-  }
-
-  const loadEnv = (fileName: string) => {
-    const fullPath = path.join(rootDir, fileName);
-    if (fs.existsSync(fullPath) && typeof process.loadEnvFile === "function") {
-      try {
-        process.loadEnvFile(fullPath);
-      } catch {
-        // Ignore read/syntax errors
-      }
-    }
-  };
-
-  loadEnv(".env");
-  loadEnv(".env.local");
 }
 
 export async function provisionTestUser(
@@ -74,15 +43,18 @@ export async function provisionTestUser(
     throw new Error("Invalid subject: Auth0 OIDC subject cannot be empty.");
   }
 
-  // Load environment if DATABASE_URL is not set
-  if (!options?.db && !options?.databaseUrl && !process.env.DATABASE_URL) {
-    loadRootEnv();
+  // Always load root environment
+  loadRootEnv();
+
+  const databaseUrl = options?.databaseUrl ?? process.env.DATABASE_URL;
+  if (!databaseUrl || databaseUrl.trim().length === 0) {
+    throw new Error(
+      "DATABASE_URL is required to provision test user but was not found in environment, .env.local, or .env.",
+    );
   }
 
-  const databaseUrl =
-    options?.databaseUrl ??
-    process.env.DATABASE_URL ??
-    "postgresql://localhost:5432/velvetai?sslmode=disable";
+  const dbName = extractDatabaseName(databaseUrl);
+  console.log(`Target database: ${dbName}`);
 
   const db = options?.db ?? createDatabaseClient(databaseUrl);
   let shouldDestroy = !options?.db;

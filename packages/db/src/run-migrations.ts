@@ -1,10 +1,12 @@
 import { createDatabaseClient } from "./client.js";
 import { migrateToLatest } from "./migrator.js";
+import { requireDatabaseUrl, extractDatabaseName } from "@velvetai/observability";
 
 async function main() {
-  const databaseUrl =
-    process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
+  const databaseUrl = requireDatabaseUrl("Database Migrations");
+  const dbName = extractDatabaseName(databaseUrl);
 
+  console.log(`Target database: ${dbName}`);
   console.log("Connecting to PostgreSQL to run migrations...");
   const db = createDatabaseClient(databaseUrl);
 

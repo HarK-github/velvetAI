@@ -1,23 +1,8 @@
-import fs from "node:fs";
-import path from "node:path";
 import { provisionTestUser, redactId, SYNTHETIC_DEV_TENANT_ID } from "./provision-test-user.js";
-
-function loadEnvFiles(): void {
-  const rootDir = process.cwd();
-  for (const envFile of [".env", ".env.local"]) {
-    const fullPath = path.join(rootDir, envFile);
-    if (fs.existsSync(fullPath) && typeof process.loadEnvFile === "function") {
-      try {
-        process.loadEnvFile(fullPath);
-      } catch {
-        // ignore
-      }
-    }
-  }
-}
+import { loadRootEnv } from "./load-env.js";
 
 export async function provisionAgentClient(clientId?: string) {
-  loadEnvFiles();
+  loadRootEnv();
   const effectiveClientId = clientId || process.env.AUTH0_AGENT_CLIENT_ID;
   if (!effectiveClientId) {
     throw new Error(
