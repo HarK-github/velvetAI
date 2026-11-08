@@ -221,7 +221,7 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
       if (!providerStatus.realProviderVerified) {
         return "Gemini • Not yet verified";
       }
-      return `${providerStatus.model || "Gemini 3.5"} • Authoritative Tools`;
+      return "Gemini (live)";
     }
     return "Deterministic Demo Model";
   }, [providerStatus]);
@@ -273,9 +273,18 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
   useEffect(() => {
     if (prevStatusRef.current === "streaming" && status === "ready") {
       setStreamAnnouncement("Concierge response complete.");
+      // If provider was not yet verified, refetch status to reflect live verification
+      if (providerStatus && !providerStatus.realProviderVerified) {
+        fetch(`${apiBaseUrl}/v1/ai/status`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data: ProviderStatus | null) => {
+            if (data) setProviderStatus(data);
+          })
+          .catch(() => {});
+      }
     }
     prevStatusRef.current = status;
-  }, [status]);
+  }, [status, apiBaseUrl, providerStatus]);
 
   // Abort active chat stream on logout
   const prevAuthRef = useRef(isAuthenticated);
@@ -684,31 +693,39 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
                               )}
 
                               {/* Two-Phase Prepare Booking Hold Snapshot */}
-                              {(toolResult.approvalLocator || toolResult.approval_locator) && (
+                              {(toolResult.approvalUrl ||
+                                toolResult.approvalLocator ||
+                                toolResult.approval_locator) && (
                                 <div className="ai-approval-card">
                                   <div className="ai-hold-badge">
                                     <span>● HOLD ACTIVE</span>
                                     <span className="mono">15m Window</span>
                                   </div>
                                   <p style={{ margin: "8px 0 4px 0", fontSize: "12px" }}>
-                                    Authoritative slot reserved. Buyer must review policy terms and
-                                    confirm in browser to issue confirmation token.
+                                    Your AI assistant reserved this time for you. Review and approve
+                                    to book.
                                   </p>
-                                  <div
-                                    className="mono"
-                                    style={{ fontSize: "11px", color: "var(--muted)" }}
-                                  >
-                                    Booking Hold Reference:{" "}
-                                    <span className="mono text-muted">Active</span>
-                                  </div>
-                                  <a
-                                    href={toolResult.approvalLocator || toolResult.approval_locator}
-                                    className="button button--solid ai-review-terms-button"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    Review Terms & Confirm Hold ↗
-                                  </a>
+                                  {(() => {
+                                    const rawLocator =
+                                      toolResult.approvalLocator ||
+                                      toolResult.approval_locator ||
+                                      "";
+                                    const href =
+                                      toolResult.approvalUrl ||
+                                      (rawLocator.startsWith("http://") ||
+                                      rawLocator.startsWith("https://")
+                                        ? rawLocator
+                                        : `/approve/${rawLocator.replace(/^.*\/v1\/booking-approvals\//, "")}`);
+                                    return (
+                                      <a
+                                        href={href}
+                                        className="button button--solid ai-review-terms-button"
+                                        target="_self"
+                                      >
+                                        Open approval page
+                                      </a>
+                                    );
+                                  })()}
                                 </div>
                               )}
 

@@ -92,7 +92,12 @@ const Auth0StateButton: FC = () => {
         (typeof import.meta.env !== "undefined"
           ? (import.meta.env.VITE_AUTH0_AUDIENCE as string)
           : "") || "https://velvetai.example/api";
+      const returnTo =
+        typeof window !== "undefined" ? window.location.pathname + window.location.search : "/";
       await loginWithRedirect({
+        appState: {
+          returnTo,
+        },
         authorizationParams: {
           audience,
         },

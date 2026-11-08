@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { FC } from "react";
+import type { FC, ReactNode } from "react";
 import { Auth0Provider } from "@auth0/auth0-react";
 import { RouterProvider, useRouter } from "./router.js";
 import { Navbar } from "./components/Navbar.js";
@@ -11,7 +11,7 @@ import { SchedulePage } from "./pages/SchedulePage.js";
 import { PolicyPage } from "./pages/PolicyPage.js";
 import { StatusPage } from "./pages/StatusPage.js";
 import { ApprovalPage } from "./pages/ApprovalPage.js";
-import { computeAuthDiagnostic } from "./lib/auth-config.js";
+import { computeAuthDiagnostic, sanitizeReturnTo } from "./lib/auth-config.js";
 import { API_BASE_URL } from "./api-client.js";
 
 const AppContent: FC = () => {
@@ -140,6 +140,41 @@ if (typeof window !== "undefined") {
   }
 }
 
+export const Auth0ProviderWithRedirect: FC<{
+  domain: string;
+  clientId: string;
+  audience?: string;
+  children: ReactNode;
+}> = ({ domain, clientId, audience, children }) => {
+  const { navigate } = useRouter();
+
+  const onRedirectCallback = (appState?: { returnTo?: string }) => {
+    const target = sanitizeReturnTo(appState?.returnTo);
+    navigate(target);
+  };
+
+  const redirectUri =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost:5174";
+
+  return (
+    <Auth0Provider
+      domain={domain}
+      clientId={clientId}
+      authorizationParams={{
+        redirect_uri: redirectUri,
+        audience: audience || undefined,
+        scope:
+          "openid profile email offline_access booking:read booking:quote booking:prepare booking:commit booking:cancel",
+      }}
+      useRefreshTokens={true}
+      cacheLocation="localstorage"
+      onRedirectCallback={onRedirectCallback}
+    >
+      {children}
+    </Auth0Provider>
+  );
+};
+
 export function App() {
   const auth0Domain =
     ((typeof import.meta.env !== "undefined" ? import.meta.env.VITE_AUTH0_DOMAIN : "") as string) ||
@@ -155,7 +190,7 @@ export function App() {
 
   const isConfigured = Boolean(auth0Domain && auth0ClientId);
 
-  const content = (
+  return (
     <RouterProvider>
       {!isConfigured && (
         <div
@@ -175,30 +210,19 @@ export function App() {
           VITE_AUTH0_CLIENT_ID.
         </div>
       )}
-      <AppContent />
+      {isConfigured ? (
+        <Auth0ProviderWithRedirect
+          domain={auth0Domain}
+          clientId={auth0ClientId}
+          audience={auth0Audience}
+        >
+          <AppContent />
+        </Auth0ProviderWithRedirect>
+      ) : (
+        <AppContent />
+      )}
     </RouterProvider>
   );
-
-  if (isConfigured) {
-    return (
-      <Auth0Provider
-        domain={auth0Domain}
-        clientId={auth0ClientId}
-        authorizationParams={{
-          redirect_uri:
-            typeof window !== "undefined" ? window.location.origin : "http://localhost:5173",
-          audience: auth0Audience || undefined,
-          scope:
-            "openid profile email booking:read booking:quote booking:prepare booking:commit booking:cancel",
-        }}
-        cacheLocation="memory"
-      >
-        {content}
-      </Auth0Provider>
-    );
-  }
-
-  return content;
 }
 
 export default App;

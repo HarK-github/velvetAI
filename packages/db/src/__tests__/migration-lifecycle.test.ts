@@ -308,6 +308,18 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
   });
 
   it("4. Migration Rollback and Re-apply Proof: verifies down() and up() idempotency", async () => {
+    // Rollback migration 0006
+    await migrateDown(adminDb);
+
+    // After rollback of 0006, signed_intent should be absent from buyer_confirmations
+    const rolledBack0006 = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'buyer_confirmations' AND column_name = 'signed_intent'
+      ) as exists
+    `.execute(adminDb);
+    expect(rolledBack0006.rows[0]?.exists).toBe(false);
+
     // Rollback migration 0005
     await migrateDown(adminDb);
 
@@ -383,6 +395,14 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       ) as exists
     `.execute(adminDb);
     expect(restoredPolicy.rows[0]?.exists).toBe(true);
+
+    const restored0006 = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'buyer_confirmations' AND column_name = 'signed_intent'
+      ) as exists
+    `.execute(adminDb);
+    expect(restored0006.rows[0]?.exists).toBe(true);
 
     // Verify CHECK constraint restored
     const checkConstraint = await sql<{ conname: string }>`

@@ -36,6 +36,41 @@ export function isJwtShaped(token?: string | null): boolean {
   return parts.length === 3 && parts.every((p) => p.length > 0);
 }
 
+/**
+ * Sanitizes returnTo paths to guarantee relative, same-origin redirection.
+ * Rejects absolute URLs, protocol-relative paths (//), javascript: or data: schemes,
+ * and backslash path traversal tricks.
+ */
+export function sanitizeReturnTo(returnTo?: string | null): string {
+  if (!returnTo || typeof returnTo !== "string") return "/";
+  const trimmed = returnTo.trim();
+
+  // Must begin with single forward slash
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.startsWith("/\\")) {
+    return "/";
+  }
+
+  // Reject control characters
+  for (let i = 0; i < trimmed.length; i++) {
+    const code = trimmed.charCodeAt(i);
+    if ((code >= 0 && code <= 31) || code === 127) {
+      return "/";
+    }
+  }
+
+  try {
+    // Construct dummy URL to test parsing and prevent origin escaping
+    const dummy = new URL(trimmed, "http://localhost");
+    if (dummy.origin !== "http://localhost") {
+      return "/";
+    }
+    // Return relative path including query and hash
+    return `${dummy.pathname}${dummy.search}${dummy.hash}`;
+  } catch {
+    return "/";
+  }
+}
+
 export function computeAuthDiagnostic(token?: string | null): AuthDiagnostic {
   const present = Boolean(token && typeof token === "string" && token.trim().length > 0);
   const jwt = isJwtShaped(token);

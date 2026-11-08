@@ -71,8 +71,8 @@ describe("Auth0 Frontend Authentication & Login Verification", () => {
     expect(authParams?.scope).toContain("email");
     expect(authParams?.scope).toContain("booking:read");
 
-    expect(lastCallProps.cacheLocation).toBe("memory");
-    expect(lastCallProps.useRefreshTokens).not.toBe(true);
+    expect(lastCallProps.cacheLocation).toBe("localstorage");
+    expect(lastCallProps.useRefreshTokens).toBe(true);
   });
 
   it("2. Missing configuration renders a visible safe error banner", () => {
@@ -132,7 +132,7 @@ describe("Auth0 Frontend Authentication & Login Verification", () => {
     expect(params?.audience).toBe("https://velvetai.example/api");
     expect(params?.redirect_uri).toBe(window.location.origin);
     expect(params?.scope).toBe(
-      "openid profile email booking:read booking:quote booking:prepare booking:commit booking:cancel",
+      "openid profile email offline_access booking:read booking:quote booking:prepare booking:commit booking:cancel",
     );
   });
 

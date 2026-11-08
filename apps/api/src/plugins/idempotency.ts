@@ -34,6 +34,7 @@ const MUTATING_ROUTES_REQUIRING_IDEMPOTENCY = [
   /^\/v1\/bookings\/prepare\/?$/,
   /^\/v1\/booking-holds\/?$/,
   /^\/v1\/booking-approvals\/[^/]+\/confirm\/?$/,
+  /^\/v1\/booking-approvals\/[^/]+\/approve-and-commit\/?$/,
   /^\/v1\/bookings\/commit\/?$/,
   /^\/v1\/bookings\/[^/]+\/payment-order\/?$/,
   /^\/v1\/payments\/[^/]+\/capture\/?$/,

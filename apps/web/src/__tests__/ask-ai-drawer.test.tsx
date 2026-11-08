@@ -181,8 +181,8 @@ describe("AskAIDrawer Component & Provider Status Honesty", () => {
     render(<AskAIDrawer isOpen={true} onClose={() => {}} />);
 
     expect(screen.getByText("● HOLD ACTIVE")).toBeTruthy();
-    expect(screen.getByText("Review Terms & Confirm Hold ↗")).toBeTruthy();
-    const link = screen.getByRole("link", { name: "Review Terms & Confirm Hold ↗" });
+    expect(screen.getByText("Open approval page")).toBeTruthy();
+    const link = screen.getByRole("link", { name: "Open approval page" });
     expect(link.getAttribute("href")).toBe("http://localhost:5173/approve?intent=loc_test123");
 
     // Critical security assertion: No confirmation token rendered

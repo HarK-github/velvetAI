@@ -304,6 +304,7 @@ sharedToolRegistry.register({
     version: z.number(),
     intent: z.string(),
     approvalLocator: z.string(),
+    approvalUrl: z.string().optional(),
     requiresHumanConfirmation: z.literal(true),
     terms: z.object({
       serviceId: z.string(),
@@ -350,6 +351,7 @@ sharedToolRegistry.register({
       version: res.version,
       intent: res.intent,
       approvalLocator: res.approvalLocator,
+      approvalUrl: res.approvalUrl,
       requiresHumanConfirmation: true as const,
       terms: {
         serviceId: input.serviceId,
@@ -481,9 +483,10 @@ sharedToolRegistry.register({
   inputSchema: commitBookingInputSchema,
   outputSchema: z.object({
     bookingId: z.string(),
-    status: z.literal("COMMITTING"),
+    status: z.enum(["COMMITTING", "CONFIRMED"]),
     version: z.number(),
     committedAt: z.string(),
+    code: z.string().optional(),
   }),
   riskLevel: "CONSEQUENTIAL",
   requiredScopes: ["booking:commit"],

@@ -58,8 +58,10 @@ export async function runMcpSmoke(options?: {
   autoApprove?: boolean;
 }): Promise<{ results: SmokeResult[]; allPassed: boolean }> {
   loadRootEnv();
-  const baseUrl = options?.baseUrl || "http://localhost:3000";
-  const mcpUrl = new URL("/mcp", baseUrl);
+  const baseUrl =
+    options?.baseUrl ||
+    (process.env.MCP_URL ? new URL(process.env.MCP_URL).origin : "http://localhost:3000");
+  const mcpUrl = process.env.MCP_URL ? new URL(process.env.MCP_URL) : new URL("/mcp", baseUrl);
   const autoApprove = options?.autoApprove ?? process.argv.includes("--auto-approve");
 
   const results: SmokeResult[] = [];

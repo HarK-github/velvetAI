@@ -200,7 +200,12 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
         );
       }
     }
-    const userId = (parts[1] || "01932b10-0000-7000-8000-000000000002") as UserId;
+    const isM2mSubject = parts[1]?.endsWith("@clients");
+    const userId = (
+      isM2mSubject
+        ? "01932b10-0000-7000-8000-000000000099"
+        : parts[1] || "01932b10-0000-7000-8000-000000000002"
+    ) as UserId;
     const tenantId = (parts[2] ||
       requestedTenantId ||
       "01932b10-0000-7000-8000-000000000001") as TenantId;
@@ -235,8 +240,9 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
       }
     }
 
+    const subject = isM2mSubject ? parts[1]! : `dev|${userId}`;
     return {
-      subject: `dev|${userId}`,
+      subject,
       userId,
       tenantId,
       roles: [role],
@@ -269,6 +275,22 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
         authTime: new Date().toISOString(),
         mfaVerified: true,
         scopes: this.extractScopes(payload, role),
+      };
+    }
+
+    // M2M client credentials principal per Section D.1 / Audit Section 5
+    if (subject.endsWith("@clients") || payload.gty === "client-credentials") {
+      const tenantId = ((payload["https://velvetai.com/tenant_id"] as string) ||
+        "01932b10-0000-7000-8000-000000000001") as TenantId;
+      return {
+        subject,
+        userId: "01932b10-0000-7000-8000-000000000099" as UserId,
+        tenantId,
+        roles: ["BUYER" as Role],
+        roleVersion: 1,
+        authTime: new Date().toISOString(),
+        mfaVerified: false,
+        scopes: this.extractScopes(payload, "BUYER"),
       };
     }
 
@@ -350,6 +372,9 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
 
   private async queryMembershipByUserId(userId: string, tenantId: string) {
     if (!this.db) return undefined;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+      return undefined;
+    }
     return await this.db.transaction().execute(async (trx) => {
       await trx.executeQuery(
         sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`.compile(this.db!),
@@ -514,6 +539,10 @@ export function registerAuth(app: FastifyInstance): void {
     }
 
     if (!token) {
+      if (request.url.startsWith("/v1/booking-approvals/")) {
+        // Let booking approvals endpoints enforce their own specific HUMAN_APPROVAL_REQUIRED error semantics
+        return;
+      }
       // In explicit test/mock environment, allow tests without headers to use default dev token
       if (authAdapter.isDevTokensAllowed()) {
         token =

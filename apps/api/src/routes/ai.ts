@@ -19,6 +19,11 @@ export { classifyAiError, type SafeAiErrorCode };
 // In-memory rate and concurrency limit trackers
 const tenantRateWindows = new Map<string, number[]>();
 const tenantConcurrency = new Map<string, number>();
+let serverProcessRealProviderVerified = false;
+
+export function resetAiVerifiedStatus(): void {
+  serverProcessRealProviderVerified = false;
+}
 
 export interface AiChatRouteOptions {
   modelProvider?: ModelProviderPort;
@@ -62,7 +67,8 @@ export async function aiRoutes(app: FastifyInstance, options: AiChatRouteOptions
     const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     const realProviderConfigured = Boolean(apiKey && apiKey.trim().length > 0);
     const realProviderVerified = Boolean(
-      (aiProvider === "gemini" && defaultProvider.isVerified) ||
+      (aiProvider === "gemini" &&
+        (defaultProvider.isVerified || serverProcessRealProviderVerified)) ||
       process.env.GEMINI_VERIFIED === "true",
     );
 
@@ -163,7 +169,6 @@ export async function aiRoutes(app: FastifyInstance, options: AiChatRouteOptions
     };
 
     let totalToolCalls = 0;
-    let hasToolExecuted = false;
     const MAX_TOOL_CALLS = 20;
 
     // 6. Map allowlisted velvetAI tools to AI SDK tools
@@ -181,7 +186,6 @@ export async function aiRoutes(app: FastifyInstance, options: AiChatRouteOptions
         inputSchema: toolDef.inputSchema,
         execute: async (args: any) => {
           totalToolCalls++;
-          hasToolExecuted = true;
           if (totalToolCalls > MAX_TOOL_CALLS) {
             throw new Error(
               `Tool call budget exceeded (maximum ${MAX_TOOL_CALLS} tool calls per run)`,
@@ -264,7 +268,7 @@ Adhere strictly to these core rules:
 2. Structured tool cards own these authoritative facts: service name, duration, price, deposit, cancellation terms, and slot availability.
 3. NEVER invent prices, deposits, availability, or policy terms. Model prose may summarize concisely, but must not calculate or invent financial values.
 4. Do NOT display internal database IDs (such as UUIDs for services, locations, or bookings) in conversational prose unless the user explicitly requests them. Refer users to the authoritative cards for transaction details.
-5. Keep prose concise, refined, and helpful after tool output.
+5. Keep prose concise, refined, and helpful after tool output. When a card is rendered, prose must be at most two short sentences and must not re-list items.
 6. For new bookings, guide the customer to choose an available slot, get an authoritative quote, and call prepare_booking.
 7. When prepare_booking is called, highlight the approvalLocator URL so the human buyer can review terms and confirm in their browser.
 8. NEVER attempt to commit bookings directly; commitments require browser human approval.
@@ -294,9 +298,8 @@ Adhere strictly to these core rules:
         stopWhen: stepCountIs(5),
         abortSignal: abortController.signal,
         onFinish: () => {
-          if (hasToolExecuted) {
-            defaultProvider.markVerified?.();
-          }
+          defaultProvider.markVerified?.();
+          serverProcessRealProviderVerified = true;
         },
       });
 

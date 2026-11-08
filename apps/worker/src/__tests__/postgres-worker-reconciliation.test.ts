@@ -7,6 +7,7 @@ import {
   withTenantTransaction,
   Database,
   getTestDatabaseUrl,
+  extractDatabaseName,
 } from "@velvetai/db";
 import {
   TenantId,
@@ -178,6 +179,12 @@ describe("W5: PostgreSQL Outbox Store & Reconciliation Worker", () => {
     });
     return eventId;
   }
+
+  it("0. Resolves isolated worker test database matching package name", () => {
+    const dbUrl = getTestDatabaseUrl();
+    const dbName = extractDatabaseName(dbUrl);
+    expect(dbName).toMatch(/velvetai_test_worker/);
+  });
 
   it("1. Crash before side effect: retries with bounded exponential backoff", async () => {
     const eventId = await insertTestOutboxEvent();

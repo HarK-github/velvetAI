@@ -11,8 +11,18 @@ export interface ScriptedStep {
 
 export class FakeModelProvider implements ModelProviderPort {
   public readonly providerName = "fake";
+  public isVerified = false;
+  public recordedPrompts: any[] = [];
   private scriptedQueue: ScriptedStep[][] = [];
   private currentCallIndex = 0;
+
+  get lastPrompt(): any {
+    return this.recordedPrompts[this.recordedPrompts.length - 1];
+  }
+
+  markVerified(): void {
+    this.isVerified = true;
+  }
 
   constructor(initialScript?: ScriptedStep[][]) {
     if (initialScript) {
@@ -32,7 +42,9 @@ export class FakeModelProvider implements ModelProviderPort {
    */
   reset(): void {
     this.scriptedQueue = [];
+    this.recordedPrompts = [];
     this.currentCallIndex = 0;
+    this.isVerified = false;
   }
 
   getLanguageModel(modelId = "fake-model"): any {
@@ -41,6 +53,7 @@ export class FakeModelProvider implements ModelProviderPort {
       modelId,
       doStream: async (options) => {
         this.currentCallIndex++;
+        this.recordedPrompts.push(options.prompt);
 
         // 1. Check for explicit scripted step
         if (this.scriptedQueue.length > 0) {

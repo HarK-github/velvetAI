@@ -5,6 +5,7 @@ import * as slotClaimRlsHardening from "./migrations/0002_slot_claim_rls_hardeni
 import * as paymentCoreLedger from "./migrations/0003_payment_core_ledger.js";
 import * as outboxLeaseHardening from "./migrations/0004_outbox_lease_hardening.js";
 import * as selfMembershipRls from "./migrations/0005_self_membership_rls.js";
+import * as approvalSignedIntent from "./migrations/0006_approval_signed_intent.js";
 
 class StaticMigrationProvider implements MigrationProvider {
   async getMigrations(): Promise<Record<string, Migration>> {
@@ -28,6 +29,10 @@ class StaticMigrationProvider implements MigrationProvider {
       "0005_self_membership_rls": {
         up: selfMembershipRls.up,
         down: selfMembershipRls.down,
+      },
+      "0006_approval_signed_intent": {
+        up: approvalSignedIntent.up,
+        down: approvalSignedIntent.down,
       },
     };
   }

@@ -90,3 +90,26 @@ To establish a hardened, transport-agnostic security boundary for AI agents (Spe
 - External Auth0 credentials do not compromise multi-tenant RLS boundaries.
 - Models cannot hallucinate or bypass financial commitments; human approval is cryptographically and architecturally mandatory.
 - Testing is resilient: unit and abuse scenarios run deterministically offline with the fake model provider, while opt-in E2E tests validate live Gemini and Auth0 integrations.
+
+---
+
+## Addendum: Browser Session Persistence and Refresh Token Rotation (Epic 5 WP 02)
+
+### Context & Problem
+
+Modern browsers (Safari ITP, Chrome third-party cookie phaseout, incognito mode) restrict third-party cookies by default. When a single-page application caches OIDC tokens in memory (`cacheLocation: "memory"`), any full-page reload, new tab navigation, or external approval redirect (`/approve/:locator`) causes silent authentication via iframe (`checkSession`) to fail, prematurely logging the user out.
+
+### Decision
+
+1. **Refresh Token Rotation (RTR)**:
+   - Enable Auth0 Refresh Token Rotation (`useRefreshTokens: true`) in `@auth0/auth0-react`.
+   - Configure `cacheLocation: "localstorage"` in browser environments per Auth0 guidance for SPAs subject to partitioned cookies.
+   - Request the `offline_access` scope alongside standard OIDC and booking scopes.
+   - Enforce Auth0 Refresh Token Rotation in tenant configuration: each refresh token is single-use, issuing a new token family and invalidating previous tokens upon rotation. If a previously consumed token is re-sent, Auth0 detects replay and revokes the entire token family immediately.
+2. **Path Preservation & Open Redirect Prevention**:
+   - `loginWithRedirect` supplies `appState: { returnTo: currentPathAndQuery }`.
+   - `onRedirectCallback` sanitizes `returnTo` via `sanitizeReturnTo()`: only same-origin relative paths starting with `/` (and never `//` or external schemes like `javascript:`) are accepted; all others fall back to `/`.
+3. **Security Invariants & Trade-Offs**:
+   - Storage Security: While storing refresh tokens in localStorage exposes them to theoretical XSS exfiltration, this risk is mitigated by Auth0's automatic Refresh Token Rotation (RTR) and reuse detection (which invalidates stolen token families upon first reuse) combined with strict Content Security Policy (`frame-ancestors 'none'`, `object-src 'none'`) and React automatic escaping.
+   - Raw tokens are never logged or placed in URLs or URL fragments.
+   - For sensitive merchant commands and financial ledger access, transaction-level tenant context and backend role enforcement continue to protect all operations.

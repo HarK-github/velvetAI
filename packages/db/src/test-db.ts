@@ -27,7 +27,7 @@ export function extractDatabaseName(dbUrl: string): string {
  */
 export function detectCurrentPackageName(): string | undefined {
   if (process.env.TEST_PACKAGE_NAME) {
-    return process.env.TEST_PACKAGE_NAME;
+    return process.env.TEST_PACKAGE_NAME.replace(/^@velvetai\//, "").replace(/-/g, "_");
   }
   if (process.env.npm_package_name) {
     return process.env.npm_package_name.replace(/^@velvetai\//, "").replace(/-/g, "_");
@@ -38,6 +38,19 @@ export function detectCurrentPackageName(): string | undefined {
   if (cwd.includes("apps/api")) return "api";
   if (cwd.includes("apps/worker")) return "worker";
   if (cwd.includes("apps/abuse-lab")) return "abuse_lab";
+
+  // Stack frame fallback when tests are executed from monorepo root
+  const stack = new Error().stack;
+  if (stack) {
+    if (stack.includes("/apps/worker/") || stack.includes("\\apps\\worker\\")) return "worker";
+    if (stack.includes("/apps/api/") || stack.includes("\\apps\\api\\")) return "api";
+    if (stack.includes("/packages/application/") || stack.includes("\\packages\\application\\"))
+      return "application";
+    if (stack.includes("/packages/db/") || stack.includes("\\packages\\db\\")) return "db";
+    if (stack.includes("/apps/abuse-lab/") || stack.includes("\\apps\\abuse-lab\\"))
+      return "abuse_lab";
+  }
+
   return undefined;
 }
 

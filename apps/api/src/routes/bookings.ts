@@ -235,6 +235,100 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
     return reply.status(200).send(confirmation);
   });
 
+  // POST /v1/booking-approvals/:locator/approve-and-commit: Atomically approve and commit hold per D1
+  app.post("/v1/booking-approvals/:locator/approve-and-commit", async (request, reply) => {
+    const { locator } = request.params as { locator: string };
+    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const clientId = request.clientId || "default-client";
+    const idempotencyKey = request.headers["idempotency-key"] as string;
+
+    if (!idempotencyKey || idempotencyKey.trim().length === 0) {
+      return reply.status(400).send({
+        title: "Bad Request",
+        status: 400,
+        code: "idempotency_key_required",
+        requestId: request.id,
+        detail: "Missing required Idempotency-Key header",
+      });
+    }
+
+    // Human Buyer Authorization Guard (Invariant F1 / D1):
+    // 1. Unauthenticated requests are rejected with 401 HUMAN_APPROVAL_REQUIRED
+    if (!request.headers.authorization) {
+      return reply.status(401).send({
+        title: "Unauthorized",
+        status: 401,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail:
+          "Authentication credentials missing. Human buyer session required to approve booking.",
+      });
+    }
+
+    const principal = request.principal;
+    if (!principal) {
+      return reply.status(401).send({
+        title: "Unauthorized",
+        status: 401,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail: "Authentication credentials missing or invalid. Human buyer session required.",
+      });
+    }
+
+    // 2. Agents / M2M clients (subject ending in "@clients") cannot approve booking holds
+    if (principal.subject.endsWith("@clients")) {
+      return reply.status(403).send({
+        title: "Forbidden",
+        status: 403,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail:
+          "Agents and machine-to-machine clients cannot approve booking holds. Human buyer approval is required.",
+      });
+    }
+
+    // 3. Dev tokens are forbidden outside test environment
+    if (principal.subject.startsWith("dev|") && process.env.NODE_ENV !== "test") {
+      return reply.status(403).send({
+        title: "Forbidden",
+        status: 403,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail: "Dev tokens are not permitted for booking approvals outside test environment.",
+      });
+    }
+
+    // 4. Must possess BUYER or OWNER role
+    if (!principal.roles.includes("BUYER") && !principal.roles.includes("OWNER")) {
+      return reply.status(403).send({
+        title: "Forbidden",
+        status: 403,
+        code: "HUMAN_APPROVAL_REQUIRED",
+        requestId: request.id,
+        detail: "Buyer membership required to approve booking holds.",
+      });
+    }
+
+    const actor: BookingActor = {
+      userId: principal.userId,
+      subject: principal.subject,
+      tenantId: principal.tenantId,
+      roles: principal.roles,
+    };
+
+    const res = await bookingService.approveAndCommit(
+      tenantId,
+      locator,
+      principal.userId,
+      actor,
+      clientId,
+      idempotencyKey,
+    );
+
+    return reply.status(200).send(res);
+  });
+
   // POST /v1/bookings/commit: Atomic commit operation per Amendment Section D.5, D.6 and W4
   app.post("/v1/bookings/commit", async (request, reply) => {
     const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
@@ -256,8 +350,16 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
       roles: principal.roles,
     };
 
+    const rawBody =
+      typeof request.body === "object" && request.body !== null
+        ? { ...(request.body as Record<string, unknown>) }
+        : {};
+    if (!rawBody.idempotency_key && request.headers["idempotency-key"]) {
+      rawBody.idempotency_key = request.headers["idempotency-key"];
+    }
+
     // Strict closed schema validation per D.5
-    const parsed = commitBookingInputSchema.safeParse(request.body);
+    const parsed = commitBookingInputSchema.safeParse(rawBody);
     if (!parsed.success) {
       return reply.status(400).send({
         title: "Bad Request",
