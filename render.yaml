@@ -70,6 +70,12 @@ services:
         value: gemini-3.5-flash-lite
       - key: AI_DAILY_TURN_BUDGET
         value: "1500"
+      - key: SELF_SIGNUP_ENABLED
+        value: "true"
+      - key: SELF_SIGNUP_TENANT_ID
+        value: "01932b10-0000-7000-8000-000000000a01"
+      - key: PUBLIC_DEMO_TENANT_ID
+        value: "01932b10-0000-7000-8000-000000000a01"
 
   - type: web
     name: velvetai-web

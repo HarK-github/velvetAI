@@ -20,6 +20,7 @@
     "dev": "turbo run dev",
     "start": "turbo run dev",
     "auth:provision-test-user": "tsx scripts/provision-test-user.ts",
+    "auth:provision-judge-user": "tsx scripts/provision-judge-user.ts",
     "auth:provision-agent-client": "tsx scripts/provision-agent-client.ts",
     "judge:provision": "tsx scripts/provision-judge-tenant.ts",
     "mcp:smoke": "tsx scripts/mcp-external-smoke.ts",

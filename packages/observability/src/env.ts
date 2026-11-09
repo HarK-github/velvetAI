@@ -32,6 +32,15 @@ export const envSchema = z
     AUTH0_AUDIENCE: z.string().default("https://velvetai.example/api"),
     AUTH0_JWKS_URI: z.string().optional(),
 
+    // Self-Service Onboarding & Public Demo Access
+    SELF_SIGNUP_ENABLED: z
+      .string()
+      .transform((val) => val === "true" || val === "1")
+      .or(z.boolean())
+      .default(false),
+    SELF_SIGNUP_TENANT_ID: z.string().default("01932b10-0000-7000-8000-000000000a01"),
+    PUBLIC_DEMO_TENANT_ID: z.string().default("01932b10-0000-7000-8000-000000000a01"),
+
     // AI Provider & Gemini
     AI_PROVIDER: z.enum(["gemini", "fake"]).default("fake"),
     GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
