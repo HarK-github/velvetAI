@@ -21,6 +21,7 @@
     "@ai-sdk/google": "4.0.102",
     "@velvetai/contracts": "workspace:*",
     "@velvetai/db": "workspace:*",
+    "@velvetai/domain": "workspace:*",
     "ai": "7.0.148",
     "canonicalize": "^5.1.0",
     "jose": "6.2.13",

@@ -42,6 +42,8 @@ export class HoldReaperProcessor {
           .selectFrom("resource_claims")
           .where("tenant_id", "=", tid)
           .where("state", "=", "HELD")
+          .where("claim_source", "=", "BOOKING")
+          .where("booking_id", "is not", null)
           .where(sql<boolean>`hold_expires_at <= clock_timestamp()`)
           .select(["id", "booking_id", "tenant_id"])
           .limit(limit)
@@ -54,6 +56,10 @@ export class HoldReaperProcessor {
         }
 
         for (const claim of expiredClaims) {
+          if (!claim.booking_id) {
+            continue;
+          }
+
           await trx
             .updateTable("resource_claims")
             .set({

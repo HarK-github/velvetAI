@@ -977,6 +977,8 @@ export class BookingService {
         const expiredClaims = await trx
           .selectFrom("resource_claims")
           .where("state", "=", "HELD")
+          .where("claim_source", "=", "BOOKING")
+          .where("booking_id", "is not", null)
           .where(sql<boolean>`hold_expires_at <= clock_timestamp()`)
           .select(["id", "booking_id", "tenant_id"])
           .limit(limit)
@@ -989,6 +991,10 @@ export class BookingService {
         }
 
         for (const claim of expiredClaims) {
+          if (!claim.booking_id) {
+            continue;
+          }
+
           // Transition claim to EXPIRED and release blocking status
           await trx
             .updateTable("resource_claims")

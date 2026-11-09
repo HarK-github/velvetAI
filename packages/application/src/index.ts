@@ -10,3 +10,5 @@ export * from "./payment-service.js";
 export * from "./catalog-service.js";
 export * from "./availability-service.js";
 export * from "./ai/index.js";
+export * from "./judge/seed-plan.js";
+export * from "./judge/judge-reset-service.js";
