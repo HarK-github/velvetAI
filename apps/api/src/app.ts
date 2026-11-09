@@ -79,7 +79,11 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
 
   const allowedOrigins = Array.from(
     new Set([
-      ...(env.ALLOWED_ORIGINS ? env.ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean) : []),
+      ...(env.ALLOWED_ORIGINS
+        ? env.ALLOWED_ORIGINS.split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : []),
       env.WEB_BASE_URL,
       "http://localhost:5173",
       "https://velvetai-five.vercel.app",

@@ -25,6 +25,7 @@ describe("API Frontend Endpoints & Middleware", () => {
   let db: Kysely<Database>;
 
   beforeAll(async () => {
+    process.env.PUBLIC_DEMO_TENANT_ID = DEV_TENANT_ID;
     db = createDatabaseClient(TEST_DB_URL, { min: 2, max: 10 });
     await migrateToLatest(db);
 

@@ -3,6 +3,12 @@ import { FastifyPluginAsync } from "fastify";
 import { TenantId, ServiceId, LocationId, IanaTimeZone } from "@velvetai/contracts";
 import { AvailabilityService } from "@velvetai/application";
 import { createDatabaseClient } from "@velvetai/db";
+import { JUDGE_TENANT_ID } from "@velvetai/domain";
+import {
+  getClientIp,
+  checkPublicRateLimit,
+  getPublicRateLimitRetryAfter,
+} from "../plugins/public-rate-limit.js";
 
 const databaseUrl =
   process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable";
@@ -17,7 +23,7 @@ export function setAvailabilityService(service: AvailabilityService) {
 export { availabilityService };
 
 export const availabilityRoutes: FastifyPluginAsync = async (app) => {
-  // GET /v1/availability - Authoritative PostgreSQL-backed availability calculation
+  // GET /v1/availability - Authoritative PostgreSQL-backed availability calculation (public or authenticated)
   app.get("/v1/availability", async (request, reply) => {
     const query = request.query as {
       serviceId?: string;
@@ -25,9 +31,49 @@ export const availabilityRoutes: FastifyPluginAsync = async (app) => {
       from?: string;
       to?: string;
       timeZone?: string;
+      tenant_id?: string;
+      tenantId?: string;
     };
 
-    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    let tenantId: TenantId;
+
+    if (!request.principal) {
+      // Unauthenticated public request
+      if (
+        query.tenant_id ||
+        query.tenantId ||
+        request.headers["x-tenant-id"] ||
+        request.headers["tenant-id"]
+      ) {
+        return reply.status(400).send({
+          type: "https://errors.velvetai.com/bad-request",
+          title: "Bad Request",
+          status: 400,
+          code: "tenant_override_forbidden",
+          detail: "Tenant override is forbidden for unauthenticated requests",
+        });
+      }
+
+      const clientIp = getClientIp(request);
+      if (!checkPublicRateLimit(clientIp)) {
+        const retryAfter = getPublicRateLimitRetryAfter(clientIp);
+        return reply
+          .status(429)
+          .header("Retry-After", String(retryAfter))
+          .send({
+            type: "https://errors.velvetai.com/rate-limit-exceeded",
+            title: "Rate Limit Exceeded",
+            status: 429,
+            code: "rate_limit_exceeded",
+            detail: `Rate limit exceeded for unauthenticated requests (max 60 per minute). Retry after ${retryAfter}s.`,
+            retryAfter,
+          });
+      }
+
+      tenantId = (process.env.PUBLIC_DEMO_TENANT_ID || JUDGE_TENANT_ID) as TenantId;
+    } else {
+      tenantId = (request.tenantId || request.principal.tenantId) as TenantId;
+    }
 
     if (!query.serviceId) {
       return reply.status(400).send({
