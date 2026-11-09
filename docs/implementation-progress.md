@@ -68,7 +68,7 @@
    - WP 02: Approval Page and Golden Path — `NOT_STARTED`
    - WP 03: Render Deployment — `IMPLEMENTED`
    - WP 04: Judge Tenant Seed and Reset — `IMPLEMENTED` (Commit 1 merged to main @ `ec732a1`)
-   - WP 04A: Judge Onboarding and First-Run Access — `IMPLEMENTED` (JIT buyer self-provisioning, public read-only catalog/availability, judge user provisioning CLI)
+   - WP 04A: Judge Onboarding and First-Run Access — `IMPLEMENTED` (JIT buyer self-provisioning, public read-only catalog/availability, judge user provisioning CLI; verified 54 test files, 444 tests across 12 packages)
    - WP 05: Bryntum Scheduler — `NOT_STARTED`
    - WP 06: Forecasting and Deposits — `NOT_STARTED`
    - WP 07: Abuse Lab Dashboard — `NOT_STARTED`
