@@ -221,6 +221,8 @@ sharedToolRegistry.register({
     .strict(),
   outputSchema: z.object({
     slots: z.array(z.any()),
+    serviceName: z.string().optional(),
+    timeZone: z.string().optional(),
     scheduleRevision: z.number().optional(),
     generatedAt: z.string().optional(),
   }),
@@ -259,6 +261,18 @@ sharedToolRegistry.register({
     expiresAt: z.string(),
     serviceVersion: z.number(),
     scheduleRevision: z.number(),
+    serviceName: z.string().optional(),
+    startsAt: z.string().optional(),
+    endsAt: z.string().optional(),
+    display: z
+      .object({
+        localDate: z.string(),
+        localStart: z.string(),
+        localEnd: z.string(),
+        timeZone: z.string(),
+        timeZoneLabel: z.string(),
+      })
+      .optional(),
     total: z.object({ valueMinor: z.bigint().or(z.string()), currency: z.string() }),
     deposit: z.object({ valueMinor: z.bigint().or(z.string()), currency: z.string() }),
     cancellationPolicy: z.object({
@@ -281,6 +295,16 @@ sharedToolRegistry.register({
         expiresAt: new Date(Date.now() + 300_000).toISOString(),
         serviceVersion: 1,
         scheduleRevision: 1,
+        serviceName: "Executive Haircut & Beard Sculpt",
+        startsAt: new Date(Date.now() + 86400000).toISOString(),
+        endsAt: new Date(Date.now() + 86400000 + 45 * 60000).toISOString(),
+        display: {
+          localDate: "Tue, Oct 27, 2026",
+          localStart: "2:00 PM",
+          localEnd: "2:45 PM",
+          timeZone: "America/New_York",
+          timeZoneLabel: "EDT",
+        },
         total: { valueMinor: "7500", currency: "USD" },
         deposit: { valueMinor: "2000", currency: "USD" },
         cancellationPolicy: { policyId: "mock-policy", version: 1, summary: "24h full refund" },
@@ -308,8 +332,18 @@ sharedToolRegistry.register({
     requiresHumanConfirmation: z.literal(true),
     terms: z.object({
       serviceId: z.string(),
+      serviceName: z.string().optional(),
       startsAt: z.string(),
       timeZone: z.string(),
+      display: z
+        .object({
+          localDate: z.string(),
+          localStart: z.string(),
+          localEnd: z.string(),
+          timeZone: z.string(),
+          timeZoneLabel: z.string(),
+        })
+        .optional(),
     }),
   }),
   riskLevel: "CONSEQUENTIAL",
@@ -328,11 +362,20 @@ sharedToolRegistry.register({
         version: 1,
         intent: "mock.intent.jwt",
         approvalLocator: "/v1/booking-approvals/mock-loc",
+        approvalUrl: "http://localhost:5174/approve/loc_mock",
         requiresHumanConfirmation: true as const,
         terms: {
           serviceId: input.serviceId,
+          serviceName: "Executive Haircut & Beard Sculpt",
           startsAt: input.startsAt,
           timeZone: input.timeZone,
+          display: {
+            localDate: "Tue, Oct 27, 2026",
+            localStart: "2:00 PM",
+            localEnd: "2:45 PM",
+            timeZone: "America/New_York",
+            timeZoneLabel: "EDT",
+          },
         },
       };
     }
@@ -355,8 +398,10 @@ sharedToolRegistry.register({
       requiresHumanConfirmation: true as const,
       terms: {
         serviceId: input.serviceId,
+        serviceName: (res as any).serviceName,
         startsAt: input.startsAt,
         timeZone: input.timeZone,
+        display: (res as any).display,
       },
     };
   },

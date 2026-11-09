@@ -1,5 +1,6 @@
 import { Kysely } from "kysely";
 import { Database, withTenantTransaction } from "@velvetai/db";
+import { formatSlotDisplay } from "./booking-service.js";
 import {
   AvailabilityResponse,
   AvailableSlot,
@@ -212,6 +213,7 @@ export class AvailabilityService {
 
                 if (!hasConflict) {
                   const localStartsAt = localTimeFormatter.format(slotStart);
+                  const display = formatSlotDisplay(slotStart, slotEnd, effectiveTimeZone);
                   slots.push({
                     startsAt: slotStart.toISOString() as Rfc3339Timestamp,
                     endsAt: slotEnd.toISOString() as Rfc3339Timestamp,
@@ -226,6 +228,7 @@ export class AvailabilityService {
                       valueMinor: String(service.base_deposit_minor) as MoneyMinor,
                       currency: service.currency as CurrencyCode,
                     },
+                    display,
                   });
                   // Once an available resource is assigned to this time slot, move to next slot
                   break;
@@ -247,6 +250,8 @@ export class AvailabilityService {
       return {
         scheduleRevision,
         generatedAt,
+        serviceName: service.name,
+        timeZone: effectiveTimeZone,
         slots,
       };
     });

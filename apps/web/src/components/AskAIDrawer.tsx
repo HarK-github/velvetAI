@@ -1,12 +1,13 @@
 import {
-  FC,
   useState,
   useEffect,
   useMemo,
   useRef,
   useCallback,
-  FormEvent,
-  KeyboardEvent,
+  type FC,
+  type ReactNode,
+  type FormEvent,
+  type KeyboardEvent,
 } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
@@ -46,6 +47,7 @@ export interface ProcessedItem {
   toolResult?: any;
   toolArgs?: any;
   isPending?: boolean;
+  isIntermediateLookup?: boolean;
   timestamp?: string;
 }
 
@@ -55,28 +57,737 @@ export interface ProcessedItem {
 export function getToolActionLabel(toolName: string): string {
   const clean = toolName.toLowerCase().replace(/[._]v\d+$/, "");
   if (clean.includes("list_service") || clean.includes("catalog")) {
-    return "Live service catalog";
+    return "Services";
   }
   if (clean.includes("find_available") || clean.includes("slot")) {
-    return "Available booking windows";
+    return "Available times";
   }
   if (clean.includes("quote")) {
-    return "Authoritative quote snapshot";
+    return "Quote";
   }
   if (clean.includes("prepare_booking") || clean.includes("hold")) {
-    return "Authoritative booking hold";
+    return "Ready for your approval";
   }
   if (clean.includes("prepare_cancel")) {
-    return "Cancellation policy terms";
+    return "Cancellation policy";
+  }
+  if (clean.includes("get_booking")) {
+    return "Booking status";
   }
   return toolName.replace(/[._]/g, " ");
 }
 
 /**
+ * Calculates user local time formatted via Intl when the browser time zone
+ * differs from the merchant time zone.
+ */
+export function getUserLocalTime(startsAt?: string, merchantTimeZone?: string): string | null {
+  if (!startsAt) return null;
+  try {
+    const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (merchantTimeZone && browserZone.toLowerCase() === merchantTimeZone.toLowerCase()) {
+      return null;
+    }
+    const date = new Date(startsAt);
+    if (isNaN(date.getTime())) return null;
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZoneName: "short",
+    });
+    return formatter.format(date);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Small neutral chip for intermediate tool steps or unknown outputs.
+ * Never renders raw JSON, "[object Object]", or empty cards.
+ */
+export const ToolStepChip: FC<{
+  label: string;
+  onToggle?: () => void;
+  isExpanded?: boolean;
+  children?: ReactNode;
+}> = ({ label, onToggle, isExpanded, children }) => {
+  return (
+    <div className="ai-tool-step-container">
+      <button
+        type="button"
+        className="ai-tool-step-chip mono"
+        onClick={onToggle}
+        aria-expanded={isExpanded}
+        aria-label={label}
+      >
+        <span>✓ {label}</span>
+        {onToggle && <span style={{ fontSize: "9px" }}>{isExpanded ? "▲" : "▼"}</span>}
+      </button>
+      {isExpanded && children}
+    </div>
+  );
+};
+
+const ExpandableLookupChip: FC<{ label: string; children: ReactNode }> = ({
+  label,
+  children,
+}) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  return (
+    <ToolStepChip
+      label={label}
+      isExpanded={isExpanded}
+      onToggle={() => setIsExpanded(!isExpanded)}
+    >
+      {children}
+    </ToolStepChip>
+  );
+};
+
+/**
+ * Explicit card for list_services.v1 output
+ */
+export const ServiceListCard: FC<{
+  services: any[];
+  isLiveEnvironment: boolean;
+  timestamp?: string;
+}> = ({ services, isLiveEnvironment, timestamp }) => {
+  const seenIds = new Set<string>();
+  const uniqueServices: any[] = [];
+  for (const s of services) {
+    const id = s?.id || `srv-${uniqueServices.length}`;
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      uniqueServices.push(s);
+    }
+  }
+
+  return (
+    <div className="ai-tool-card" data-testid="service-list-card">
+      <div className="ai-tool-card-header mono">
+        <div className="ai-tool-header-left">
+          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+            Services
+          </span>
+        </div>
+        <div className="ai-tool-header-right">
+          <span className="ai-tool-count">{uniqueServices.length} services</span>
+          {timestamp && <span className="ai-tool-time">{timestamp}</span>}
+          <span
+            className={`ai-tool-env-tag ${
+              isLiveEnvironment ? "ai-tool-env-tag--live" : "ai-tool-env-tag--dev"
+            }`}
+          >
+            {isLiveEnvironment ? "LIVE DATA" : "SYNTHETIC DEV"}
+          </span>
+        </div>
+      </div>
+      <div className="ai-tool-card-content">
+        <div className="ai-services-grid">
+          {uniqueServices.map((s) => {
+            const name = s.name || s.versions?.[0]?.name || "Service";
+            const duration =
+              s.durationMinutes ??
+              s.duration_minutes ??
+              s.versions?.[0]?.durationMinutes ??
+              s.versions?.[0]?.duration_minutes ??
+              45;
+            const priceObj =
+              s.price && typeof s.price === "object"
+                ? s.price
+                : {
+                    valueMinor:
+                      s.priceMinor ??
+                      s.price_minor ??
+                      s.versions?.[0]?.priceMinor ??
+                      s.versions?.[0]?.price_minor ??
+                      "0",
+                    currency: s.currency ?? s.versions?.[0]?.currency ?? "USD",
+                  };
+            const formattedPrice = s.formattedPrice || formatMoney(priceObj);
+            const depositObj =
+              s.deposit && typeof s.deposit === "object"
+                ? s.deposit
+                : {
+                    valueMinor:
+                      s.depositMinor ??
+                      s.baseDepositMinor ??
+                      s.base_deposit_minor ??
+                      s.versions?.[0]?.baseDepositMinor ??
+                      s.versions?.[0]?.base_deposit_minor ??
+                      "0",
+                    currency: s.currency ?? s.versions?.[0]?.currency ?? "USD",
+                  };
+            const rawDeposit = depositObj.valueMinor;
+            const hasDeposit =
+              rawDeposit !== undefined &&
+              rawDeposit !== null &&
+              rawDeposit !== "" &&
+              rawDeposit !== "0" &&
+              rawDeposit !== 0;
+            const formattedDeposit = hasDeposit
+              ? s.formattedDeposit || formatMoney(depositObj)
+              : null;
+
+            return (
+              <div key={s.id} className="ai-service-item">
+                <div className="ai-service-item-main">
+                  <strong className="ai-service-name">{name}</strong>
+                  <div className="mono text-muted ai-service-details">
+                    {duration} min • {formattedPrice}
+                    {formattedDeposit && ` • Deposit: ${formattedDeposit}`}
+                  </div>
+                </div>
+                {s.description && <p className="ai-service-desc">{s.description}</p>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Explicit card for find_available_slots.v1 output
+ */
+export const SlotsCard: FC<{
+  toolResult: any;
+  toolArgs?: any;
+  onSelectSlot: (prompt: string) => void;
+  isLiveEnvironment: boolean;
+  timestamp?: string;
+}> = ({ toolResult, toolArgs, onSelectSlot, isLiveEnvironment, timestamp }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const slots: any[] = Array.isArray(toolResult?.slots) ? toolResult.slots : [];
+
+  const serviceName =
+    toolResult?.serviceName || toolArgs?.serviceName || "Executive Haircut";
+  const firstSlot = slots[0];
+  const localDate = firstSlot?.display?.localDate || "Tomorrow";
+  const zoneLabel = firstSlot?.display?.timeZoneLabel || toolResult?.timeZone || "EDT";
+
+  const cardHeader = `Available times · ${serviceName} · ${localDate} · ${zoneLabel}`;
+  const displayedSlots = isExpanded ? slots : slots.slice(0, 8);
+  const hasMore = slots.length > 8;
+
+  return (
+    <div className="ai-tool-card" data-testid="slots-card">
+      <div className="ai-tool-card-header mono">
+        <div className="ai-tool-header-left">
+          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+            {cardHeader}
+          </span>
+        </div>
+        <div className="ai-tool-header-right">
+          <span className="ai-tool-count">{slots.length} slots</span>
+          {timestamp && <span className="ai-tool-time">{timestamp}</span>}
+          <span
+            className={`ai-tool-env-tag ${
+              isLiveEnvironment ? "ai-tool-env-tag--live" : "ai-tool-env-tag--dev"
+            }`}
+          >
+            {isLiveEnvironment ? "LIVE DATA" : "SYNTHETIC DEV"}
+          </span>
+        </div>
+      </div>
+      <div className="ai-tool-card-content">
+        <div className="ai-slots-grid" role="group" aria-label="Available booking time slots">
+          {displayedSlots.map((slot, idx) => {
+            const startLabel =
+              slot.display?.localStart ||
+              (slot.startsAt
+                ? new Date(slot.startsAt).toLocaleTimeString("en-US", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                    hour12: true,
+                    timeZone: slot.timeZone || "America/New_York",
+                  })
+                : "Slot");
+            const endLabel = slot.display?.localEnd;
+            const slotZone = slot.display?.timeZoneLabel || zoneLabel;
+            const slotDate = slot.display?.localDate || localDate;
+            const primaryTime = `${startLabel}${endLabel ? ` – ${endLabel}` : ""} ${slotZone}`;
+
+            const merchantTz = slot.display?.timeZone || slot.timeZone || "America/New_York";
+            const userLocal = getUserLocalTime(slot.startsAt, merchantTz);
+
+            const promptToSend = `Prepare the ${startLabel} ${slotZone} ${serviceName} slot on ${slotDate}`;
+
+            return (
+              <button
+                key={idx}
+                type="button"
+                className="ai-slot-button mono"
+                onClick={() => onSelectSlot(promptToSend)}
+                aria-label={`Select slot at ${primaryTime}`}
+              >
+                <span className="ai-slot-primary-time">{primaryTime}</span>
+                {userLocal && <span className="ai-slot-user-time">Your time: {userLocal}</span>}
+              </button>
+            );
+          })}
+          {hasMore && (
+            <button
+              type="button"
+              className="ai-slot-more-btn mono"
+              onClick={() => setIsExpanded(!isExpanded)}
+              aria-label={isExpanded ? "Show fewer" : `+${slots.length - 8} more`}
+            >
+              {isExpanded ? "Show fewer" : `+${slots.length - 8} more`}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Explicit card for quote_booking.v1 output
+ */
+export const QuoteCard: FC<{
+  toolResult: any;
+  toolArgs?: any;
+  isLiveEnvironment: boolean;
+  timestamp?: string;
+}> = ({ toolResult, toolArgs, isLiveEnvironment, timestamp }) => {
+  const serviceName = toolResult?.serviceName || toolArgs?.serviceName || "Service";
+  const display = toolResult?.display;
+  const startsAt = toolResult?.startsAt || toolArgs?.startsAt;
+  const merchantZone = display?.timeZone || toolArgs?.timeZone || "America/New_York";
+
+  const localDate =
+    display?.localDate ||
+    (startsAt
+      ? new Date(startsAt).toLocaleDateString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          timeZone: merchantZone,
+        })
+      : "Upcoming Appointment");
+
+  const localStart =
+    display?.localStart ||
+    (startsAt
+      ? new Date(startsAt).toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+          timeZone: merchantZone,
+        })
+      : "");
+
+  const localEnd = display?.localEnd || "";
+  const zoneLabel =
+    display?.timeZoneLabel || (merchantZone.includes("New_York") ? "EDT" : merchantZone);
+
+  const primaryTimeStr = `${localDate}${localStart ? ` · ${localStart}${localEnd ? ` – ${localEnd}` : ""} ${zoneLabel}` : ""}`;
+  const userLocal = startsAt ? getUserLocalTime(startsAt, merchantZone) : null;
+
+  const totalMoney = toolResult?.total ? formatMoney(toolResult.total) : "$0.00";
+  const depositMoney = toolResult?.deposit ? formatMoney(toolResult.deposit) : "$0.00";
+
+  let balanceMoney = "$0.00";
+  try {
+    const totalMinor = BigInt(toolResult?.total?.valueMinor ?? 0);
+    const depositMinor = BigInt(toolResult?.deposit?.valueMinor ?? 0);
+    const balanceMinor = totalMinor >= depositMinor ? totalMinor - depositMinor : 0n;
+    balanceMoney = formatMoney({
+      valueMinor: balanceMinor.toString(),
+      currency: toolResult?.total?.currency || "USD",
+    });
+  } catch {
+    balanceMoney = "$0.00";
+  }
+
+  const policySummary =
+    toolResult?.cancellationPolicy?.summary ||
+    "Full deposit refund if cancelled at least 24 hours prior to appointment.";
+
+  return (
+    <div className="ai-tool-card" data-testid="quote-card">
+      <div className="ai-tool-card-header mono">
+        <div className="ai-tool-header-left">
+          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+            Quote · {serviceName}
+          </span>
+        </div>
+        <div className="ai-tool-header-right">
+          {timestamp && <span className="ai-tool-time">{timestamp}</span>}
+          <span
+            className={`ai-tool-env-tag ${
+              isLiveEnvironment ? "ai-tool-env-tag--live" : "ai-tool-env-tag--dev"
+            }`}
+          >
+            {isLiveEnvironment ? "LIVE DATA" : "SYNTHETIC DEV"}
+          </span>
+        </div>
+      </div>
+      <div className="ai-tool-card-content">
+        <div className="ai-quote-card">
+          <div className="ai-quote-header">
+            <div className="ai-quote-service-title">{serviceName}</div>
+            <div className="ai-quote-time-row mono">{primaryTimeStr}</div>
+            {userLocal && <div className="ai-quote-user-time mono">Your time: {userLocal}</div>}
+          </div>
+
+          <div className="ai-quote-financials mono">
+            <div className="ai-quote-fin-row ai-quote-fin-row--total">
+              <span>Total Price:</span>
+              <span>{totalMoney}</span>
+            </div>
+            <div className="ai-quote-fin-row ai-quote-fin-row--deposit">
+              <span>Deposit Required:</span>
+              <span>{depositMoney}</span>
+            </div>
+            <div className="ai-quote-fin-row ai-quote-fin-row--balance">
+              <span>Balance Due at Appointment:</span>
+              <span>{balanceMoney}</span>
+            </div>
+          </div>
+
+          <div className="ai-quote-policy">
+            <strong>Cancellation:</strong> {policySummary}
+          </div>
+
+          <div className="ai-quote-expiry mono">
+            <span>⏱ Guaranteed Quote</span>
+            <span>Valid for 5 minutes</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Explicit card for prepare_booking.v1 output
+ */
+export const ApprovalCard: FC<{
+  toolResult: any;
+  toolArgs?: any;
+  isLiveEnvironment: boolean;
+  timestamp?: string;
+}> = ({ toolResult, toolArgs, isLiveEnvironment, timestamp }) => {
+  const serviceName =
+    toolResult?.terms?.serviceName ||
+    toolResult?.serviceName ||
+    toolArgs?.serviceName ||
+    "Executive Haircut & Beard Sculpt";
+
+  const display = toolResult?.terms?.display || toolResult?.display;
+  const startsAt = toolResult?.terms?.startsAt || toolResult?.startsAt || toolArgs?.startsAt;
+  const timeZone = toolResult?.terms?.timeZone || toolResult?.timeZone || "America/New_York";
+
+  const localDate =
+    display?.localDate ||
+    (startsAt
+      ? new Date(startsAt).toLocaleDateString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          timeZone,
+        })
+      : "Tomorrow");
+
+  const localStart =
+    display?.localStart ||
+    (startsAt
+      ? new Date(startsAt).toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+          timeZone,
+        })
+      : "2:00 PM");
+
+  const zoneLabel = display?.timeZoneLabel || (timeZone.includes("New_York") ? "EDT" : timeZone);
+
+  const rawLocator = toolResult?.approvalLocator || toolResult?.approval_locator || "";
+  const cleanLocator = rawLocator.replace(/^.*\/v1\/booking-approvals\//, "");
+  const approvalUrl =
+    toolResult?.approvalUrl ||
+    (rawLocator.startsWith("http://") || rawLocator.startsWith("https://")
+      ? rawLocator
+      : typeof window !== "undefined"
+        ? `${window.location.origin}/approve/${cleanLocator}`
+        : `/approve/${cleanLocator}`);
+
+  return (
+    <div className="ai-tool-card" data-testid="approval-card">
+      <div className="ai-tool-card-header mono">
+        <div className="ai-tool-header-left">
+          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+            Ready for your approval
+          </span>
+        </div>
+        <div className="ai-tool-header-right">
+          <span className="ai-tool-count" style={{ color: "#f59e0b" }}>
+            Hold active · 15m window
+          </span>
+          {timestamp && <span className="ai-tool-time">{timestamp}</span>}
+          <span
+            className={`ai-tool-env-tag ${
+              isLiveEnvironment ? "ai-tool-env-tag--live" : "ai-tool-env-tag--dev"
+            }`}
+          >
+            {isLiveEnvironment ? "LIVE DATA" : "SYNTHETIC DEV"}
+          </span>
+        </div>
+      </div>
+      <div className="ai-tool-card-content">
+        <div className="ai-approval-card">
+          <div className="ai-hold-badge">
+            <span>● HOLD ACTIVE</span>
+            <span className="mono">15m Window</span>
+          </div>
+          <div style={{ marginTop: "6px", fontWeight: 600, color: "#ffffff", fontSize: "13px" }}>
+            {serviceName}
+          </div>
+          <div className="mono text-muted" style={{ fontSize: "11px", margin: "2px 0 6px 0" }}>
+            {localDate} at {localStart} {zoneLabel}
+          </div>
+          <p
+            style={{
+              margin: "6px 0 10px 0",
+              fontSize: "12px",
+              color: "var(--secondary, #94a3b8)",
+            }}
+          >
+            Your AI assistant reserved this time for you. Review terms and approve to book.
+          </p>
+          <a
+            href={approvalUrl}
+            className="button button--solid ai-review-terms-button"
+            target="_self"
+            id="ai-open-approval-btn"
+          >
+            Open approval page
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Explicit card for get_booking.v1 output
+ */
+export const BookingStatusCard: FC<{
+  toolResult: any;
+  isLiveEnvironment: boolean;
+  timestamp?: string;
+}> = ({ toolResult, isLiveEnvironment, timestamp }) => {
+  const status = toolResult?.status || "HELD";
+  const startsAt = toolResult?.startsAt;
+  const userLocal = startsAt ? getUserLocalTime(startsAt) : null;
+
+  return (
+    <div className="ai-tool-card" data-testid="booking-status-card">
+      <div className="ai-tool-card-header mono">
+        <div className="ai-tool-header-left">
+          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+            Booking status
+          </span>
+        </div>
+        <div className="ai-tool-header-right">
+          <span className="ai-tool-count">{status}</span>
+          {timestamp && <span className="ai-tool-time">{timestamp}</span>}
+          <span
+            className={`ai-tool-env-tag ${
+              isLiveEnvironment ? "ai-tool-env-tag--live" : "ai-tool-env-tag--dev"
+            }`}
+          >
+            {isLiveEnvironment ? "LIVE DATA" : "SYNTHETIC DEV"}
+          </span>
+        </div>
+      </div>
+      <div className="ai-tool-card-content">
+        <div
+          style={{
+            padding: "8px",
+            background: "#252836",
+            borderRadius: "6px",
+            fontSize: "12px",
+          }}
+        >
+          <div>
+            Status:{" "}
+            <strong
+              style={{
+                color: status === "CONFIRMED" ? "var(--emerald, #10b981)" : "#f59e0b",
+              }}
+            >
+              {status}
+            </strong>
+          </div>
+          {startsAt && (
+            <div className="mono text-muted" style={{ marginTop: "4px", fontSize: "11px" }}>
+              Time: {new Date(startsAt).toLocaleString()}
+              {userLocal && ` (Your time: ${userLocal})`}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Explicit card for prepare_cancellation.v1 output
+ */
+export const CancellationCard: FC<{
+  toolResult: any;
+  isLiveEnvironment: boolean;
+  timestamp?: string;
+}> = ({ toolResult, isLiveEnvironment, timestamp }) => {
+  const allowed = toolResult?.cancellationAllowed;
+  const policySummary = toolResult?.policySummary || "Standard cancellation terms apply.";
+  const refundFormatted = toolResult?.refundEligibleMinor
+    ? formatMoney({
+        valueMinor: toolResult.refundEligibleMinor,
+        currency: toolResult.currency || "USD",
+      })
+    : null;
+
+  return (
+    <div className="ai-tool-card" data-testid="cancellation-card">
+      <div className="ai-tool-card-header mono">
+        <div className="ai-tool-header-left">
+          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+            Cancellation policy
+          </span>
+        </div>
+        <div className="ai-tool-header-right">
+          {timestamp && <span className="ai-tool-time">{timestamp}</span>}
+          <span
+            className={`ai-tool-env-tag ${
+              isLiveEnvironment ? "ai-tool-env-tag--live" : "ai-tool-env-tag--dev"
+            }`}
+          >
+            {isLiveEnvironment ? "LIVE DATA" : "SYNTHETIC DEV"}
+          </span>
+        </div>
+      </div>
+      <div className="ai-tool-card-content">
+        <div
+          style={{
+            padding: "8px",
+            background: "#252836",
+            borderRadius: "6px",
+            fontSize: "12px",
+          }}
+        >
+          <div>
+            Cancellation: <strong>{allowed ? "Permitted" : "Not permitted"}</strong>
+          </div>
+          {refundFormatted && (
+            <div>
+              Refund Eligible:{" "}
+              <strong style={{ color: "var(--emerald, #10b981)" }}>{refundFormatted}</strong>
+            </div>
+          )}
+          <div className="text-muted" style={{ marginTop: "4px", fontSize: "11px" }}>
+            {policySummary}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Clean neutral notice for tool error results
+ */
+export const ToolErrorCard: FC<{
+  message: string;
+  isLiveEnvironment: boolean;
+  timestamp?: string;
+}> = ({ message, isLiveEnvironment, timestamp }) => {
+  return (
+    <div
+      className="ai-tool-card"
+      style={{ borderColor: "rgba(239, 68, 68, 0.4)" }}
+      data-testid="tool-error-card"
+    >
+      <div className="ai-tool-card-header mono">
+        <div className="ai-tool-header-left">
+          <span style={{ color: "var(--crimson, #ef4444)", fontWeight: 600 }}>Notice</span>
+        </div>
+        <div className="ai-tool-header-right">
+          {timestamp && <span className="ai-tool-time">{timestamp}</span>}
+          <span
+            className={`ai-tool-env-tag ${
+              isLiveEnvironment ? "ai-tool-env-tag--live" : "ai-tool-env-tag--dev"
+            }`}
+          >
+            {isLiveEnvironment ? "LIVE DATA" : "SYNTHETIC DEV"}
+          </span>
+        </div>
+      </div>
+      <div className="ai-tool-card-content" style={{ color: "#fca5a5", fontSize: "12px" }}>
+        {message}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Context-aware assistant follow-up prompt suggestions (T6)
+ * Never suggests the action that was just completed.
+ */
+export function computeFollowUpSuggestions(items: ProcessedItem[]): string[] {
+  const toolItems = items.filter((it) => it.kind === "tool" && it.toolResult);
+  const lastTool = toolItems[toolItems.length - 1];
+
+  if (!lastTool) {
+    return [
+      "Show available services",
+      "Find available haircut slots tomorrow afternoon",
+      "Prepare the 2 PM slot",
+    ];
+  }
+
+  const toolName = (lastTool.toolName || "").toLowerCase();
+  const res = lastTool.toolResult;
+
+  if (toolName.includes("prepare_booking") || res.approvalLocator || res.approvalUrl) {
+    return ["Open approval page", "Find a different time"];
+  }
+
+  if (toolName.includes("quote") || (res.total && res.deposit)) {
+    return ["Prepare this booking", "Pick a different time"];
+  }
+
+  if (toolName.includes("find_available") || res.slots) {
+    const firstSlot = res.slots?.[0];
+    const timeLabel = firstSlot?.display?.localStart || "2:00 PM";
+    return [`Hold ${timeLabel} slot`, "Show tomorrow morning", "Try another day"];
+  }
+
+  if (toolName.includes("list_service") || res.services) {
+    const topService = res.services?.[0]?.name || "Executive Haircut";
+    return [`Show times for ${topService}`, "Compare deposits"];
+  }
+
+  return [
+    "Show available services",
+    "Find available haircut slots tomorrow afternoon",
+    "Prepare the 2 PM slot",
+  ];
+}
+
+/**
  * Authoritatively processes and groups message stream parts:
  * - One UI result group per toolCallId.
- * - Stream updates replace/update existing tool part in place; they never append another card set.
+ * - Intermediate catalog lookups collapsed to ToolStepChip.
  * - Deduplicates streaming tool items while preserving distinct services.
+ * - Never leaves empty cards or raw data dumps.
  */
 export function processMessageParts(
   parts: any[] | undefined,
@@ -120,7 +831,7 @@ export function processMessageParts(
         `tool-${part.toolName || "tool"}-${i}`;
 
       const toolName: string =
-        part.toolName || toolInvocation.toolName || part.name || "Live service catalog";
+        part.toolName || toolInvocation.toolName || part.name || "Tool";
 
       const toolResult: any =
         part.output ?? part.result ?? toolInvocation.result ?? toolInvocation.output;
@@ -158,6 +869,45 @@ export function processMessageParts(
           isPending,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         });
+      }
+    }
+  }
+
+  // Deduplication & intermediate lookup detection:
+  // 1. If multiple list_services calls exist in this message turn, keep only the latest one
+  const listServiceIndices = items
+    .map((it, idx) =>
+      it.kind === "tool" &&
+      (it.toolName?.includes("list_service") || it.toolResult?.services)
+        ? idx
+        : -1,
+    )
+    .filter((idx) => idx !== -1);
+
+  if (listServiceIndices.length > 1) {
+    for (let i = listServiceIndices.length - 2; i >= 0; i--) {
+      const removeIdx = listServiceIndices[i]!;
+      items.splice(removeIdx, 1);
+    }
+  }
+
+  // 2. Check if this turn also contains slots, quote, or prepare
+  const hasFollowOnAction = items.some(
+    (it) =>
+      it.kind === "tool" &&
+      (it.toolName?.includes("find_available") ||
+        it.toolResult?.slots ||
+        it.toolName?.includes("quote") ||
+        (it.toolResult?.total && it.toolResult?.deposit) ||
+        it.toolName?.includes("prepare_booking") ||
+        it.toolResult?.approvalLocator ||
+        it.toolResult?.approvalUrl),
+  );
+
+  for (const it of items) {
+    if (it.kind === "tool" && (it.toolName?.includes("list_service") || it.toolResult?.services)) {
+      if (hasFollowOnAction) {
+        it.isIntermediateLookup = true;
       }
     }
   }
@@ -537,209 +1287,145 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
                     }
 
                     if (item.kind === "tool") {
-                      const actionLabel = getToolActionLabel(item.toolName || "Tool");
-                      const toolResult = item.toolResult;
-                      const itemCount =
-                        toolResult?.total !== undefined
-                          ? `${toolResult.total} items`
-                          : toolResult?.services?.length !== undefined
-                            ? `${toolResult.services.length} services`
-                            : toolResult?.slots?.length !== undefined
-                              ? `${toolResult.slots.length} slots`
-                              : undefined;
-
-                      return (
-                        <div key={item.id} className="ai-tool-card">
-                          <div className="ai-tool-card-header mono">
-                            <div className="ai-tool-header-left">
-                              <span className="ai-tool-badge">Verified from velvetAI catalog</span>
-                              <span className="ai-tool-action-name">{actionLabel}</span>
-                            </div>
-                            <div className="ai-tool-header-right">
-                              {itemCount && <span className="ai-tool-count">{itemCount}</span>}
-                              {item.timestamp && (
-                                <span className="ai-tool-time">{item.timestamp}</span>
-                              )}
-                              <span
-                                className={`ai-tool-env-tag ${
-                                  isLiveEnvironment
-                                    ? "ai-tool-env-tag--live"
-                                    : "ai-tool-env-tag--dev"
-                                }`}
-                              >
-                                {isLiveEnvironment ? "LIVE DATA" : "SYNTHETIC DEV"}
-                              </span>
-                            </div>
-                          </div>
-
-                          {item.isPending && (
+                      if (item.isPending) {
+                        return (
+                          <div key={item.id} className="ai-tool-card">
                             <div className="ai-tool-card-content mono text-muted ai-tool-pending">
                               <span className="ai-typing-indicator">
                                 <span></span>
                                 <span></span>
                                 <span></span>
                               </span>
-                              <span>Querying live catalog...</span>
+                              <span>Executing request...</span>
                             </div>
-                          )}
+                          </div>
+                        );
+                      }
 
-                          {toolResult && (
-                            <div className="ai-tool-card-content">
-                              {/* Services List Card */}
-                              {toolResult.services && (
-                                <div className="ai-services-grid">
-                                  {(() => {
-                                    const seenIds = new Set<string>();
-                                    const uniqueServices: any[] = [];
-                                    for (const s of toolResult.services) {
-                                      const id = s?.id || `srv-${uniqueServices.length}`;
-                                      if (!seenIds.has(id)) {
-                                        seenIds.add(id);
-                                        uniqueServices.push(s);
-                                      }
-                                    }
+                      const toolResult = item.toolResult;
+                      if (!toolResult) return null;
 
-                                    return uniqueServices.map((s: any) => {
-                                      const name = s.name || s.versions?.[0]?.name || "Service";
-                                      const duration =
-                                        s.durationMinutes ??
-                                        s.duration_minutes ??
-                                        s.versions?.[0]?.durationMinutes ??
-                                        s.versions?.[0]?.duration_minutes ??
-                                        45;
+                      // 1. Collapsed intermediate catalog lookup (Requirement D.9)
+                      if (item.isIntermediateLookup && toolResult.services) {
+                        return (
+                          <ExpandableLookupChip
+                            key={item.id}
+                            label={`Checked catalog · ${toolResult.services.length} services`}
+                          >
+                            <ServiceListCard
+                              services={toolResult.services}
+                              isLiveEnvironment={isLiveEnvironment}
+                              timestamp={item.timestamp}
+                            />
+                          </ExpandableLookupChip>
+                        );
+                      }
 
-                                      const priceObj =
-                                        s.price && typeof s.price === "object"
-                                          ? s.price
-                                          : {
-                                              valueMinor:
-                                                s.priceMinor ??
-                                                s.price_minor ??
-                                                s.versions?.[0]?.priceMinor ??
-                                                s.versions?.[0]?.price_minor,
-                                              currency:
-                                                s.currency ?? s.versions?.[0]?.currency ?? "USD",
-                                            };
-                                      const formattedPrice =
-                                        s.formattedPrice || formatMoney(priceObj);
+                      // 2. Tool error results
+                      if (toolResult.error || toolResult.code === "COMMIT_NOT_PERMITTED_FOR_AI") {
+                        return (
+                          <ToolErrorCard
+                            key={item.id}
+                            message={
+                              toolResult.message || toolResult.error || "Operation not permitted"
+                            }
+                            isLiveEnvironment={isLiveEnvironment}
+                            timestamp={item.timestamp}
+                          />
+                        );
+                      }
 
-                                      const depositObj =
-                                        s.deposit && typeof s.deposit === "object"
-                                          ? s.deposit
-                                          : {
-                                              valueMinor:
-                                                s.depositMinor ??
-                                                s.baseDepositMinor ??
-                                                s.base_deposit_minor ??
-                                                s.versions?.[0]?.baseDepositMinor ??
-                                                s.versions?.[0]?.base_deposit_minor,
-                                              currency:
-                                                s.currency ?? s.versions?.[0]?.currency ?? "USD",
-                                            };
-                                      const rawDepositMinor = depositObj.valueMinor;
-                                      const hasDeposit =
-                                        rawDepositMinor !== undefined &&
-                                        rawDepositMinor !== null &&
-                                        rawDepositMinor !== "" &&
-                                        rawDepositMinor !== "0" &&
-                                        rawDepositMinor !== 0;
-                                      const formattedDeposit = hasDeposit
-                                        ? s.formattedDeposit || formatMoney(depositObj)
-                                        : null;
+                      // 3. Available slots card (T1, T2)
+                      if (toolResult.slots || item.toolName?.includes("find_available")) {
+                        return (
+                          <SlotsCard
+                            key={item.id}
+                            toolResult={toolResult}
+                            toolArgs={item.toolArgs}
+                            onSelectSlot={handleQuickPrompt}
+                            isLiveEnvironment={isLiveEnvironment}
+                            timestamp={item.timestamp}
+                          />
+                        );
+                      }
 
-                                      return (
-                                        <div key={s.id} className="ai-service-item">
-                                          <div className="ai-service-item-main">
-                                            <strong className="ai-service-name">{name}</strong>
-                                            <div className="mono text-muted ai-service-details">
-                                              {duration} min • {formattedPrice}
-                                              {formattedDeposit &&
-                                                ` • Deposit: ${formattedDeposit}`}
-                                            </div>
-                                          </div>
-                                          {s.description && (
-                                            <p className="ai-service-desc">{s.description}</p>
-                                          )}
-                                        </div>
-                                      );
-                                    });
-                                  })()}
-                                </div>
-                              )}
+                      // 4. Authoritative quote card (A.2)
+                      if (
+                        (toolResult.total && toolResult.deposit) ||
+                        item.toolName?.includes("quote")
+                      ) {
+                        return (
+                          <QuoteCard
+                            key={item.id}
+                            toolResult={toolResult}
+                            toolArgs={item.toolArgs}
+                            isLiveEnvironment={isLiveEnvironment}
+                            timestamp={item.timestamp}
+                          />
+                        );
+                      }
 
-                              {/* Available Slots Card */}
-                              {toolResult.slots && (
-                                <div className="ai-slots-grid">
-                                  <div
-                                    className="mono"
-                                    style={{ fontSize: "11px", marginBottom: "4px", width: "100%" }}
-                                  >
-                                    Authoritative Available Windows:
-                                  </div>
-                                  {toolResult.slots.slice(0, 4).map((slot: any, sIdx: number) => {
-                                    const timeStr = slot.startsAt || slot.starts_at;
-                                    return (
-                                      <div key={sIdx} className="ai-slot-badge mono">
-                                        {timeStr
-                                          ? new Date(timeStr).toLocaleTimeString([], {
-                                              hour: "2-digit",
-                                              minute: "2-digit",
-                                            })
-                                          : "Slot"}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
+                      // 5. Two-phase prepare booking hold snapshot (Approval card)
+                      if (
+                        toolResult.approvalLocator ||
+                        toolResult.approvalUrl ||
+                        item.toolName?.includes("prepare_booking")
+                      ) {
+                        return (
+                          <ApprovalCard
+                            key={item.id}
+                            toolResult={toolResult}
+                            toolArgs={item.toolArgs}
+                            isLiveEnvironment={isLiveEnvironment}
+                            timestamp={item.timestamp}
+                          />
+                        );
+                      }
 
-                              {/* Two-Phase Prepare Booking Hold Snapshot */}
-                              {(toolResult.approvalUrl ||
-                                toolResult.approvalLocator ||
-                                toolResult.approval_locator) && (
-                                <div className="ai-approval-card">
-                                  <div className="ai-hold-badge">
-                                    <span>● HOLD ACTIVE</span>
-                                    <span className="mono">15m Window</span>
-                                  </div>
-                                  <p style={{ margin: "8px 0 4px 0", fontSize: "12px" }}>
-                                    Your AI assistant reserved this time for you. Review and approve
-                                    to book.
-                                  </p>
-                                  {(() => {
-                                    const rawLocator =
-                                      toolResult.approvalLocator ||
-                                      toolResult.approval_locator ||
-                                      "";
-                                    const href =
-                                      toolResult.approvalUrl ||
-                                      (rawLocator.startsWith("http://") ||
-                                      rawLocator.startsWith("https://")
-                                        ? rawLocator
-                                        : `/approve/${rawLocator.replace(/^.*\/v1\/booking-approvals\//, "")}`);
-                                    return (
-                                      <a
-                                        href={href}
-                                        className="button button--solid ai-review-terms-button"
-                                        target="_self"
-                                      >
-                                        Open approval page
-                                      </a>
-                                    );
-                                  })()}
-                                </div>
-                              )}
+                      // 6. Services list card (explicit service request)
+                      if (toolResult.services || item.toolName?.includes("list_service")) {
+                        return (
+                          <ServiceListCard
+                            key={item.id}
+                            services={toolResult.services}
+                            isLiveEnvironment={isLiveEnvironment}
+                            timestamp={item.timestamp}
+                          />
+                        );
+                      }
 
-                              {/* Raw fallback if neither services, slots, nor hold */}
-                              {!toolResult.services &&
-                                !toolResult.slots &&
-                                !toolResult.approvalLocator &&
-                                !toolResult.approval_locator && (
-                                  <pre className="ai-tool-pre mono">
-                                    {JSON.stringify(toolResult, null, 2)}
-                                  </pre>
-                                )}
-                            </div>
-                          )}
+                      // 7. Booking status card
+                      if (toolResult.bookingId && toolResult.status) {
+                        return (
+                          <BookingStatusCard
+                            key={item.id}
+                            toolResult={toolResult}
+                            isLiveEnvironment={isLiveEnvironment}
+                            timestamp={item.timestamp}
+                          />
+                        );
+                      }
+
+                      // 8. Cancellation policy card
+                      if (
+                        toolResult.cancellationAllowed !== undefined ||
+                        item.toolName?.includes("prepare_cancel")
+                      ) {
+                        return (
+                          <CancellationCard
+                            key={item.id}
+                            toolResult={toolResult}
+                            isLiveEnvironment={isLiveEnvironment}
+                            timestamp={item.timestamp}
+                          />
+                        );
+                      }
+
+                      // 9. Unknown/unsupported tool output -> neutral chip, NEVER raw JSON or [object Object] (A.3)
+                      const actionLabel = getToolActionLabel(item.toolName || "Tool");
+                      return (
+                        <div key={item.id} className="ai-tool-step-chip mono">
+                          ✓ Checked {actionLabel}
                         </div>
                       );
                     }
@@ -751,33 +1437,27 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
             );
           })}
 
-          {/* Assistant Follow-up Suggestions Chips */}
+          {/* Context-Aware Assistant Follow-up Suggestions Chips (T6) */}
           {!isLoading &&
             messages.length > 0 &&
             messages[messages.length - 1]?.role === "assistant" && (
               <div className="ai-followup-chips">
                 <span className="mono ai-followup-label">Follow-up:</span>
-                <button
-                  type="button"
-                  className="ai-followup-chip"
-                  onClick={() => handleQuickPrompt("Find available slots")}
-                >
-                  Find available slots
-                </button>
-                <button
-                  type="button"
-                  className="ai-followup-chip"
-                  onClick={() => handleQuickPrompt("Compare services")}
-                >
-                  Compare services
-                </button>
-                <button
-                  type="button"
-                  className="ai-followup-chip"
-                  onClick={() => handleQuickPrompt("Prepare a booking")}
-                >
-                  Prepare a booking
-                </button>
+                {computeFollowUpSuggestions(
+                  processMessageParts(
+                    messages[messages.length - 1]?.parts,
+                    (messages[messages.length - 1] as any)?.content,
+                  ),
+                ).map((prompt, pIdx) => (
+                  <button
+                    key={pIdx}
+                    type="button"
+                    className="ai-followup-chip"
+                    onClick={() => handleQuickPrompt(prompt)}
+                  >
+                    {prompt}
+                  </button>
+                ))}
               </div>
             )}
 

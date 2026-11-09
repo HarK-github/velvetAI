@@ -196,7 +196,127 @@ describe("Auth0 Frontend Authentication & Login Verification", () => {
     }
   });
 
-  it("9. Playwright/browser smoke test observes navigation toward Auth0 /authorize with PKCE params", async () => {
+  it("8b. Stale state error (Invalid state) is suppressed without showing error badge in Navbar", () => {
+    vi.mocked(auth0React.useAuth0).mockReturnValueOnce({
+      isLoading: false,
+      isAuthenticated: false,
+      user: undefined,
+      error: new Error("Invalid state"),
+      loginWithRedirect: mockLoginWithRedirect,
+      loginWithPopup: vi.fn(),
+      logout: vi.fn(),
+      getAccessTokenWithPopup: vi.fn(),
+      getAccessTokenSilently: vi.fn(),
+      getIdTokenClaims: vi.fn(),
+      handleRedirectCallback: vi.fn(),
+    } as any);
+
+    render(
+      <RouterProvider>
+        <Navbar apiHealthy={true} apiLatency={12} />
+      </RouterProvider>,
+    );
+
+    // Verify error badge is NOT rendered
+    expect(screen.queryByTestId("auth0-error-badge")).toBeNull();
+    expect(screen.queryByText(/Invalid state/i)).toBeNull();
+    // Login button remains cleanly available
+    expect(screen.getByRole("button", { name: /Sign in with Auth0/i })).toBeDefined();
+  });
+
+  it("9. Renders Navbar cleanly across auth state transitions (loading -> authenticated -> error('Invalid state') -> logged out) without hook-order errors", async () => {
+    let currentAuthState: auth0React.Auth0ContextInterface = {
+      isLoading: true,
+      isAuthenticated: false,
+      user: undefined,
+      error: undefined,
+      loginWithRedirect: mockLoginWithRedirect,
+      loginWithPopup: vi.fn(),
+      logout: mockLogout,
+      getAccessTokenWithPopup: vi.fn(),
+      getAccessTokenSilently: mockGetAccessTokenSilently,
+      getIdTokenClaims: vi.fn(),
+      handleRedirectCallback: vi.fn(),
+    } as unknown as auth0React.Auth0ContextInterface;
+
+    vi.mocked(auth0React.useAuth0).mockImplementation(() => currentAuthState);
+
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // State 1: Loading
+    const { rerender } = render(
+      <RouterProvider>
+        <Navbar apiHealthy={true} apiLatency={12} />
+      </RouterProvider>,
+    );
+    expect(screen.getByText("Auth...")).toBeDefined();
+
+    // State 2: Authenticated
+    currentAuthState = {
+      ...currentAuthState,
+      isLoading: false,
+      isAuthenticated: true,
+      user: { name: "Test Buyer", email: "test-buyer@velvetai.example" },
+      error: undefined,
+    };
+    rerender(
+      <RouterProvider>
+        <Navbar apiHealthy={true} apiLatency={12} />
+      </RouterProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Test Buyer")).toBeDefined();
+      expect(screen.getByRole("button", { name: /Log out/i })).toBeDefined();
+    });
+
+    // State 3: Error ("Invalid state")
+    currentAuthState = {
+      ...currentAuthState,
+      isLoading: false,
+      isAuthenticated: false,
+      user: undefined,
+      error: new Error("Invalid state"),
+    };
+    rerender(
+      <RouterProvider>
+        <Navbar apiHealthy={true} apiLatency={12} />
+      </RouterProvider>,
+    );
+    // Invalid state error should be suppressed, login button visible
+    expect(screen.queryByTestId("auth0-error-badge")).toBeNull();
+    expect(screen.getByRole("button", { name: /Sign in with Auth0/i })).toBeDefined();
+
+    // State 4: Logged Out
+    currentAuthState = {
+      ...currentAuthState,
+      isLoading: false,
+      isAuthenticated: false,
+      user: undefined,
+      error: undefined,
+    };
+    rerender(
+      <RouterProvider>
+        <Navbar apiHealthy={true} apiLatency={12} />
+      </RouterProvider>,
+    );
+    expect(screen.getByRole("button", { name: /Sign in with Auth0/i })).toBeDefined();
+
+    // Assert that no React hook order error occurred
+    const hookOrderErrors = consoleErrorSpy.mock.calls.filter((call) =>
+      call.some(
+        (arg) =>
+          typeof arg === "string" &&
+          (arg.includes("change in the order of Hooks") ||
+            arg.includes("Rendered more hooks than during the previous render") ||
+            arg.includes("Rendered fewer hooks than during the previous render")),
+      ),
+    );
+    expect(hookOrderErrors).toHaveLength(0);
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("10. Playwright/browser smoke test observes navigation toward Auth0 /authorize with PKCE params", async () => {
     const browser = await chromium.launch({
       executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
       headless: true,

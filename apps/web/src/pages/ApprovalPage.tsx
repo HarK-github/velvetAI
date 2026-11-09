@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type FC } from "react";
+import { useState, useEffect, useMemo, useCallback, type FC } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { Link } from "../router.js";
 import type { BookingApprovalDetails, ApproveAndCommitResponse } from "@velvetai/contracts";
@@ -54,7 +54,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     return () => clearInterval(interval);
   }, []);
 
-  const loadDetails = async () => {
+  const loadDetails = useCallback(async () => {
     setPageState("loading");
     setErrorMessage(null);
 
@@ -101,13 +101,13 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
         setPageState("error");
       }
     }
-  };
+  }, [locator, isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     if (locator) {
       loadDetails();
     }
-  }, [locator, isAuthenticated, isAuthLoading]);
+  }, [locator, loadDetails]);
 
   // Live countdown calculation
   const remainingSeconds = useMemo(() => {

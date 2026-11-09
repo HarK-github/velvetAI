@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { FC, CSSProperties } from "react";
+import { apiClient } from "../api-client.js";
 
 interface PolicyTier {
   id: "low" | "elevated" | "high";
@@ -51,11 +52,7 @@ export const RuntimePolicySection: FC = () => {
   const handleSelectTier = async (tier: PolicyTier) => {
     setActiveTier(tier);
     try {
-      await fetch("http://localhost:3000/v1/risk/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tier: tier.id }),
-      });
+      await apiClient.evaluateRisk({ tier: tier.id });
     } catch {
       // Offline fallback already active via state
     }

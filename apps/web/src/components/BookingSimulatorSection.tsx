@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { FC } from "react";
 import { PayPalButton, PayPalPaymentSuccess } from "./PayPalButton.js";
+import { API_BASE_URL } from "../api-client.js";
 
 interface ServiceItem {
   id: string;
@@ -107,7 +108,7 @@ export const BookingSimulatorSection: FC = () => {
     setIsLoadingServices(true);
     setServiceError(null);
     try {
-      const res = await fetch("http://localhost:3000/v1/services");
+      const res = await fetch(`${API_BASE_URL}/v1/services`);
       if (!res.ok) {
         throw new Error(`Catalog API responded with HTTP ${res.status}`);
       }
@@ -173,7 +174,7 @@ export const BookingSimulatorSection: FC = () => {
       setIsLoadingSlots(true);
       setSlotError(null);
       try {
-        const res = await fetch(`http://localhost:3000/v1/availability?serviceId=${service.id}`);
+        const res = await fetch(`${API_BASE_URL}/v1/availability?serviceId=${service.id}`);
         if (!res.ok) {
           throw new Error(`Availability API responded with HTTP ${res.status}`);
         }
@@ -241,11 +242,15 @@ export const BookingSimulatorSection: FC = () => {
       setIsLoadingQuote(true);
       setQuoteError(null);
       try {
-        const res = await fetch("http://localhost:3000/v1/booking-quotes", {
+        const res = await fetch(`${API_BASE_URL}/v1/booking-quotes`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": `quote-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          },
           body: JSON.stringify({
             serviceId: service.id,
+            locationId: "01932b10-0000-7000-8000-000000000001",
             startsAt: slot.startsAt,
             timeZone: "UTC",
           }),
@@ -317,9 +322,12 @@ export const BookingSimulatorSection: FC = () => {
     setPaymentOutcome(null);
 
     try {
-      const res = await fetch("http://localhost:3000/v1/booking-holds", {
+      const res = await fetch(`${API_BASE_URL}/v1/booking-holds`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `hold-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        },
         body: JSON.stringify({
           quoteId: quote.quoteId,
           customer: { email: customerEmail, displayName: "Autonomous Agent Demo" },

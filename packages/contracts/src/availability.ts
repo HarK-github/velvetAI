@@ -30,6 +30,15 @@ export const searchAvailabilityQuerySchema = z.object({
 });
 export type SearchAvailabilityQuery = z.infer<typeof searchAvailabilityQuerySchema>;
 
+export const slotDisplaySchema = z.object({
+  localDate: z.string(),
+  localStart: z.string(),
+  localEnd: z.string(),
+  timeZone: z.string(),
+  timeZoneLabel: z.string(),
+});
+export type SlotDisplay = z.infer<typeof slotDisplaySchema>;
+
 export const availableSlotSchema = z.object({
   startsAt: rfc3339TimestampSchema,
   endsAt: rfc3339TimestampSchema,
@@ -40,12 +49,15 @@ export const availableSlotSchema = z.object({
   depositPreview: moneySchema,
   fillProbability: z.number().min(0).max(1).optional(),
   forecastConfidence: z.enum(["low", "medium", "high"]).optional(),
+  display: slotDisplaySchema.optional(),
 });
 export type AvailableSlot = z.infer<typeof availableSlotSchema>;
 
 export const availabilityResponseSchema = z.object({
   scheduleRevision: z.number().int().nonnegative(),
   generatedAt: rfc3339TimestampSchema,
+  serviceName: z.string().optional(),
+  timeZone: z.string().optional(),
   slots: z.array(availableSlotSchema),
 });
 export type AvailabilityResponse = z.infer<typeof availabilityResponseSchema>;

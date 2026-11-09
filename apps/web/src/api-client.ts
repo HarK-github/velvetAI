@@ -23,10 +23,59 @@ export class ApiError extends Error {
   }
 }
 
-export const API_BASE_URL =
-  typeof import.meta.env !== "undefined" && import.meta.env.VITE_API_BASE_URL
-    ? (import.meta.env.VITE_API_BASE_URL as string)
-    : "http://localhost:3000";
+function getNodeProcess(): { env?: Record<string, string | undefined> } | undefined {
+  if (typeof globalThis !== "undefined" && "process" in globalThis) {
+    return (globalThis as Record<string, any>).process;
+  }
+  return undefined;
+}
+
+export function isApiConfigured(): boolean {
+  const env = typeof import.meta !== "undefined" ? import.meta.env : undefined;
+  const nodeEnv = getNodeProcess()?.env;
+  const envUrl = (env?.VITE_API_BASE_URL as string | undefined) ?? nodeEnv?.VITE_API_BASE_URL;
+
+  if (envUrl && envUrl.trim().length > 0) {
+    return true;
+  }
+
+  const isProd =
+    (env && Boolean(env.PROD) && !env.DEV) ||
+    nodeEnv?.NODE_ENV === "production" ||
+    nodeEnv?.PROD === "true";
+
+  if (isProd) {
+    return false;
+  }
+
+  return true;
+}
+
+export function resolveApiBaseUrl(): string {
+  const env = typeof import.meta !== "undefined" ? import.meta.env : undefined;
+  const nodeEnv = getNodeProcess()?.env;
+  const envUrl = (env?.VITE_API_BASE_URL as string | undefined) ?? nodeEnv?.VITE_API_BASE_URL;
+
+  if (envUrl && envUrl.trim().length > 0) {
+    return envUrl.trim();
+  }
+
+  const isProd =
+    (env && Boolean(env.PROD) && !env.DEV) ||
+    nodeEnv?.NODE_ENV === "production" ||
+    nodeEnv?.PROD === "true";
+
+  if (isProd) {
+    console.error(
+      "API not configured: VITE_API_BASE_URL environment variable is missing in production build.",
+    );
+    return "";
+  }
+
+  return "http://localhost:3000";
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export class VelvetApiClient {
   private readonly baseUrl: string;
@@ -57,6 +106,17 @@ export class VelvetApiClient {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    if (!this.baseUrl) {
+      console.error("API request blocked: API_BASE_URL is not configured.");
+      throw new ApiError(500, {
+        type: "https://api.velvetai.example/problems/unconfigured",
+        title: "API Not Configured",
+        status: 500,
+        code: "api_not_configured",
+        detail: "API not configured: VITE_API_BASE_URL must be set in production.",
+      });
+    }
+
     let token = this.authToken;
 
     if (this.tokenProvider) {
@@ -137,15 +197,26 @@ export class VelvetApiClient {
     );
   }
 
-  async createBookingQuote(params: {
-    serviceId: string;
-    locationId: string;
-    startsAt: string;
-    timeZone: string;
-  }): Promise<BookingQuoteDTO> {
+  async createBookingQuote(
+    params: {
+      serviceId: string;
+      locationId?: string;
+      startsAt: string;
+      timeZone: string;
+    },
+    idempotencyKey?: string,
+  ): Promise<BookingQuoteDTO> {
+    const headers: Record<string, string> = {
+      "idempotency-key":
+        idempotencyKey || `quote-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    };
     return this.request<BookingQuoteDTO>("/v1/booking-quotes", {
       method: "POST",
-      body: JSON.stringify(params),
+      headers,
+      body: JSON.stringify({
+        locationId: params.locationId || "01932b10-0000-7000-8000-000000000001",
+        ...params,
+      }),
     });
   }
 
@@ -157,11 +228,36 @@ export class VelvetApiClient {
     },
     idempotencyKey?: string,
   ): Promise<BookingHoldResponse> {
+    const headers: Record<string, string> = {
+      "idempotency-key":
+        idempotencyKey || `hold-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    };
+    return this.request<BookingHoldResponse>("/v1/booking-holds", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(params),
+    });
+  }
+
+  async evaluateRisk(
+    params: { tier: string; leadDays?: number; customerHistoryScore?: number },
+    idempotencyKey?: string,
+  ): Promise<{
+    noShowProbability: string;
+    depositTierPercent: string;
+    policyRoute: string;
+    rationale: string;
+  }> {
     const headers: Record<string, string> = {};
     if (idempotencyKey) {
       headers["idempotency-key"] = idempotencyKey;
     }
-    return this.request<BookingHoldResponse>("/v1/booking-holds", {
+    return this.request<{
+      noShowProbability: string;
+      depositTierPercent: string;
+      policyRoute: string;
+      rationale: string;
+    }>("/v1/risk/evaluate", {
       method: "POST",
       headers,
       body: JSON.stringify(params),

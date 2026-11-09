@@ -3,12 +3,19 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, act } from "@testing-library/react";
-import { sanitizeReturnTo, buildAuthScope, clearAuthCache } from "../lib/auth-config.js";
+import {
+  sanitizeReturnTo,
+  buildAuthScope,
+  clearAuthCache,
+  cleanStaleAuthParams,
+} from "../lib/auth-config.js";
 import { Auth0ProviderWithRedirect } from "../App.js";
 import { RouterProvider, useRouter } from "../router.js";
 
 // Mock @auth0/auth0-react
 let capturedAuth0Config: any = null;
+const mockLoginWithRedirect = vi.fn();
+
 vi.mock("@auth0/auth0-react", () => ({
   Auth0Provider: ({ children, ...props }: any) => {
     capturedAuth0Config = props;
@@ -17,7 +24,7 @@ vi.mock("@auth0/auth0-react", () => ({
   useAuth0: () => ({
     isAuthenticated: true,
     user: { name: "Test Buyer", email: "test@velvetai.internal" },
-    loginWithRedirect: vi.fn(),
+    loginWithRedirect: mockLoginWithRedirect,
     logout: vi.fn(),
     getAccessTokenSilently: vi.fn().mockResolvedValue("mock-access-token"),
   }),
@@ -196,6 +203,124 @@ describe("Auth0 Login Persistence & Session across Reloads (Finding 1)", () => {
       expect(localStorage.getItem(auth0Key1)).toBeNull();
       expect(localStorage.getItem(auth0Key2)).toBeNull();
       expect(localStorage.getItem(otherKey)).toBe("dark");
+    });
+
+    it("no redirect on load with a valid cache: does not invoke loginWithRedirect on mount", () => {
+      mockLoginWithRedirect.mockClear();
+
+      render(
+        <RouterProvider>
+          <Auth0ProviderWithRedirect
+            domain="test.auth0.com"
+            clientId="test-client-id"
+            audience="https://velvetai.example/api"
+          >
+            <div>Cached App</div>
+          </Auth0ProviderWithRedirect>
+        </RouterProvider>,
+      );
+
+      // Verifies no automatic redirect occurs on load
+      expect(mockLoginWithRedirect).not.toHaveBeenCalled();
+    });
+
+    it("clean URL after the callback: replaces URL without code/state/iss query params", () => {
+      // Simulate arrival at callback URL with code, state, and iss params
+      window.history.replaceState(
+        {},
+        document.title,
+        "/?code=auth0_code_xyz&state=state_abc&iss=https%3A%2F%2Ftest.auth0.com%2F",
+      );
+      expect(window.location.search).toContain("code=");
+
+      const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+
+      render(
+        <RouterProvider>
+          <Auth0ProviderWithRedirect
+            domain="test.auth0.com"
+            clientId="test-client-id"
+            audience="https://velvetai.example/api"
+          >
+            <div>Callback Test App</div>
+          </Auth0ProviderWithRedirect>
+        </RouterProvider>,
+      );
+
+      act(() => {
+        capturedAuth0Config.onRedirectCallback({ returnTo: "/approve/loc_verified_999" });
+      });
+
+      // Assert replaceState was used to clean URL and navigate to returnTo
+      expect(replaceStateSpy).toHaveBeenCalled();
+      expect(window.location.pathname).toBe("/approve/loc_verified_999");
+      expect(window.location.search).toBe("");
+    });
+
+    it("stale params handled silently: cleans code/state when no transaction exists and enables skipRedirectCallback", () => {
+      // Setup stale URL without an active transaction in sessionStorage
+      window.history.replaceState(
+        {},
+        document.title,
+        "/?code=stale_code_123&state=stale_state_456&iss=https%3A%2F%2Ftest.auth0.com%2F",
+      );
+      sessionStorage.clear();
+
+      render(
+        <RouterProvider>
+          <Auth0ProviderWithRedirect
+            domain="test.auth0.com"
+            clientId="test-client-id"
+            audience="https://velvetai.example/api"
+          >
+            <div>Stale Params App</div>
+          </Auth0ProviderWithRedirect>
+        </RouterProvider>,
+      );
+
+      // Verify stale params were stripped immediately from the browser URL
+      expect(window.location.search).toBe("");
+      // Verify skipRedirectCallback was passed as true so Auth0 doesn't crash on invalid state
+      expect(capturedAuth0Config.skipRedirectCallback).toBe(true);
+    });
+
+    it("legitimate params with active transaction in storage are preserved for Auth0 code exchange", () => {
+      // Setup URL with matching active transaction in sessionStorage
+      window.history.replaceState({}, document.title, "/?code=fresh_code&state=fresh_state");
+      sessionStorage.setItem(
+        "a0.spajs.txs.test-client-id",
+        JSON.stringify({ state: "fresh_state" }),
+      );
+
+      render(
+        <RouterProvider>
+          <Auth0ProviderWithRedirect
+            domain="test.auth0.com"
+            clientId="test-client-id"
+            audience="https://velvetai.example/api"
+          >
+            <div>Fresh Callback App</div>
+          </Auth0ProviderWithRedirect>
+        </RouterProvider>,
+      );
+
+      // Legitimate callback: skipRedirectCallback is false
+      expect(capturedAuth0Config.skipRedirectCallback).toBe(false);
+      sessionStorage.clear();
+    });
+
+    it("cleanStaleAuthParams directly strips stale parameters and returns true", () => {
+      window.history.replaceState(
+        {},
+        document.title,
+        "/test-path?code=123&state=abc&iss=https%3A%2F%2Fauth0.com%2F",
+      );
+      sessionStorage.clear();
+
+      const wasCleaned = cleanStaleAuthParams("test-client-id");
+      expect(wasCleaned).toBe(true);
+      expect(window.location.pathname).toBe("/test-path");
+      expect(window.location.search).toBe("");
     });
   });
 });

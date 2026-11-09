@@ -1,8 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 
+export interface NavigateOptions {
+  replace?: boolean;
+}
+
 interface RouterContextType {
   currentPath: string;
-  navigate: (path: string) => void;
+  navigate: (path: string, options?: NavigateOptions) => void;
 }
 
 const RouterContext = createContext<RouterContextType>({
@@ -30,10 +34,20 @@ export const RouterProvider: React.FC<RouterProviderProps> = ({ children }) => {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  const navigate = (path: string) => {
-    if (window.location.pathname !== path) {
-      window.history.pushState(null, "", path);
-      setCurrentPath(path);
+  const navigate = (path: string, options?: NavigateOptions) => {
+    const dummyOrigin = "https://velvet.internal";
+    const targetUrl = new URL(path, dummyOrigin);
+    const targetPath = targetUrl.pathname || "/";
+    const targetFull = `${targetPath}${targetUrl.search}${targetUrl.hash}`;
+    const currentFull = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+
+    if (currentFull !== targetFull || options?.replace) {
+      if (options?.replace) {
+        window.history.replaceState(null, "", targetFull);
+      } else {
+        window.history.pushState(null, "", targetFull);
+      }
+      setCurrentPath(targetPath);
       window.scrollTo(0, 0);
     }
   };

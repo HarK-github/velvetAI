@@ -60,8 +60,8 @@ export function sanitizeReturnTo(returnTo?: string | null): string {
 
   try {
     // Construct dummy URL to test parsing and prevent origin escaping
-    const dummy = new URL(trimmed, "http://localhost");
-    if (dummy.origin !== "http://localhost") {
+    const dummy = new URL(trimmed, "https://velvet.internal");
+    if (dummy.origin !== "https://velvet.internal") {
       return "/";
     }
     // Return relative path including query and hash
@@ -110,6 +110,69 @@ export function buildAuthScope(audience?: string | null): string {
   return hasAudience
     ? "openid profile email offline_access booking:read booking:quote booking:prepare booking:commit booking:cancel"
     : "openid profile email booking:read booking:quote booking:prepare booking:commit booking:cancel";
+}
+
+/**
+ * Detects stale authorization callback parameters (code, state, iss) in the URL.
+ * If present without an active Auth0 transaction in storage, cleans them from the URL
+ * via replaceState and returns true so Auth0Provider skips processing.
+ */
+export function cleanStaleAuthParams(clientId?: string): boolean {
+  if (typeof window === "undefined" || !window.location) {
+    return false;
+  }
+
+  try {
+    const url = new URL(window.location.href);
+    const hasCodeOrState =
+      url.searchParams.has("code") ||
+      url.searchParams.has("state") ||
+      url.searchParams.has("error") ||
+      url.searchParams.has("iss");
+
+    if (!hasCodeOrState) {
+      return false;
+    }
+
+    // Check if an active Auth0 transaction exists in storage
+    let hasActiveTransaction = false;
+    if (clientId) {
+      const txKey = `a0.spajs.txs.${clientId}`;
+      try {
+        if (typeof window.sessionStorage !== "undefined" && window.sessionStorage.getItem(txKey)) {
+          hasActiveTransaction = true;
+        }
+      } catch {
+        // sessionStorage unavailable
+      }
+
+      try {
+        if (
+          document.cookie &&
+          (document.cookie.includes(txKey) || document.cookie.includes("a0.spajs.txs"))
+        ) {
+          hasActiveTransaction = true;
+        }
+      } catch {
+        // document.cookie unavailable
+      }
+    }
+
+    if (!hasActiveTransaction) {
+      url.searchParams.delete("code");
+      url.searchParams.delete("state");
+      url.searchParams.delete("error");
+      url.searchParams.delete("error_description");
+      url.searchParams.delete("iss");
+      const cleanUrl = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState({}, document.title, cleanUrl);
+      return true;
+    }
+  } catch {
+    // Malformed URL or restricted environment
+  }
+
+  return false;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { FC } from "react";
 import { Link } from "../router.js";
+import { API_BASE_URL } from "../api-client.js";
 
 interface ScheduleSlot {
   id: string;
@@ -98,18 +99,24 @@ export const SchedulePage: FC = () => {
     setRaceResult(null);
 
     // Simulate 2 parallel threads trying to claim the same slot
-    const thread1 = fetch("http://localhost:3000/v1/booking-holds", {
+    const thread1 = fetch(`${API_BASE_URL}/v1/booking-holds`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `race-alpha-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      },
       body: JSON.stringify({
         customer: { email: "agent.alpha@velvetai.internal" },
         note: "Thread Alpha race probe",
       }),
     });
 
-    const thread2 = fetch("http://localhost:3000/v1/booking-holds", {
+    const thread2 = fetch(`${API_BASE_URL}/v1/booking-holds`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `race-beta-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      },
       body: JSON.stringify({
         customer: { email: "agent.beta@velvetai.internal" },
         note: "Thread Beta race probe",

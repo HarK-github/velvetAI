@@ -46,7 +46,7 @@ export interface BookingActor {
   roles: string[];
 }
 
-function formatSlotDisplay(startsAt: Date, endsAt: Date, timeZone: string) {
+export function formatSlotDisplay(startsAt: Date, endsAt: Date, timeZone: string) {
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
     weekday: "short",
@@ -146,11 +146,18 @@ export class BookingService {
         })
         .execute();
 
+      const effectiveTimeZone = input.timeZone || "America/New_York";
+      const displayInfo = formatSlotDisplay(startsAt, endsAt, effectiveTimeZone);
+
       return {
         quoteId,
         expiresAt: expiresAt.toISOString() as Rfc3339Timestamp,
         serviceVersion: service.version,
         scheduleRevision: 1,
+        serviceName: service.name,
+        startsAt: startsAt.toISOString() as Rfc3339Timestamp,
+        endsAt: endsAt.toISOString() as Rfc3339Timestamp,
+        display: displayInfo,
         total: {
           valueMinor: String(service.price_minor) as MoneyMinor,
           currency: service.currency as CurrencyCode,
@@ -442,6 +449,8 @@ export class BookingService {
       const webOrigin =
         process.env.PUBLIC_WEB_ORIGIN || process.env.WEB_BASE_URL || "http://localhost:5174";
       const approvalUrl = `${webOrigin}/approve/${interactionLocator}`;
+      const effectiveTimeZone = input.timeZone || "America/New_York";
+      const displayInfo = formatSlotDisplay(startsAt, endsAt, effectiveTimeZone);
 
       return {
         bookingId,
@@ -452,6 +461,8 @@ export class BookingService {
         approvalLocator: `/v1/booking-approvals/${interactionLocator}`,
         approvalUrl,
         interactionToken,
+        serviceName: service.name,
+        display: displayInfo,
         requiresHumanConfirmation: true as const,
       };
     });

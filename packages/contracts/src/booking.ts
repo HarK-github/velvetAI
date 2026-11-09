@@ -59,6 +59,18 @@ export const bookingQuoteSchema = z.object({
   expiresAt: rfc3339TimestampSchema,
   serviceVersion: z.number().int().positive(),
   scheduleRevision: z.number().int().nonnegative(),
+  serviceName: z.string().optional(),
+  startsAt: rfc3339TimestampSchema.optional(),
+  endsAt: rfc3339TimestampSchema.optional(),
+  display: z
+    .object({
+      localDate: z.string(),
+      localStart: z.string(),
+      localEnd: z.string(),
+      timeZone: z.string(),
+      timeZoneLabel: z.string(),
+    })
+    .optional(),
   total: moneySchema,
   deposit: moneySchema,
   risk: z

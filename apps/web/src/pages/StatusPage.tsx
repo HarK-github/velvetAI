@@ -135,7 +135,7 @@ export const StatusPage: FC = () => {
               }}
             >
               <span className="mono" style={{ color: "var(--secondary)", fontSize: "10px" }}>
-                FASTIFY REST SERVER (PORT 3000)
+                FASTIFY REST SERVER ({API_BASE_URL})
               </span>
               <div
                 style={{

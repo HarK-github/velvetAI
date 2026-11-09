@@ -1438,15 +1438,169 @@ main {
 .ai-slots-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
-.ai-slot-badge {
-  padding: 4px 8px;
-  background: #2e303c;
-  color: #60a5fa;
-  border-radius: 4px;
+.ai-slot-button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 10px;
+  background: #252836;
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  border-radius: 6px;
+  color: #93c5fd;
   font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.ai-slot-button:hover {
+  background: #2f3548;
+  border-color: #60a5fa;
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.ai-slot-button:focus-visible {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: 1px;
+}
+
+.ai-slot-primary-time {
+  font-weight: 600;
+  color: #60a5fa;
+}
+
+.ai-slot-user-time {
+  font-size: 9px;
+  color: #94a3b8;
+  opacity: 0.85;
+}
+
+.ai-slot-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #94a3b8;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ai-slot-more-btn:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ai-tool-step-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  color: #94a3b8;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin: 4px 0;
+}
+
+.ai-tool-step-chip:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #e2e8f0;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.ai-quote-card {
+  background: #1a1b23;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-quote-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 8px;
+}
+
+.ai-quote-service-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 2px;
+}
+
+.ai-quote-time-row {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.ai-quote-user-time {
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 1px;
+}
+
+.ai-quote-financials {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.ai-quote-fin-row {
+  display: flex;
+  justify-content: space-between;
+  color: #94a3b8;
+}
+
+.ai-quote-fin-row--total {
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.ai-quote-fin-row--deposit {
+  color: #f59e0b;
+}
+
+.ai-quote-fin-row--balance {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 4px;
+  margin-top: 2px;
+  font-weight: 500;
+  color: #cbd5e1;
+}
+
+.ai-quote-policy {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+  padding: 4px 0;
+}
+
+.ai-quote-expiry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #f59e0b;
+  opacity: 0.9;
 }
 
 .ai-approval-card {
