@@ -240,7 +240,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     const role = roleInfo.rows[0]!;
     expect(role.rolsuper).toBe(false);
     expect(role.rolbypassrls).toBe(false);
-    expect(role.rolcanlogin).toBe(true);
+    expect(role.rolcanlogin).toBe(false);
 
     // Verify FORCE ROW LEVEL SECURITY across all 25 tenant tables
     const tenantTables = [

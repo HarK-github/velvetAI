@@ -68,7 +68,9 @@ describe("W6: WebMCP Progressive Enhancement via document.modelContext", () => {
   afterEach(() => {
     delete (globalThis as any).document;
     try {
-      delete (navigator as any).modelContext;
+      if (typeof navigator !== "undefined") {
+        delete (navigator as any).modelContext;
+      }
     } catch {
       // ignore
     }
@@ -79,7 +81,10 @@ describe("W6: WebMCP Progressive Enhancement via document.modelContext", () => {
     expect(isWebMcpSupported()).toBe(false);
 
     // 2. Strict Invariant: navigator.modelContext must NEVER be checked or used
-    (navigator as any).modelContext = mockModelContext;
+    if (typeof globalThis.navigator === "undefined") {
+      (globalThis as any).navigator = {};
+    }
+    (globalThis.navigator as any).modelContext = mockModelContext;
     expect(isWebMcpSupported()).toBe(false);
 
     // 3. Only document.modelContext enables WebMCP

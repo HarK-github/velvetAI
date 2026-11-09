@@ -5,3 +5,7 @@ packages:
 allowBuilds:
   browser-tabs-lock: true
   esbuild: true
+
+overrides:
+  undici: "^7.30.1"
+  jsdom: "^26.0.0"

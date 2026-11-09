@@ -24,6 +24,7 @@
     "@velvetai/integrations-paypal": "workspace:*",
     "@velvetai/observability": "workspace:*",
     "@velvetai/tool-registry": "workspace:*",
+    "@velvetai/worker": "workspace:*",
     "ai": "7.0.148",
     "fastify": "^5.2.1",
     "jose": "6.2.13",

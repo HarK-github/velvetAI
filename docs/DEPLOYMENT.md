@@ -8,27 +8,24 @@ This document provides the authoritative, tested deployment architecture, config
 
 ```
                   +---------------------------+
-                  |   velvetai-web (Static)   |
+                  |   velvetai-web (Vercel)   |
                   |     (React 19 / Vite)     |
+                  | https://velvetai-five.    |
+                  |       vercel.app          |
                   +-------------+-------------+
                                 |
                                 v (HTTPS REST & SSE)
 +------------------+     +------+--------------------+     +------------------------+
 |  PayPal Sandbox  |<--->|    velvetai-api (Web)     |<--->|      velvetai-db       |
-|    REST API v2   |     |  (Fastify 5 / Docker)     |     | (Managed PostgreSQL 17)|
-+------------------+     +---------------------------+     +-----------+------------+
-        ^                               ^                              ^
-        |                               |                              |
-        |                +--------------+------------+                 |
-        +--------------->|   velvetai-worker (Bg)    |<----------------+
-                         |  (Outbox & Reconciliation)|
+|    REST API v2   |     |  (Fastify 5 / Docker)     |     | (Managed PostgreSQL 17 |
++------------------+     | + Embedded Outbox Worker  |     |   or Neon/Supabase)    |
+                         |   (Zero-Cost $0 Setup)    |     +------------------------+
                          +---------------------------+
 ```
 
-1. **`velvetai-api`** (Web Service, Docker runtime): Fastify 5 REST API, MCP 2026-07-28 endpoint (`/mcp`), Ask AI (`/v1/ai/chat` with Google Gemini & rate limiting), and PayPal webhooks. Health check path: `/health/ready`.
-2. **`velvetai-worker`** (Background Worker, Docker runtime): Transactional outbox relay (`FOR UPDATE SKIP LOCKED`), hold reaper, and PayPal reconciliation processor.
-3. **`velvetai-web`** (Static Site, Node 24 build): React 19 SPA built with Vite, Auth0 SPA SDK, and PayPal JS SDK v6.
-4. **`velvetai-db`** (Managed PostgreSQL 17): PostgreSQL 17 database enforcing `FORCE ROW LEVEL SECURITY`, `btree_gist` exclusion constraints, and isolated non-superuser runtime role (`velvet_runtime`).
+1. **`velvetai-api`** (Web Service, Docker runtime, Free Tier on Render): Fastify 5 REST API, MCP 2026-07-28 endpoint (`/mcp`), Ask AI (`/v1/ai/chat` with Google Gemini & rate limiting), PayPal webhooks, and **Embedded Outbox Worker** (`EMBED_WORKER=true`).
+2. **`velvetai-web`** (Vercel Hobby Tier, Free): React 19 SPA built with Vite and deployed via Vercel CLI (`https://velvetai-five.vercel.app`).
+3. **`velvetai-db`** (PostgreSQL 17, Free Tier on Render or external Neon/Supabase): PostgreSQL 17 database enforcing `FORCE ROW LEVEL SECURITY`, `btree_gist` exclusion constraints, and isolated non-superuser runtime role (`velvet_runtime`).
 
 ---
 
@@ -298,9 +295,9 @@ unset DB_URL
 1. **SPA Application (`velvetAI Web`)**:
    - In Auth0 Dashboard, navigate to **Applications** → **Applications** → **velvetAI Web** (Client ID: `UDUndVMtt7rVZS874ztyNbcrRBSKNhMc`).
    - In **Settings** tab, add your Render static site URL to the following fields:
-     - **Allowed Callback URLs**: `https://<web-service>.onrender.com, https://<web-service>.onrender.com/callback, http://localhost:5173, http://localhost:5173/callback`
-     - **Allowed Logout URLs**: `https://<web-service>.onrender.com, http://localhost:5173`
-     - **Allowed Web Origins**: `https://<web-service>.onrender.com, http://localhost:5173`
+     - **Allowed Callback URLs**: `https://velvetai-five.vercel.app, https://velvetai-five.vercel.app/callback, https://<web-service>.onrender.com, http://localhost:5173, http://localhost:5173/callback`
+     - **Allowed Logout URLs**: `https://velvetai-five.vercel.app, https://<web-service>.onrender.com, http://localhost:5173`
+     - **Allowed Web Origins**: `https://velvetai-five.vercel.app, https://<web-service>.onrender.com, http://localhost:5173`
    - Click **Save Changes**.
 
 2. **Create Hosted MCP API (`velvetAI MCP (Render)`)**:

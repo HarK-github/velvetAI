@@ -106,7 +106,7 @@ describe("W2, W3, W4: Stateless MCP 2026-07-28 Streamable HTTP & Two-Phase Human
           tenant_id: tenantId,
           service_id: serviceId,
           version: 1,
-          name: "MCP Haircut Service",
+          name: "Executive Haircut & Beard Sculpt",
           duration_minutes: 45,
           buffer_before_minutes: 0,
           buffer_after_minutes: 15,
