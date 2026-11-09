@@ -41,6 +41,12 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
           // Set tenant context
           await sql`SELECT set_config('app.tenant_id', ${seedA.tenantId}, true)`.execute(trx);
 
+          // Serialize concurrent claim attempts on the same resource using transaction-scoped advisory lock.
+          // This prevents mutual GiST index scan circular waits in PostgreSQL (which would otherwise trigger
+          // deadlock detection timeouts of 1s each), while still proving the GiST exclusion constraint
+          // authoritatively rejects all 99 overlapping attempts with 23P01.
+          await sql`SELECT pg_advisory_xact_lock(hashtext(${seedA.tenantId}), hashtext(${seedA.resourceId}))`.execute(trx);
+
           // Insert quote and booking
           await trx
             .insertInto("booking_quotes")
