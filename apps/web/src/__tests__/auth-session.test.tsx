@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, act } from "@testing-library/react";
-import { sanitizeReturnTo } from "../lib/auth-config.js";
+import { sanitizeReturnTo, buildAuthScope, clearAuthCache } from "../lib/auth-config.js";
 import { Auth0ProviderWithRedirect } from "../App.js";
 import { RouterProvider, useRouter } from "../router.js";
 
@@ -158,6 +158,44 @@ describe("Auth0 Login Persistence & Session across Reloads (Finding 1)", () => {
       const parsed = JSON.parse(restored!);
       expect(parsed.body.refresh_token).toBe("mock-refresh-token");
       expect(parsed.body.decoded.claims.sub).toBe("auth0|6af02be79968e1f8f05bcee2");
+    });
+
+    it("includes offline_access only together with an API audience", () => {
+      // 1. With API audience -> includes offline_access
+      expect(buildAuthScope("https://velvetai.example/api")).toContain("offline_access");
+
+      // 2. Without audience or with empty string -> omits offline_access
+      expect(buildAuthScope(undefined)).not.toContain("offline_access");
+      expect(buildAuthScope("")).not.toContain("offline_access");
+      expect(buildAuthScope("   ")).not.toContain("offline_access");
+
+      // 3. Provider reflects this behavior
+      render(
+        <RouterProvider>
+          <Auth0ProviderWithRedirect domain="test.auth0.com" clientId="test-client-id" audience="">
+            <div>No Audience App</div>
+          </Auth0ProviderWithRedirect>
+        </RouterProvider>,
+      );
+
+      expect(capturedAuth0Config.authorizationParams.audience).toBeUndefined();
+      expect(capturedAuth0Config.authorizationParams.scope).not.toContain("offline_access");
+    });
+
+    it("clears localStorage cache on logout via clearAuthCache", () => {
+      const auth0Key1 = "@@auth0spajs@@::client::key1";
+      const auth0Key2 = "@@auth0spajs@@::client::key2";
+      const otherKey = "user_preference_theme";
+
+      localStorage.setItem(auth0Key1, "token1");
+      localStorage.setItem(auth0Key2, "token2");
+      localStorage.setItem(otherKey, "dark");
+
+      clearAuthCache();
+
+      expect(localStorage.getItem(auth0Key1)).toBeNull();
+      expect(localStorage.getItem(auth0Key2)).toBeNull();
+      expect(localStorage.getItem(otherKey)).toBe("dark");
     });
   });
 });

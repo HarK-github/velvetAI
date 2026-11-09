@@ -650,7 +650,21 @@ export class BookingService {
         .executeTakeFirst();
 
       if (!conf.buyer_user_id) {
-        // Finding 3: M2M hold - first authenticated human buyer who approves claims it
+        // Finding 3: M2M hold - first authenticated human buyer who approves claims it atomically
+        const claimed = await trx
+          .updateTable("buyer_confirmations")
+          .set({ buyer_user_id: buyerUserId })
+          .where("id", "=", conf.id)
+          .where("buyer_user_id", "is", null)
+          .returning(["id", "buyer_user_id"])
+          .executeTakeFirst();
+
+        if (!claimed) {
+          throw new DomainError("This approval belongs to another account.", "BUYER_MISMATCH", 403);
+        }
+
+        conf.buyer_user_id = buyerUserId;
+
         await trx
           .insertInto("audit_events")
           .values({
@@ -800,7 +814,21 @@ export class BookingService {
         .executeTakeFirst();
 
       if (!conf.buyer_user_id) {
-        // M2M hold: The first authenticated human buyer who approves claims it!
+        // M2M hold: The first authenticated human buyer who approves claims it atomically!
+        const claimed = await trx
+          .updateTable("buyer_confirmations")
+          .set({ buyer_user_id: buyerUserId })
+          .where("id", "=", conf.id)
+          .where("buyer_user_id", "is", null)
+          .returning(["id", "buyer_user_id"])
+          .executeTakeFirst();
+
+        if (!claimed) {
+          throw new DomainError("This approval belongs to another account.", "BUYER_MISMATCH", 403);
+        }
+
+        conf.buyer_user_id = buyerUserId;
+
         await trx
           .insertInto("audit_events")
           .values({

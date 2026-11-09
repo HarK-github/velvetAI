@@ -99,3 +99,37 @@ export function computeAuthDiagnostic(token?: string | null): AuthDiagnostic {
 
   return diagnostic;
 }
+
+/**
+ * Builds the Auth0 authorization scope string.
+ * offline_access is strictly included only when an API audience is present,
+ * as Auth0 refresh token issuance requires an authorized API resource identifier.
+ */
+export function buildAuthScope(audience?: string | null): string {
+  const hasAudience = Boolean(audience && audience.trim().length > 0);
+  return hasAudience
+    ? "openid profile email offline_access booking:read booking:quote booking:prepare booking:commit booking:cancel"
+    : "openid profile email booking:read booking:quote booking:prepare booking:commit booking:cancel";
+}
+
+/**
+ * Clears Auth0 cached session keys from localStorage on logout.
+ */
+export function clearAuthCache(): void {
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
+        if (key && (key.startsWith("@@auth0spajs@@") || key.startsWith("auth0"))) {
+          keysToRemove.push(key);
+        }
+      }
+      for (const k of keysToRemove) {
+        window.localStorage.removeItem(k);
+      }
+    } catch {
+      // Ignore storage errors in restricted contexts
+    }
+  }
+}

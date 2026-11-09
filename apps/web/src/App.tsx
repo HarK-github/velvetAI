@@ -11,7 +11,7 @@ import { SchedulePage } from "./pages/SchedulePage.js";
 import { PolicyPage } from "./pages/PolicyPage.js";
 import { StatusPage } from "./pages/StatusPage.js";
 import { ApprovalPage } from "./pages/ApprovalPage.js";
-import { computeAuthDiagnostic, sanitizeReturnTo } from "./lib/auth-config.js";
+import { computeAuthDiagnostic, sanitizeReturnTo, buildAuthScope } from "./lib/auth-config.js";
 import { API_BASE_URL } from "./api-client.js";
 
 const AppContent: FC = () => {
@@ -156,15 +156,17 @@ export const Auth0ProviderWithRedirect: FC<{
   const redirectUri =
     typeof window !== "undefined" ? window.location.origin : "http://localhost:5174";
 
+  const hasAudience = Boolean(audience && audience.trim().length > 0);
+  const effectiveScope = buildAuthScope(audience);
+
   return (
     <Auth0Provider
       domain={domain}
       clientId={clientId}
       authorizationParams={{
         redirect_uri: redirectUri,
-        audience: audience || undefined,
-        scope:
-          "openid profile email offline_access booking:read booking:quote booking:prepare booking:commit booking:cancel",
+        audience: hasAudience ? audience : undefined,
+        scope: effectiveScope,
       }}
       useRefreshTokens={true}
       cacheLocation="localstorage"

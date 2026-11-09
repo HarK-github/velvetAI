@@ -24,33 +24,14 @@ export function extractDatabaseName(dbUrl: string): string {
 
 /**
  * Detects the calling workspace package name to provide isolated test databases.
+ * Strictly reads from TEST_PACKAGE_NAME set in vitest.config.ts.
  */
 export function detectCurrentPackageName(): string | undefined {
-  if (process.env.TEST_PACKAGE_NAME) {
-    return process.env.TEST_PACKAGE_NAME.replace(/^@velvetai\//, "").replace(/-/g, "_");
+  if (process.env.TEST_PACKAGE_NAME && process.env.TEST_PACKAGE_NAME.trim().length > 0) {
+    return process.env.TEST_PACKAGE_NAME.trim()
+      .replace(/^@velvetai\//, "")
+      .replace(/-/g, "_");
   }
-  if (process.env.npm_package_name) {
-    return process.env.npm_package_name.replace(/^@velvetai\//, "").replace(/-/g, "_");
-  }
-  const cwd = process.cwd();
-  if (cwd.includes("packages/db")) return "db";
-  if (cwd.includes("packages/application")) return "application";
-  if (cwd.includes("apps/api")) return "api";
-  if (cwd.includes("apps/worker")) return "worker";
-  if (cwd.includes("apps/abuse-lab")) return "abuse_lab";
-
-  // Stack frame fallback when tests are executed from monorepo root
-  const stack = new Error().stack;
-  if (stack) {
-    if (stack.includes("/apps/worker/") || stack.includes("\\apps\\worker\\")) return "worker";
-    if (stack.includes("/apps/api/") || stack.includes("\\apps\\api\\")) return "api";
-    if (stack.includes("/packages/application/") || stack.includes("\\packages\\application\\"))
-      return "application";
-    if (stack.includes("/packages/db/") || stack.includes("\\packages\\db\\")) return "db";
-    if (stack.includes("/apps/abuse-lab/") || stack.includes("\\apps\\abuse-lab\\"))
-      return "abuse_lab";
-  }
-
   return undefined;
 }
 
@@ -134,6 +115,16 @@ export function assertSafeTestDatabaseTeardown(dbUrl: string): void {
  */
 export function getTestDatabaseUrl(packageName?: string): string {
   loadRootEnv({ isTest: true });
+
+  if (packageName === undefined && process.env.NODE_ENV === "test") {
+    const configuredPkg = process.env.TEST_PACKAGE_NAME;
+    if (!configuredPkg || !configuredPkg.trim()) {
+      throw new Error(
+        "TEST CONFIGURATION ERROR: TEST_PACKAGE_NAME is missing in NODE_ENV=test. Explicitly set TEST_PACKAGE_NAME in vitest.config.ts for DB-backed packages.",
+      );
+    }
+  }
+
   const envTestUrl = process.env.TEST_DATABASE_URL;
   let resolvedUrl: string;
 

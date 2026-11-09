@@ -663,7 +663,10 @@ COMMITTING
 
 Package 02 completes the end-to-end human approval and direct commit flow for reservations held by external AI agents (MCP) or Ask AI, enforces Auth0 session persistence via Refresh Token Rotation, and updates the approval UI to customer-friendly plain English with merchant-local time presentation.
 
-### Deliverables & Verifications
+### Honest Labels & Gaps
+
+- **Playwright Golden-Path Browser E2E**: `DEFERRED`. `auth0-login.test.tsx` is an in-memory/jsdom unit test suite simulating browser Auth0 client interactions and PKCE parameters, not an automated headless Playwright browser run. Golden-path verification is executed via real browser manual testing on Track B (web port 5174, API port 3001) per runbook.
+- **Hosted Smoke & PayPal Tests**: `pnpm mcp:smoke` against live hosted endpoints and live hosted PayPal tests are executed by Track A per `PARALLEL_RULES.md` rule 6. Track B executes comprehensive local integration and unit tests.
 
 1. **Task 0: Isolated Test DB Resolution**
    - Implemented package test database resolution in `packages/db/src/test-db.ts` using stack trace inspection fallback and explicit vitest environment injection (`TEST_PACKAGE_NAME`).

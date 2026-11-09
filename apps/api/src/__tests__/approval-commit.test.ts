@@ -159,10 +159,13 @@ describe("Human Buyer Approve-and-Commit Route (POST /v1/booking-approvals/:loca
   });
 
   let slotCounter = 1;
+  const RUN_OFFSET_DAYS = 50 + Math.floor(Math.random() * 200);
   function getNextSlotStart(): string {
     slotCounter += 1;
-    // Each hold is 2 hours apart so they can never overlap
-    return new Date(Date.now() + 86400_000 * 10 + slotCounter * 7200_000).toISOString();
+    // Each hold is 2 hours apart in a unique future window so they never collide with other test suites
+    return new Date(
+      Date.now() + 86400_000 * RUN_OFFSET_DAYS + slotCounter * 7200_000,
+    ).toISOString();
   }
 
   async function prepareTestHold(options?: {
@@ -192,6 +195,10 @@ describe("Human Buyer Approve-and-Commit Route (POST /v1/booking-approvals/:loca
         },
       },
     });
+
+    if (prepRes.statusCode !== 201) {
+      console.error("prepareTestHold failed:", prepRes.statusCode, prepRes.body);
+    }
 
     expect(prepRes.statusCode).toBe(201);
     const body = prepRes.json();
@@ -626,5 +633,56 @@ describe("Human Buyer Approve-and-Commit Route (POST /v1/booking-approvals/:loca
     });
 
     expect(res.statusCode).toBe(400);
+  });
+
+  // 12. Concurrent race: two different human buyers approve-and-commit the same unassigned M2M hold simultaneously -> exactly one succeeds, the other gets BUYER_MISMATCH, exactly one committed intent
+  it("12. Concurrent race: two different human buyers approve-and-commit the same unassigned M2M hold simultaneously -> exactly one succeeds, the other gets BUYER_MISMATCH, exactly one committed intent", async () => {
+    const hold = await prepareTestHold({
+      authHeader: M2M_TOKEN,
+      buyerEmail: "unassigned-race@example.com",
+      isM2M: true,
+    });
+
+    // Execute simultaneous approve-and-commit calls from Buyer A and Buyer B
+    const [resA, resB] = await Promise.all([
+      app.inject({
+        method: "POST",
+        url: `/v1/booking-approvals/${hold.locator}/approve-and-commit`,
+        headers: {
+          authorization: BUYER_A_TOKEN,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        payload: {},
+      }),
+      app.inject({
+        method: "POST",
+        url: `/v1/booking-approvals/${hold.locator}/approve-and-commit`,
+        headers: {
+          authorization: BUYER_B_TOKEN,
+          "idempotency-key": crypto.randomUUID(),
+        },
+        payload: {},
+      }),
+    ]);
+
+    const statuses = [resA.statusCode, resB.statusCode].sort();
+    expect(statuses).toEqual([200, 403]);
+
+    const winner = resA.statusCode === 200 ? resA : resB;
+    const loser = resA.statusCode === 403 ? resA : resB;
+
+    expect(winner.json().status).toBe("COMMITTING");
+    expect(loser.json().code).toBe("BUYER_MISMATCH");
+    expect(loser.json().detail).toBe("This approval belongs to another account.");
+
+    // Exactly one committed intent in database
+    const committedIntents = await withTenantTransaction(db, DEV_TENANT_ID, async (trx) => {
+      return await trx
+        .selectFrom("committed_intents")
+        .where("booking_id", "=", hold.bookingId)
+        .selectAll()
+        .execute();
+    });
+    expect(committedIntents).toHaveLength(1);
   });
 });

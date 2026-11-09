@@ -2,7 +2,7 @@ import { useState, useEffect, type FC } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { Link, useRouter } from "../router.js";
 import { apiClient } from "../api-client.js";
-import { isAuth0Configured, computeAuthDiagnostic } from "../lib/auth-config.js";
+import { isAuth0Configured, computeAuthDiagnostic, clearAuthCache } from "../lib/auth-config.js";
 
 const Auth0StateButton: FC = () => {
   const {
@@ -217,6 +217,7 @@ const Auth0StateButton: FC = () => {
         <button
           type="button"
           onClick={() => {
+            clearAuthCache();
             apiClient.setAuthToken("");
             apiClient.setTokenProvider(async () => undefined);
             computeAuthDiagnostic(undefined);

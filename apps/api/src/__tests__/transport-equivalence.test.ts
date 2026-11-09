@@ -573,6 +573,18 @@ describe("W8/Section 9: Four-Transport Equivalence Across REST, MCP, WebMCP Simu
     expect(mcpData.approvalLocator).toMatch(/^\/v1\/booking-approvals\//);
     expect(webMcpData.approvalLocator).toMatch(/^\/v1\/booking-approvals\//);
 
+    const expectedOrigin =
+      process.env.PUBLIC_WEB_ORIGIN || process.env.WEB_BASE_URL || "http://localhost:5174";
+    expect(restData.approvalUrl).toBe(
+      `${expectedOrigin}/approve/${restData.approvalLocator.replace("/v1/booking-approvals/", "")}`,
+    );
+    expect(mcpData.approvalUrl).toBe(
+      `${expectedOrigin}/approve/${mcpData.approvalLocator.replace("/v1/booking-approvals/", "")}`,
+    );
+    expect(webMcpData.approvalUrl).toBe(
+      `${expectedOrigin}/approve/${webMcpData.approvalLocator.replace("/v1/booking-approvals/", "")}`,
+    );
+
     expect(restData.requiresHumanConfirmation).toBe(true);
     expect(mcpData.requiresHumanConfirmation).toBe(true);
     expect(webMcpData.requiresHumanConfirmation).toBe(true);

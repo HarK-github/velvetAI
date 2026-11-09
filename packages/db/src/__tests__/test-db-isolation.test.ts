@@ -274,4 +274,25 @@ describe("Test Database Isolation Guard", () => {
       }
     }
   });
+
+  it("in NODE_ENV=test, getTestDatabaseUrl() throws when TEST_PACKAGE_NAME is missing", () => {
+    const origPkg = process.env.TEST_PACKAGE_NAME;
+    const origNodeEnv = process.env.NODE_ENV;
+
+    try {
+      process.env.NODE_ENV = "test";
+      delete process.env.TEST_PACKAGE_NAME;
+
+      expect(() => getTestDatabaseUrl()).toThrowError(
+        /TEST CONFIGURATION ERROR: TEST_PACKAGE_NAME is missing in NODE_ENV=test/,
+      );
+    } finally {
+      process.env.NODE_ENV = origNodeEnv;
+      if (origPkg !== undefined) {
+        process.env.TEST_PACKAGE_NAME = origPkg;
+      } else {
+        delete process.env.TEST_PACKAGE_NAME;
+      }
+    }
+  });
 });
