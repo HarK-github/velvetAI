@@ -38,7 +38,6 @@ services:
     dockerfilePath: ./Dockerfile.api
     plan: free
     healthCheckPath: /health/ready
-    preDeployCommand: pnpm --filter @velvetai/db db:migrate
     envVars:
       - fromGroup: velvetai-sandbox-secrets
       - key: NODE_ENV

@@ -7,6 +7,19 @@ async function main() {
   const env = validateEnv();
   const app = buildApp();
 
+  const migrationUrl = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
+  if (migrationUrl && process.env.AUTO_MIGRATE !== "false") {
+    try {
+      const { createDatabaseClient, migrateToLatest } = await import("@velvetai/db");
+      const migratorDb = createDatabaseClient(migrationUrl);
+      await migrateToLatest(migratorDb);
+      await migratorDb.destroy();
+      app.log.info("[database] Startup migrations executed successfully");
+    } catch (migErr) {
+      app.log.warn({ err: migErr }, "[database] Automatic startup migration failed or skipped");
+    }
+  }
+
   let worker: OutboxWorker | null = null;
   if (process.env.EMBED_WORKER !== "false") {
     try {
