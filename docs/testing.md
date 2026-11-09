@@ -99,6 +99,20 @@ A single command prepares all test databases from a fresh clone:
 pnpm db:test:prepare
 ```
 
+---
+
+## 4. Migration Order Independence & `allowUnorderedMigrations`
+
+When multiple engineering tracks work in parallel (e.g., Track A implementing migration `0007` while Track B implements migration `0006`), migrations may be merged or executed out of numerical sequence.
+
+By default, Kysely's `Migrator` refuses to apply an older pending migration (e.g. `0006`) once a newer migration (e.g. `0007`) has already been recorded in `kysely_migration`.
+
+To guarantee continuous integration and painless branch merges:
+
+1. `createMigrator` in `packages/db/src/migrator.ts` explicitly enables `allowUnorderedMigrations: true`.
+2. **Migration Independence Invariant**: Every database migration must be functionally independent of other concurrent migrations. Migrations must not assume a prior unmerged migration's tables or columns exist unless explicitly declared as a dependency in sequential order.
+3. Automated test `PostgreSQL 17 Migration Lifecycle > 8. Unordered migration proof` in `packages/db/src/__tests__/migration-lifecycle.test.ts` continuously verifies that pending lower-numbered migrations can execute cleanly after higher-numbered migrations have already been recorded.
+
 This script (`scripts/prepare-test-db.ts`):
 
 1. Loads the root environment via `loadRootEnv({ isTest: true })`.

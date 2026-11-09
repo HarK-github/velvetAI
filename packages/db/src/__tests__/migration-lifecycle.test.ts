@@ -269,6 +269,9 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       "financial_journal_entries",
       "financial_journal_lines",
       "invoices",
+      "judge_runs",
+      "demo_schedule_fixtures",
+      "synthetic_history",
     ];
 
     const rlsTables = await sql<{
@@ -298,7 +301,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       WHERE policyname = 'tenant_isolation_policy'
     `.execute(adminDb);
 
-    expect(policies.rows.length).toBe(25);
+    expect(policies.rows.length).toBe(28);
     for (const p of policies.rows) {
       // The qual must match NULLIF(current_setting('app.tenant_id', true), '')::uuid
       expect(p.qual).toContain("app.tenant_id");
@@ -308,6 +311,26 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
   });
 
   it("4. Migration Rollback and Re-apply Proof: verifies down() and up() idempotency", async () => {
+    // Rollback migration 0007
+    await migrateDown(adminDb);
+
+    // After rollback of 0007, judge_runs table and binding constraint should be absent
+    const rolledBackJudgeRuns = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'judge_runs'
+      ) as exists
+    `.execute(adminDb);
+    expect(rolledBackJudgeRuns.rows[0]?.exists).toBe(false);
+
+    const rolledBackBinding = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM pg_constraint
+        WHERE conname = 'chk_resource_claim_source_booking_binding'
+      ) as exists
+    `.execute(adminDb);
+    expect(rolledBackBinding.rows[0]?.exists).toBe(false);
+
     // Rollback migration 0005
     await migrateDown(adminDb);
 
@@ -359,7 +382,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     // Re-apply migrations to latest
     await migrateToLatest(adminDb);
 
-    // Verify table restored
+    // Verify tables and constraints restored
     const restoredSnapshots = await sql<{ exists: boolean }>`
       SELECT EXISTS (
         SELECT FROM information_schema.tables
@@ -367,6 +390,22 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       ) as exists
     `.execute(adminDb);
     expect(restoredSnapshots.rows[0]?.exists).toBe(true);
+
+    const restoredJudgeRuns = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'judge_runs'
+      ) as exists
+    `.execute(adminDb);
+    expect(restoredJudgeRuns.rows[0]?.exists).toBe(true);
+
+    const restoredBinding = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM pg_constraint
+        WHERE conname = 'chk_resource_claim_source_booking_binding'
+      ) as exists
+    `.execute(adminDb);
+    expect(restoredBinding.rows[0]?.exists).toBe(true);
 
     const restoredOps = await sql<{ exists: boolean }>`
       SELECT EXISTS (
@@ -652,5 +691,199 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
         expect(row.with_check).not.toContain("app.current_tenant_id");
       }
     }
+  });
+
+  it("8. Unordered migration proof: verifies allowUnorderedMigrations applies 0006-style migration after 0007", async () => {
+    let upExecuted = false;
+    const { Migrator } = await import("kysely");
+    const testMigrator = new Migrator({
+      db: adminDb,
+      allowUnorderedMigrations: true,
+      provider: {
+        async getMigrations() {
+          return {
+            "0001_initial_schema": { async up() {}, async down() {} },
+            "0002_slot_claim_rls_hardening": { async up() {}, async down() {} },
+            "0003_payment_core_ledger": { async up() {}, async down() {} },
+            "0004_outbox_lease_hardening": { async up() {}, async down() {} },
+            "0005_self_membership_rls": { async up() {}, async down() {} },
+            "0006_approval_signed_intent": {
+              async up() {
+                upExecuted = true;
+              },
+              async down() {},
+            },
+            "0007_judge_tenant_seed_and_reset": { async up() {}, async down() {} },
+          };
+        },
+      },
+    });
+
+    const { error, results } = await testMigrator.migrateToLatest();
+    expect(error).toBeUndefined();
+    expect(upExecuted).toBe(true);
+    expect(results?.find((r) => r.migrationName === "0006_approval_signed_intent")?.status).toBe(
+      "Success",
+    );
+
+    // Clean up the test migration entry from kysely_migration table
+    await sql`DELETE FROM kysely_migration WHERE name = '0006_approval_signed_intent'`.execute(
+      adminDb,
+    );
+  });
+
+  it("9. Resource claims source binding check & GiST exclusion with demo fixtures", async () => {
+    const JUDGE_TENANT_ID = "01932b10-0000-7000-8000-000000000a01";
+    const DEV_TENANT_ID = "01932b10-0000-7000-8000-000000000001";
+    const resourceId = crypto.randomUUID();
+    const locId = crypto.randomUUID();
+    const slotStart = new Date("2026-12-01T10:00:00.000Z");
+    const slotEnd = new Date("2026-12-01T11:00:00.000Z");
+
+    await withTenantTransaction(adminDb, JUDGE_TENANT_ID as any, async (trx) => {
+      await trx
+        .insertInto("tenants")
+        .values({
+          id: JUDGE_TENANT_ID,
+          name: "Judge Studio",
+          default_currency: "USD",
+          status: "ACTIVE",
+        })
+        .onConflict((oc) => oc.column("id").doNothing())
+        .execute();
+
+      await trx
+        .insertInto("locations")
+        .values({
+          id: locId,
+          tenant_id: JUDGE_TENANT_ID,
+          name: `Judge Location ${crypto.randomUUID().slice(0, 8)}`,
+          timezone: "America/New_York",
+          status: "ACTIVE",
+        })
+        .execute();
+
+      await trx
+        .insertInto("resources")
+        .values({
+          id: resourceId,
+          tenant_id: JUDGE_TENANT_ID,
+          location_id: locId,
+          resource_type: "ROOM",
+          display_name: "Judge Room 1",
+          status: "ACTIVE",
+        })
+        .onConflict((oc) => oc.column("id").doNothing())
+        .execute();
+    });
+
+    // A. Inserting a BOOKING claim with booking_id IS NULL fails chk_resource_claim_source_booking_binding
+    await expect(
+      withTenantTransaction(adminDb, JUDGE_TENANT_ID as any, async (trx) => {
+        await trx
+          .insertInto("resource_claims")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: JUDGE_TENANT_ID,
+            booking_id: null as any,
+            claim_source: "BOOKING",
+            resource_id: resourceId,
+            starts_at: slotStart,
+            ends_at: slotEnd,
+            blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+            state: "HELD",
+            blocking: true,
+          })
+          .execute();
+      }),
+    ).rejects.toThrow(/chk_resource_claim_source_booking_binding/);
+
+    // B. Inserting a DEMO_FIXTURE claim in the dev tenant fails chk_resource_claim_source_booking_binding
+    await expect(
+      withTenantTransaction(adminDb, DEV_TENANT_ID as any, async (trx) => {
+        await trx
+          .insertInto("resource_claims")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: DEV_TENANT_ID,
+            booking_id: null as any,
+            claim_source: "DEMO_FIXTURE",
+            resource_id: resourceId,
+            starts_at: slotStart,
+            ends_at: slotEnd,
+            blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+            state: "CONFIRMED",
+            blocking: true,
+          })
+          .execute();
+      }),
+    ).rejects.toThrow(/chk_resource_claim_source_booking_binding/);
+
+    // C. Inserting a DEMO_FIXTURE claim with non-null booking_id fails chk_resource_claim_source_booking_binding
+    await expect(
+      withTenantTransaction(adminDb, JUDGE_TENANT_ID as any, async (trx) => {
+        await trx
+          .insertInto("resource_claims")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: JUDGE_TENANT_ID,
+            booking_id: crypto.randomUUID(),
+            claim_source: "DEMO_FIXTURE",
+            resource_id: resourceId,
+            starts_at: slotStart,
+            ends_at: slotEnd,
+            blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+            state: "CONFIRMED",
+            blocking: true,
+          })
+          .execute();
+      }),
+    ).rejects.toThrow(/chk_resource_claim_source_booking_binding/);
+
+    // D. Inserting a valid DEMO_FIXTURE claim in judge tenant with booking_id IS NULL succeeds
+    const fixtureClaimId = crypto.randomUUID();
+    await withTenantTransaction(adminDb, JUDGE_TENANT_ID as any, async (trx) => {
+      await trx
+        .insertInto("resource_claims")
+        .values({
+          id: fixtureClaimId,
+          tenant_id: JUDGE_TENANT_ID,
+          booking_id: null as any,
+          claim_source: "DEMO_FIXTURE",
+          resource_id: resourceId,
+          starts_at: slotStart,
+          ends_at: slotEnd,
+          blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
+          state: "CONFIRMED",
+          blocking: true,
+        })
+        .execute();
+    });
+
+    // E. Inserting an overlapping blocking claim raises GiST exclusion 23P01
+    await expect(
+      withTenantTransaction(adminDb, JUDGE_TENANT_ID as any, async (trx) => {
+        await trx
+          .insertInto("resource_claims")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: JUDGE_TENANT_ID,
+            booking_id: null as any,
+            claim_source: "DEMO_FIXTURE",
+            resource_id: resourceId,
+            starts_at: new Date("2026-12-01T10:30:00.000Z"),
+            ends_at: new Date("2026-12-01T11:30:00.000Z"),
+            blocked_during: sql`tstzrange('2026-12-01T10:30:00.000Z'::timestamptz, '2026-12-01T11:30:00.000Z'::timestamptz, '[)')`,
+            state: "CONFIRMED",
+            blocking: true,
+          })
+          .execute();
+      }),
+    ).rejects.toThrow(/no_overlapping_claims/);
+
+    // Cleanup fixture claim
+    await withTenantTransaction(adminDb, JUDGE_TENANT_ID as any, async (trx) => {
+      await trx.deleteFrom("resource_claims").where("id", "=", fixtureClaimId).execute();
+    });
   });
 });

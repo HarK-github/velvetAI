@@ -252,6 +252,9 @@ importers:
       '@velvetai/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@velvetai/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@velvetai/integrations-paypal':
         specifier: workspace:*
         version: link:../../packages/integrations-paypal
@@ -387,6 +390,9 @@ importers:
       '@velvetai/db':
         specifier: workspace:*
         version: link:../db
+      '@velvetai/domain':
+        specifier: workspace:*
+        version: link:../domain
       ai:
         specifier: 7.0.148
         version: 7.0.148(zod@3.25.76)

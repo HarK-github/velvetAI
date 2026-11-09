@@ -21,6 +21,7 @@
     "@velvetai/application": "workspace:*",
     "@velvetai/contracts": "workspace:*",
     "@velvetai/db": "workspace:*",
+    "@velvetai/domain": "workspace:*",
     "@velvetai/integrations-paypal": "workspace:*",
     "@velvetai/observability": "workspace:*",
     "@velvetai/tool-registry": "workspace:*",
