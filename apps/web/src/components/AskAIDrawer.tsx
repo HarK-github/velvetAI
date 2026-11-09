@@ -36,6 +36,8 @@ interface AskAIDrawerInnerProps extends AskAIDrawerProps {
   isAuthenticated?: boolean;
   initialTokenPending?: boolean;
   authError?: Error | null;
+  userEmail?: string;
+  userName?: string;
 }
 
 export interface ProcessedItem {
@@ -79,7 +81,7 @@ export function getToolActionLabel(toolName: string): string {
 
 /**
  * Calculates user local time formatted via Intl when the browser time zone
- * differs from the merchant time zone.
+ * differs from the merchant time zone. Uses readable zone abbreviation (e.g. "IST").
  */
 export function getUserLocalTime(startsAt?: string, merchantTimeZone?: string): string | null {
   if (!startsAt) return null;
@@ -90,13 +92,39 @@ export function getUserLocalTime(startsAt?: string, merchantTimeZone?: string): 
     }
     const date = new Date(startsAt);
     if (isNaN(date.getTime())) return null;
-    const formatter = new Intl.DateTimeFormat("en-US", {
+
+    const timeFormatter = new Intl.DateTimeFormat("en-US", {
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
-      timeZoneName: "short",
     });
-    return formatter.format(date);
+    const timeStr = timeFormatter.format(date);
+
+    let zoneStr = "";
+    try {
+      const shortFormatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: browserZone,
+        timeZoneName: "short",
+      });
+      const parts = shortFormatter.formatToParts(date);
+      const shortName = parts.find((p) => p.type === "timeZoneName")?.value || "";
+      if (shortName && !/^GMT[+-]/i.test(shortName) && !/^UTC[+-]/i.test(shortName)) {
+        zoneStr = shortName;
+      } else if (browserZone === "Asia/Kolkata" || browserZone === "Asia/Calcutta") {
+        zoneStr = "IST";
+      } else {
+        const longFormatter = new Intl.DateTimeFormat("en-US", {
+          timeZone: browserZone,
+          timeZoneName: "longGeneric",
+        });
+        const longParts = longFormatter.formatToParts(date);
+        zoneStr = longParts.find((p) => p.type === "timeZoneName")?.value || shortName;
+      }
+    } catch {
+      zoneStr = "";
+    }
+
+    return zoneStr ? `${timeStr} ${zoneStr}` : timeStr;
   } catch {
     return null;
   }
@@ -167,7 +195,7 @@ export const ServiceListCard: FC<{
     <div className="ai-tool-card" data-testid="service-list-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+          <span className="ai-tool-action-name">
             Services
           </span>
         </div>
@@ -255,18 +283,19 @@ export const ServiceListCard: FC<{
 export const SlotsCard: FC<{
   toolResult: any;
   toolArgs?: any;
-  onSelectSlot: (prompt: string) => void;
+  onSelectSlot: (slotOrPrompt: any, toolResult?: any, toolArgs?: any) => void;
+  isQuoting?: boolean;
   isLiveEnvironment: boolean;
   timestamp?: string;
-}> = ({ toolResult, toolArgs, onSelectSlot, isLiveEnvironment, timestamp }) => {
+}> = ({ toolResult, toolArgs, onSelectSlot, isQuoting = false, isLiveEnvironment, timestamp }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const slots: any[] = Array.isArray(toolResult?.slots) ? toolResult.slots : [];
 
   const serviceName =
     toolResult?.serviceName || toolArgs?.serviceName || "Executive Haircut";
   const firstSlot = slots[0];
-  const localDate = firstSlot?.display?.localDate || "Tomorrow";
-  const zoneLabel = firstSlot?.display?.timeZoneLabel || toolResult?.timeZone || "EDT";
+  const localDate = toolResult?.resolvedDate || firstSlot?.display?.localDate || "Tomorrow";
+  const zoneLabel = firstSlot?.display?.timeZoneLabel || toolResult?.timeZone || "EST";
 
   const cardHeader = `Available times · ${serviceName} · ${localDate} · ${zoneLabel}`;
   const displayedSlots = isExpanded ? slots : slots.slice(0, 8);
@@ -276,7 +305,7 @@ export const SlotsCard: FC<{
     <div className="ai-tool-card" data-testid="slots-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+          <span className="ai-tool-action-name">
             {cardHeader}
           </span>
         </div>
@@ -320,7 +349,9 @@ export const SlotsCard: FC<{
                 key={idx}
                 type="button"
                 className="ai-slot-button mono"
-                onClick={() => onSelectSlot(promptToSend)}
+                onClick={() => onSelectSlot(slot, toolResult, toolArgs)}
+                data-prompt={promptToSend}
+                disabled={isQuoting}
                 aria-label={`Select slot at ${primaryTime}`}
               >
                 <span className="ai-slot-primary-time">{primaryTime}</span>
@@ -350,13 +381,47 @@ export const SlotsCard: FC<{
 export const QuoteCard: FC<{
   toolResult: any;
   toolArgs?: any;
+  onHoldThisTime?: (quote: any, args?: any) => void;
+  onPickDifferentTime?: () => void;
+  onRefreshQuote?: (quote: any, args?: any) => void;
+  isHolding?: boolean;
   isLiveEnvironment: boolean;
   timestamp?: string;
-}> = ({ toolResult, toolArgs, isLiveEnvironment, timestamp }) => {
+}> = ({
+  toolResult,
+  toolArgs,
+  onHoldThisTime,
+  onPickDifferentTime,
+  onRefreshQuote,
+  isHolding = false,
+  isLiveEnvironment,
+  timestamp,
+}) => {
   const serviceName = toolResult?.serviceName || toolArgs?.serviceName || "Service";
   const display = toolResult?.display;
   const startsAt = toolResult?.startsAt || toolArgs?.startsAt;
   const merchantZone = display?.timeZone || toolArgs?.timeZone || "America/New_York";
+
+  const expiresAt = toolResult?.expiresAt;
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(() => {
+    if (!expiresAt) return 300;
+    const diff = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000);
+    return Math.max(0, diff);
+  });
+
+  useEffect(() => {
+    if (!expiresAt) return;
+    const interval = setInterval(() => {
+      const diff = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000);
+      setSecondsRemaining(Math.max(0, diff));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [expiresAt]);
+
+  const isExpired = secondsRemaining <= 0;
+  const mins = Math.floor(secondsRemaining / 60);
+  const secs = secondsRemaining % 60;
+  const formattedCountdown = `${mins}:${secs < 10 ? "0" : ""}${secs}`;
 
   const localDate =
     display?.localDate ||
@@ -383,7 +448,7 @@ export const QuoteCard: FC<{
 
   const localEnd = display?.localEnd || "";
   const zoneLabel =
-    display?.timeZoneLabel || (merchantZone.includes("New_York") ? "EDT" : merchantZone);
+    display?.timeZoneLabel || (merchantZone.includes("New_York") ? "EST" : merchantZone);
 
   const primaryTimeStr = `${localDate}${localStart ? ` · ${localStart}${localEnd ? ` – ${localEnd}` : ""} ${zoneLabel}` : ""}`;
   const userLocal = startsAt ? getUserLocalTime(startsAt, merchantZone) : null;
@@ -412,7 +477,7 @@ export const QuoteCard: FC<{
     <div className="ai-tool-card" data-testid="quote-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+          <span className="ai-tool-action-name">
             Quote · {serviceName}
           </span>
         </div>
@@ -456,7 +521,38 @@ export const QuoteCard: FC<{
 
           <div className="ai-quote-expiry mono">
             <span>⏱ Guaranteed Quote</span>
-            <span>Valid for 5 minutes</span>
+            <span>{isExpired ? "Quote expired" : `Expires in ${formattedCountdown}`}</span>
+          </div>
+
+          <div className="ai-quote-actions" style={{ marginTop: "12px", display: "flex", gap: "8px" }}>
+            {isExpired ? (
+              <button
+                type="button"
+                className="button button--primary button--sm"
+                onClick={() => onRefreshQuote?.(toolResult, toolArgs)}
+                aria-label="Refresh quote"
+              >
+                Refresh quote
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="button button--primary button--sm"
+                onClick={() => onHoldThisTime?.(toolResult, toolArgs)}
+                disabled={isHolding}
+                aria-label="Hold this time"
+              >
+                {isHolding ? "Holding slot..." : "Hold this time"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="button button--secondary button--sm"
+              onClick={() => onPickDifferentTime?.()}
+              aria-label="Pick a different time"
+            >
+              Pick a different time
+            </button>
           </div>
         </div>
       </div>
@@ -522,7 +618,7 @@ export const ApprovalCard: FC<{
     <div className="ai-tool-card" data-testid="approval-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+          <span className="ai-tool-action-name">
             Ready for your approval
           </span>
         </div>
@@ -591,7 +687,7 @@ export const BookingStatusCard: FC<{
     <div className="ai-tool-card" data-testid="booking-status-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+          <span className="ai-tool-action-name">
             Booking status
           </span>
         </div>
@@ -659,7 +755,7 @@ export const CancellationCard: FC<{
     <div className="ai-tool-card" data-testid="cancellation-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name" style={{ color: "var(--ink, #ffffff)", fontWeight: 600 }}>
+          <span className="ai-tool-action-name">
             Cancellation policy
           </span>
         </div>
@@ -743,35 +839,47 @@ export const ToolErrorCard: FC<{
  */
 export function computeFollowUpSuggestions(items: ProcessedItem[]): string[] {
   const toolItems = items.filter((it) => it.kind === "tool" && it.toolResult);
-  const lastTool = toolItems[toolItems.length - 1];
 
-  if (!lastTool) {
-    return [
-      "Show available services",
-      "Find available haircut slots tomorrow afternoon",
-      "Prepare the 2 PM slot",
-    ];
-  }
-
-  const toolName = (lastTool.toolName || "").toLowerCase();
-  const res = lastTool.toolResult;
-
-  if (toolName.includes("prepare_booking") || res.approvalLocator || res.approvalUrl) {
+  // Check for highest-order booking action in priority: prepare > quote > slots > services
+  const prepareItem = toolItems.find(
+    (it) =>
+      it.toolName?.includes("prepare_booking") ||
+      it.toolResult?.approvalLocator ||
+      it.toolResult?.approvalUrl,
+  );
+  if (prepareItem) {
     return ["Open approval page", "Find a different time"];
   }
 
-  if (toolName.includes("quote") || (res.total && res.deposit)) {
-    return ["Prepare this booking", "Pick a different time"];
+  const quoteItem = toolItems.find(
+    (it) =>
+      it.toolName?.includes("quote") ||
+      (it.toolResult?.total && it.toolResult?.deposit),
+  );
+  if (quoteItem) {
+    const isExpired =
+      quoteItem.toolResult?.expiresAt &&
+      new Date(quoteItem.toolResult.expiresAt).getTime() <= Date.now();
+    if (isExpired) {
+      return ["Refresh quote", "Pick a different time"];
+    }
+    return ["Hold this time", "Pick a different time"];
   }
 
-  if (toolName.includes("find_available") || res.slots) {
-    const firstSlot = res.slots?.[0];
+  const slotsItem = toolItems.find(
+    (it) => it.toolName?.includes("find_available") || it.toolResult?.slots,
+  );
+  if (slotsItem) {
+    const firstSlot = slotsItem.toolResult?.slots?.[0];
     const timeLabel = firstSlot?.display?.localStart || "2:00 PM";
-    return [`Hold ${timeLabel} slot`, "Show tomorrow morning", "Try another day"];
+    return [`Hold ${timeLabel}`, "Show tomorrow morning", "Try another day"];
   }
 
-  if (toolName.includes("list_service") || res.services) {
-    const topService = res.services?.[0]?.name || "Executive Haircut";
+  const servicesItem = toolItems.find(
+    (it) => it.toolName?.includes("list_service") || it.toolResult?.services,
+  );
+  if (servicesItem) {
+    const topService = servicesItem.toolResult?.services?.[0]?.name || "Executive Haircut";
     return [`Show times for ${topService}`, "Compare deposits"];
   }
 
@@ -891,7 +999,44 @@ export function processMessageParts(
     }
   }
 
-  // 2. Check if this turn also contains slots, quote, or prepare
+  // 2. Deduplicate find_available_slots: if multiple slot calls in the same turn, keep only the latest one
+  const slotIndices = items
+    .map((it, idx) =>
+      it.kind === "tool" &&
+      (it.toolName?.includes("find_available") || it.toolResult?.slots)
+        ? idx
+        : -1,
+    )
+    .filter((idx) => idx !== -1);
+
+  if (slotIndices.length > 1) {
+    for (let i = slotIndices.length - 2; i >= 0; i--) {
+      const removeIdx = slotIndices[i]!;
+      items.splice(removeIdx, 1);
+    }
+  }
+
+  // 3. If there is a quote or prepare in the turn, and any list_services appears AFTER it, remove that subsequent list_services
+  const firstQuoteOrPrepareIdx = items.findIndex(
+    (it) =>
+      it.kind === "tool" &&
+      (it.toolName?.includes("quote") ||
+        (it.toolResult?.total && it.toolResult?.deposit) ||
+        it.toolName?.includes("prepare_booking") ||
+        it.toolResult?.approvalLocator ||
+        it.toolResult?.approvalUrl),
+  );
+
+  if (firstQuoteOrPrepareIdx !== -1) {
+    for (let i = items.length - 1; i > firstQuoteOrPrepareIdx; i--) {
+      const it = items[i];
+      if (it?.kind === "tool" && (it.toolName?.includes("list_service") || it.toolResult?.services)) {
+        items.splice(i, 1);
+      }
+    }
+  }
+
+  // 4. Check if this turn also contains slots, quote, or prepare
   const hasFollowOnAction = items.some(
     (it) =>
       it.kind === "tool" &&
@@ -924,10 +1069,14 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
   isAuthenticated = false,
   initialTokenPending = false,
   authError = null,
+  userEmail,
+  userName,
 }) => {
   const [inputVal, setInputVal] = useState("");
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
   const [streamAnnouncement, setStreamAnnouncement] = useState("");
+  const [isQuotingSlot, setIsQuotingSlot] = useState(false);
+  const [isHoldingSlot, setIsHoldingSlot] = useState(false);
   const lastPromptRef = useRef<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1112,6 +1261,191 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
     sendMessage({ text: prompt });
   };
 
+  const handleSlotClick = async (slotOrPrompt: any, toolResult?: any, toolArgs?: any) => {
+    if (typeof slotOrPrompt === "string") {
+      handleQuickPrompt(slotOrPrompt);
+      return;
+    }
+
+    try {
+      setIsQuotingSlot(true);
+      const slot = slotOrPrompt;
+      const serviceId =
+        slot.serviceId ||
+        toolResult?.serviceId ||
+        toolArgs?.serviceId ||
+        "01932b10-0001-7000-8000-000000000001";
+      const locationId =
+        slot.locationId ||
+        toolResult?.locationId ||
+        toolArgs?.locationId ||
+        "01932b10-0002-7000-8000-000000000001";
+      const startsAt = slot.startsAt;
+      const timeZone = slot.timeZone || toolResult?.timeZone || "America/New_York";
+
+      const quoteRes = await apiClient.createBookingQuote({
+        serviceId,
+        locationId,
+        startsAt,
+        timeZone,
+      });
+
+      const quoteCallId = `quote-direct-${Date.now()}`;
+      const quoteMsg: any = {
+        id: `msg-${Date.now()}`,
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-result",
+            toolCallId: quoteCallId,
+            toolName: "quote_booking.v1",
+            result: quoteRes,
+            args: {
+              serviceId,
+              locationId,
+              startsAt,
+              timeZone,
+              serviceName: quoteRes.serviceName || toolResult?.serviceName,
+            },
+          },
+        ],
+      };
+      setMessages((prev) => [...prev, quoteMsg]);
+    } catch (err: any) {
+      console.error("Failed to quote slot directly:", err);
+      const errorMsg: any = {
+        id: `msg-${Date.now()}`,
+        role: "assistant",
+        parts: [
+          {
+            type: "text",
+            text: `Unable to quote slot: ${err.message || "Failed to create booking quote"}.`,
+          },
+        ],
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsQuotingSlot(false);
+    }
+  };
+
+  const handleHoldThisTime = async (quoteData: any, quoteArgs?: any) => {
+    try {
+      setIsHoldingSlot(true);
+      const serviceId =
+        quoteData.serviceId ||
+        quoteArgs?.serviceId ||
+        "01932b10-0001-7000-8000-000000000001";
+      const locationId =
+        quoteData.locationId ||
+        quoteArgs?.locationId ||
+        "01932b10-0002-7000-8000-000000000001";
+      const startsAt = quoteData.startsAt || quoteArgs?.startsAt;
+      const timeZone =
+        quoteData.display?.timeZone ||
+        quoteArgs?.timeZone ||
+        "America/New_York";
+
+      const idempotencyKey = `askai-prep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const prepareRes = await apiClient.prepareBooking(
+        {
+          serviceId,
+          locationId,
+          startsAt,
+          timeZone,
+          customer: {
+            email: userEmail || "guest@velvetai.internal",
+            displayName: userName || "Valued Customer",
+          },
+          note: "Prepared by Ask AI",
+        },
+        "ask-ai",
+        idempotencyKey,
+      );
+
+      const prepCallId = `prep-direct-${Date.now()}`;
+      const prepMsg: any = {
+        id: `msg-${Date.now()}`,
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-result",
+            toolCallId: prepCallId,
+            toolName: "prepare_booking.v1",
+            result: prepareRes,
+            args: {
+              serviceId,
+              locationId,
+              startsAt,
+              timeZone,
+              serviceName: quoteData.serviceName || quoteArgs?.serviceName,
+            },
+          },
+          {
+            type: "text",
+            text: "I have prepared your booking hold. Please review and approve on the approval page.",
+          },
+        ],
+      };
+      setMessages((prev) => [...prev, prepMsg]);
+    } catch (err: any) {
+      console.error("Failed to prepare hold directly:", err);
+      const errorMsg: any = {
+        id: `msg-${Date.now()}`,
+        role: "assistant",
+        parts: [
+          {
+            type: "text",
+            text: `Unable to prepare hold: ${err.message || "Failed to hold slot"}.`,
+          },
+        ],
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsHoldingSlot(false);
+    }
+  };
+
+  const handleFollowUpClick = (prompt: string) => {
+    if (prompt === "Open approval page") {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        const parts = processMessageParts(msg?.parts, (msg as any)?.content);
+        const approvalItem = parts.find(
+          (p) => p.toolResult?.approvalUrl || p.toolResult?.approvalLocator,
+        );
+        if (approvalItem) {
+          const rawLocator =
+            approvalItem.toolResult?.approvalUrl ||
+            approvalItem.toolResult?.approvalLocator;
+          const cleanLocator = rawLocator.replace(/^.*\/v1\/booking-approvals\//, "");
+          const targetUrl =
+            rawLocator.startsWith("http://") || rawLocator.startsWith("https://")
+              ? rawLocator
+              : `/approve/${cleanLocator}`;
+          window.location.href = targetUrl;
+          return;
+        }
+      }
+    }
+
+    if (prompt === "Hold this time") {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        const parts = processMessageParts(msg?.parts, (msg as any)?.content);
+        const quoteItem = parts.find(
+          (p) => p.toolResult?.total && p.toolResult?.deposit,
+        );
+        if (quoteItem) {
+          handleHoldThisTime(quoteItem.toolResult, quoteItem.toolArgs);
+          return;
+        }
+      }
+    }
+
+    handleQuickPrompt(prompt);
+  };
+
   const handleRetry = () => {
     if (isLoading) return;
     if (typeof regenerate === "function") {
@@ -1238,8 +1572,7 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
               </div>
               <h3>Luxury Scheduling Concierge</h3>
               <p>
-                Inquire about services, calculate real-time slot availability, request guaranteed
-                quotes, and prepare booking holds with GiST exclusion.
+                Ask about services, find open times, get a quote, and hold a time for you to approve.
               </p>
               <div className="ai-quick-prompts">
                 <button
@@ -1342,7 +1675,8 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
                             key={item.id}
                             toolResult={toolResult}
                             toolArgs={item.toolArgs}
-                            onSelectSlot={handleQuickPrompt}
+                            onSelectSlot={handleSlotClick}
+                            isQuoting={isQuotingSlot}
                             isLiveEnvironment={isLiveEnvironment}
                             timestamp={item.timestamp}
                           />
@@ -1359,6 +1693,12 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
                             key={item.id}
                             toolResult={toolResult}
                             toolArgs={item.toolArgs}
+                            onHoldThisTime={handleHoldThisTime}
+                            onRefreshQuote={handleSlotClick}
+                            onPickDifferentTime={() =>
+                              handleQuickPrompt("Show available haircut slots tomorrow afternoon")
+                            }
+                            isHolding={isHoldingSlot}
                             isLiveEnvironment={isLiveEnvironment}
                             timestamp={item.timestamp}
                           />
@@ -1453,7 +1793,7 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
                     key={pIdx}
                     type="button"
                     className="ai-followup-chip"
-                    onClick={() => handleQuickPrompt(prompt)}
+                    onClick={() => handleFollowUpClick(prompt)}
                   >
                     {prompt}
                   </button>
@@ -1544,7 +1884,7 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
 };
 
 const AskAIAuth0Resolver: FC<AskAIDrawerProps> = (props) => {
-  const { isLoading, isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const { isLoading, isAuthenticated, getAccessTokenSilently, user } = useAuth0();
   const [initialTokenPending, setInitialTokenPending] = useState<boolean>(Boolean(isLoading));
   const [authError, setAuthError] = useState<Error | null>(null);
 
@@ -1628,6 +1968,8 @@ const AskAIAuth0Resolver: FC<AskAIDrawerProps> = (props) => {
       initialTokenPending={initialTokenPending}
       authError={authError}
       tokenResolver={tokenResolver}
+      userEmail={user?.email}
+      userName={user?.name}
     />
   );
 };

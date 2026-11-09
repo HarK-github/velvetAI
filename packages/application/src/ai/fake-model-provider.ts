@@ -172,7 +172,7 @@ export class FakeModelProvider implements ModelProviderPort {
           let responseText = "Here are the authoritative results for your request.";
           if (promptStr.includes("prepare_booking")) {
             responseText =
-              "I used salon time (EDT); that's 3:30 AM your time. I prepared your booking hold; please review and approve on the approval page.";
+              "I used salon time (EST); that's 3:30 AM your time. I prepared your booking hold; please review and approve on the approval page.";
           } else if (promptStr.includes("quote_booking")) {
             responseText =
               "Here is your authoritative quote. Tap below to prepare your booking hold.";
@@ -353,6 +353,19 @@ export class FakeModelProvider implements ModelProviderPort {
           lower.includes("haircut") ||
           lower.includes("afternoon")
         ) {
+          const resolvedDay = lower.includes("tomorrow")
+            ? "tomorrow"
+            : lower.includes("today")
+              ? "today"
+              : undefined;
+          const resolvedDayPart = lower.includes("afternoon")
+            ? "afternoon"
+            : lower.includes("morning")
+              ? "morning"
+              : lower.includes("evening")
+                ? "evening"
+                : undefined;
+
           return {
             stream: simulateReadableStream({
               chunks: [
@@ -362,6 +375,8 @@ export class FakeModelProvider implements ModelProviderPort {
                   toolName: "find_available_slots_v1",
                   input: JSON.stringify({
                     serviceId: "01932b10-0001-7000-8000-000000000001",
+                    day: resolvedDay,
+                    dayPart: resolvedDayPart,
                   }),
                 },
                 {

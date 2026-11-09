@@ -1,6 +1,7 @@
 import { Kysely } from "kysely";
 import { Database, withTenantTransaction } from "@velvetai/db";
 import { formatSlotDisplay } from "./booking-service.js";
+import { ClockPort } from "./ports.js";
 import {
   AvailabilityResponse,
   AvailableSlot,
@@ -21,6 +22,8 @@ export interface GetAvailabilityOptions {
   from?: Date;
   to?: Date;
   timeZone?: IanaTimeZone;
+  day?: "today" | "tomorrow" | string;
+  dayPart?: "morning" | "afternoon" | "evening";
 }
 
 /**
@@ -57,7 +60,10 @@ function getUtcForLocalTime(dateStr: string, timeStr: string, timeZone: string):
 }
 
 export class AvailabilityService {
-  constructor(private readonly db: Kysely<Database>) {}
+  constructor(
+    private readonly db: Kysely<Database>,
+    private readonly clock?: ClockPort,
+  ) {}
 
   /**
    * Authoritative PostgreSQL-backed availability calculation per Specification v1.1 Amendment:
@@ -70,8 +76,9 @@ export class AvailabilityService {
    * 7. Omit simulated fill probabilities in production
    */
   async getAvailability(options: GetAvailabilityOptions): Promise<AvailabilityResponse> {
-    const now = new Date();
+    const now = this.clock ? this.clock.now() : new Date();
     const generatedAt = now.toISOString() as Rfc3339Timestamp;
+    const minLeadTime = new Date(now.getTime() + 15 * 60_000); // 15-minute lead time
 
     return await withTenantTransaction(this.db, options.tenantId, async (trx) => {
       // 1. Fetch active service and published current version
@@ -103,28 +110,82 @@ export class AvailabilityService {
         return { scheduleRevision: 0, generatedAt, slots: [] };
       }
 
-      const effectiveTimeZone = (options.timeZone || location.timezone || "UTC") as IanaTimeZone;
+      const effectiveTimeZone = (options.timeZone || location.timezone || "America/New_York") as IanaTimeZone;
 
-      // 3. Determine time window
-      // Default: from now (rounded to next 15m) to 24h ahead if not provided
-      let windowFrom = options.from;
-      let windowTo = options.to;
-
-      if (!windowFrom) {
-        // Start of today in effective timezone
-        const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: effectiveTimeZone }).format(
-          now,
-        );
-        windowFrom = getUtcForLocalTime(todayStr, "09:00:00", effectiveTimeZone);
+      // Operating hours by dayPart: morning 08:00–12:00, afternoon 12:00–17:00, evening 17:00–21:00
+      let startHour = "09:00:00";
+      let endHour = "17:00:00";
+      if (options.dayPart === "morning") {
+        startHour = "08:00:00";
+        endHour = "12:00:00";
+      } else if (options.dayPart === "afternoon") {
+        startHour = "12:00:00";
+        endHour = "17:00:00";
+      } else if (options.dayPart === "evening") {
+        startHour = "17:00:00";
+        endHour = "21:00:00";
       }
 
-      if (!windowTo) {
-        // End of window: 24 hours after windowFrom
-        windowTo = new Date(windowFrom.getTime() + 24 * 60 * 60_000);
+      // 3. Determine time window and resolved local date
+      let windowFrom = options.from;
+      let windowTo = options.to;
+      let resolvedDate: string | undefined;
+
+      if (options.day) {
+        // Resolve day in merchant time zone
+        let targetDayStr: string;
+        const nowParts = new Intl.DateTimeFormat("en-US", {
+          timeZone: effectiveTimeZone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).formatToParts(now);
+        const y = parseInt(nowParts.find((p) => p.type === "year")!.value, 10);
+        const m = parseInt(nowParts.find((p) => p.type === "month")!.value, 10);
+        const d = parseInt(nowParts.find((p) => p.type === "day")!.value, 10);
+
+        if (options.day === "today") {
+          const localToday = new Date(Date.UTC(y, m - 1, d));
+          targetDayStr = localToday.toISOString().slice(0, 10);
+        } else if (options.day === "tomorrow") {
+          const localTomorrow = new Date(Date.UTC(y, m - 1, d + 1));
+          targetDayStr = localTomorrow.toISOString().slice(0, 10);
+        } else {
+          targetDayStr = options.day;
+        }
+
+        windowFrom = getUtcForLocalTime(targetDayStr, startHour, effectiveTimeZone);
+        windowTo = getUtcForLocalTime(targetDayStr, endHour, effectiveTimeZone);
+
+        const resolvedDateObj = getUtcForLocalTime(targetDayStr, "12:00:00", effectiveTimeZone);
+        resolvedDate = new Intl.DateTimeFormat("en-US", {
+          timeZone: effectiveTimeZone,
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }).format(resolvedDateObj);
+      } else {
+        if (!windowFrom) {
+          const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: effectiveTimeZone }).format(now);
+          windowFrom = getUtcForLocalTime(todayStr, startHour, effectiveTimeZone);
+        }
+        if (!windowTo) {
+          windowTo = new Date(windowFrom.getTime() + 24 * 60 * 60_000);
+        }
       }
 
       if (windowFrom >= windowTo) {
-        return { scheduleRevision: 1, generatedAt, slots: [] };
+        return {
+          scheduleRevision: 1,
+          generatedAt,
+          serviceId: options.serviceId,
+          serviceName: service.name,
+          timeZone: effectiveTimeZone,
+          resolvedDate,
+          dayPart: options.dayPart,
+          slots: [],
+        };
       }
 
       // 4. Fetch active resources for this location
@@ -137,13 +198,21 @@ export class AvailabilityService {
         .execute();
 
       if (resources.length === 0) {
-        return { scheduleRevision: 1, generatedAt, slots: [] };
+        return {
+          scheduleRevision: 1,
+          generatedAt,
+          serviceId: options.serviceId,
+          serviceName: service.name,
+          timeZone: effectiveTimeZone,
+          resolvedDate,
+          dayPart: options.dayPart,
+          slots: [],
+        };
       }
 
       const resourceIds = resources.map((r) => r.id);
 
       // 5. Fetch active blocking claims that overlap with the extended search window
-      // Max buffer is needed to catch adjacent appointments that encroach
       const maxBufferMs =
         Math.max(service.buffer_before_minutes, service.buffer_after_minutes, 60) * 60_000;
       const searchStart = new Date(windowFrom.getTime() - maxBufferMs);
@@ -173,7 +242,6 @@ export class AvailabilityService {
         hour12: false,
       });
 
-      // Daily operating hours: 09:00 to 17:00
       const cursor = new Date(windowFrom);
       const visitedDays = new Set<string>();
 
@@ -184,10 +252,9 @@ export class AvailabilityService {
         if (!visitedDays.has(dayStr)) {
           visitedDays.add(dayStr);
 
-          const dayOpenUtc = getUtcForLocalTime(dayStr, "09:00:00", effectiveTimeZone);
-          const dayCloseUtc = getUtcForLocalTime(dayStr, "17:00:00", effectiveTimeZone);
+          const dayOpenUtc = getUtcForLocalTime(dayStr, startHour, effectiveTimeZone);
+          const dayCloseUtc = getUtcForLocalTime(dayStr, endHour, effectiveTimeZone);
 
-          // Generate candidate slots on step intervals (30 minutes)
           const stepMs = Math.min(30 * 60_000, durationMs);
           let slotCandidateStart = dayOpenUtc.getTime();
 
@@ -195,17 +262,14 @@ export class AvailabilityService {
             const slotStart = new Date(slotCandidateStart);
             const slotEnd = new Date(slotCandidateStart + durationMs);
 
-            // Must fall within the requested [windowFrom, windowTo) interval
-            if (slotStart >= windowFrom && slotEnd <= windowTo) {
-              // Block window required for this slot: [slotStart - bufferBefore, slotEnd + bufferAfter)
+            // Must fall within the requested [windowFrom, windowTo) interval AND not be in the past
+            if (slotStart >= windowFrom && slotEnd <= windowTo && slotStart >= minLeadTime) {
               const requiredBlockStart = new Date(slotStart.getTime() - bufferBeforeMs);
               const requiredBlockEnd = new Date(slotEnd.getTime() + bufferAfterMs);
 
-              // Find an active resource that is NOT blocked
               for (const resource of resources) {
                 const hasConflict = claims.some((c) => {
                   if (c.resource_id !== resource.id) return false;
-                  // Half-open interval overlap: [A, B) overlaps with [C, D) iff A < D && B > C
                   const claimStart = new Date(c.starts_at);
                   const claimEnd = new Date(c.ends_at);
                   return claimStart < requiredBlockEnd && claimEnd > requiredBlockStart;
@@ -219,6 +283,8 @@ export class AvailabilityService {
                     endsAt: slotEnd.toISOString() as Rfc3339Timestamp,
                     localStartsAt,
                     timeZone: effectiveTimeZone,
+                    serviceId: options.serviceId,
+                    locationId: location.id as LocationId,
                     resourceId: resource.id as ResourceId,
                     price: {
                       valueMinor: String(service.price_minor) as MoneyMinor,
@@ -230,7 +296,6 @@ export class AvailabilityService {
                     },
                     display,
                   });
-                  // Once an available resource is assigned to this time slot, move to next slot
                   break;
                 }
               }
@@ -240,18 +305,23 @@ export class AvailabilityService {
           }
         }
 
-        // Advance cursor by 1 day
         cursor.setDate(cursor.getDate() + 1);
       }
 
-      // Schedule revision based on claims count + resource count + 1
       const scheduleRevision = claims.length + resources.length + 1;
+
+      if (!resolvedDate && slots.length > 0) {
+        resolvedDate = slots[0]?.display?.localDate;
+      }
 
       return {
         scheduleRevision,
         generatedAt,
+        serviceId: options.serviceId,
         serviceName: service.name,
         timeZone: effectiveTimeZone,
+        resolvedDate,
+        dayPart: options.dayPart,
         slots,
       };
     });

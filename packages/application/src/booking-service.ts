@@ -38,6 +38,7 @@ import {
 import { signBookingIntent, verifyBookingIntent } from "./booking-intent.js";
 import { canonicalHash, sha256Hex } from "./canonicalizer.js";
 import type { PaymentService } from "./payment-service.js";
+import type { ClockPort } from "./ports.js";
 
 export interface BookingActor {
   subject: string;
@@ -83,6 +84,7 @@ export class BookingService {
   constructor(
     private readonly db: Kysely<Database>,
     private readonly paymentService?: PaymentService,
+    private readonly clock?: ClockPort,
   ) {}
 
   /**
@@ -112,8 +114,16 @@ export class BookingService {
       }
 
       const startsAt = new Date(input.startsAt);
+      const currentNow = this.clock ? this.clock.now() : new Date();
+      if (startsAt.getTime() <= currentNow.getTime()) {
+        throw new DomainError(
+          "SLOT_IN_PAST: Booking slot start time cannot be in the past",
+          "SLOT_IN_PAST",
+          400,
+        );
+      }
       const endsAt = new Date(startsAt.getTime() + service.duration_minutes * 60_000);
-      const expiresAt = new Date(Date.now() + 5 * 60_000); // Max 5-min TTL per Amendment B.4
+      const expiresAt = new Date(currentNow.getTime() + 5 * 60_000); // Max 5-min TTL per Amendment B.4
 
       const canonicalPayload = {
         tenantId,
@@ -216,9 +226,17 @@ export class BookingService {
       }
 
       const startsAt = new Date(input.startsAt);
+      const currentNow = this.clock ? this.clock.now() : new Date();
+      if (startsAt.getTime() <= currentNow.getTime()) {
+        throw new DomainError(
+          "SLOT_IN_PAST: Booking slot start time cannot be in the past",
+          "SLOT_IN_PAST",
+          400,
+        );
+      }
       const endsAt = new Date(startsAt.getTime() + service.duration_minutes * 60_000);
       const bookingId = crypto.randomUUID() as BookingId;
-      const holdExpiresAt = new Date(Date.now() + 15 * 60_000); // 15-min slot hold
+      const holdExpiresAt = new Date(currentNow.getTime() + 15 * 60_000); // 15-min slot hold
 
       // Ensure customer record exists
       let customer = await trx

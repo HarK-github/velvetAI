@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
 import * as auth0React from "@auth0/auth0-react";
 import { AskAIDrawer } from "../components/AskAIDrawer.js";
 
@@ -11,6 +11,15 @@ import { AskAIDrawer } from "../components/AskAIDrawer.js";
 process.env.TZ = "Asia/Kolkata";
 
 const mockSendMessage = vi.fn();
+const mockCreateBookingQuote = vi.fn();
+const mockPrepareBooking = vi.fn();
+
+vi.mock("../api-client.js", async () => {
+  const actual = await vi.importActual<any>("../api-client.js");
+  actual.apiClient.createBookingQuote = (...args: any[]) => mockCreateBookingQuote(...args);
+  actual.apiClient.prepareBooking = (...args: any[]) => mockPrepareBooking(...args);
+  return actual;
+});
 
 const mockUseChatState = {
   messages: [] as any[],
@@ -23,8 +32,27 @@ const mockUseChatState = {
 };
 
 vi.mock("@ai-sdk/react", () => ({
-  useChat: () => mockUseChatState,
+  useChat: () => {
+    const [messages, setMessages] = React.useState(mockUseChatState.messages);
+    React.useEffect(() => {
+      setMessages(mockUseChatState.messages);
+    }, [mockUseChatState.messages]);
+
+    return {
+      ...mockUseChatState,
+      messages,
+      setMessages: (updater: any) => {
+        const next = typeof updater === "function" ? updater(messages) : updater;
+        mockUseChatState.messages = next;
+        setMessages(next);
+      },
+    };
+  },
 }));
+
+const mockGetAccessTokenSilently = vi.fn().mockResolvedValue("test-token");
+const mockLoginWithRedirect = vi.fn();
+const mockLogout = vi.fn();
 
 vi.mock("@auth0/auth0-react", async () => {
   const actual = await vi.importActual<typeof auth0React>("@auth0/auth0-react");
@@ -34,9 +62,9 @@ vi.mock("@auth0/auth0-react", async () => {
       isAuthenticated: true,
       isLoading: false,
       user: { name: "Test Buyer", email: "buyer@velvetai.example" },
-      getAccessTokenSilently: vi.fn().mockResolvedValue("test-token"),
-      loginWithRedirect: vi.fn(),
-      logout: vi.fn(),
+      getAccessTokenSilently: mockGetAccessTokenSilently,
+      loginWithRedirect: mockLoginWithRedirect,
+      logout: mockLogout,
     }),
   };
 });
@@ -44,6 +72,8 @@ vi.mock("@auth0/auth0-react", async () => {
 describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
   beforeEach(() => {
     mockSendMessage.mockReset();
+    mockCreateBookingQuote.mockReset();
+    mockPrepareBooking.mockReset();
     mockUseChatState.messages = [];
   });
 
@@ -51,7 +81,7 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
     cleanup();
   });
 
-  it("13. Scenario 'Find an Executive Haircut tomorrow afternoon': collapsed catalog chip, merchant zone primary + 'Your time', +N more when > 8, chips clickable", () => {
+  it("13. Scenario 'Find an Executive Haircut tomorrow afternoon': collapsed catalog chip, merchant zone primary + 'Your time', +N more when > 8, chips clickable", async () => {
     // 9 slots with server-side display in America/New_York (EDT)
     const mockSlots = Array.from({ length: 9 }).map((_, i) => {
       const hour = 12 + Math.floor(i / 2);
@@ -108,6 +138,7 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
         toolCallId: "call-slots-1",
         toolName: "find_available_slots_v1",
         result: {
+          serviceId: "s1",
           serviceName: "Executive Haircut & Beard Sculpt",
           timeZone: "America/New_York",
           slots: mockSlots,
@@ -156,23 +187,94 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
     const moreBtn = screen.getByRole("button", { name: /\+1 more/i });
     expect(moreBtn).toBeDefined();
 
-    // 5. Chips are clickable buttons sending "Prepare the <localStart> <zoneLabel> <service> slot on <localDate>"
-    const firstChip = screen.getByRole("button", { name: /Select slot at 12:00 PM – 12:45 PM EDT/i });
-    fireEvent.click(firstChip);
-    expect(mockSendMessage).toHaveBeenCalledWith({
-      text: "Prepare the 12:00 PM EDT Executive Haircut & Beard Sculpt slot on Wed, Oct 28, 2026",
-    });
-
-    // 6. Expanding "+1 more" shows the 9th slot
+    // 5. Expanding "+1 more" shows the 9th slot
     fireEvent.click(moreBtn);
     expect(screen.getByRole("button", { name: /Show fewer/i })).toBeDefined();
 
-    // 7. Context-aware follow-up chips after slots
-    expect(screen.getByRole("button", { name: /Hold 12:00 PM slot/i })).toBeDefined();
+    // 6. Context-aware follow-up chips after slots
+    expect(screen.getByRole("button", { name: /Hold 12:00 PM/i })).toBeDefined();
     expect(screen.getByRole("button", { name: /Show tomorrow morning/i })).toBeDefined();
     expect(screen.getByRole("button", { name: /Try another day/i })).toBeDefined();
     // Never suggests "Find available slots" when slots was just shown
     expect(screen.queryByRole("button", { name: /^Find available slots$/i })).toBeNull();
+
+    // 7. P0-3: Time chip click directly calls POST /v1/booking-quotes without sending text to model
+    mockCreateBookingQuote.mockResolvedValueOnce({
+      quoteId: "quote_test_exec",
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      serviceName: "Executive Haircut & Beard Sculpt",
+      startsAt: mockSlots[0].startsAt,
+      endsAt: mockSlots[0].endsAt,
+      display: {
+        localDate: "Wed, Oct 28, 2026",
+        localStart: "12:00 PM",
+        localEnd: "12:45 PM",
+        timeZone: "America/New_York",
+        timeZoneLabel: "EDT",
+      },
+      total: { valueMinor: "7500", currency: "USD" },
+      deposit: { valueMinor: "2000", currency: "USD" },
+      cancellationPolicy: {
+        policyId: "pol_haircut",
+        summary: "Full refund 24h prior.",
+      },
+    });
+
+    mockPrepareBooking.mockResolvedValueOnce({
+      bookingId: "book_exec_123",
+      status: "HELD",
+      holdExpiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      version: 1,
+      intent: "intent_token_xyz",
+      approvalLocator: "/v1/booking-approvals/loc_exec123",
+      approvalUrl: "http://localhost:5174/approve/loc_exec123",
+      terms: {
+        serviceName: "Executive Haircut & Beard Sculpt",
+      },
+    });
+
+    const firstChip = screen.getByRole("button", { name: /Select slot at 12:00 PM – 12:45 PM EDT/i });
+    fireEvent.click(firstChip);
+
+    // Assert NO prompt was sent to the model
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(mockCreateBookingQuote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceId: "s1",
+        startsAt: mockSlots[0].startsAt,
+        timeZone: "America/New_York",
+      }),
+    );
+
+    // QuoteCard renders with formatted money, "Hold this time" primary button, and "Pick a different time" secondary button
+    const quoteCard = await screen.findByTestId("quote-card");
+    expect(quoteCard).toBeDefined();
+    expect(screen.getByText("Quote · Executive Haircut & Beard Sculpt")).toBeDefined();
+    expect(screen.getByText("$75.00")).toBeDefined();
+    expect(screen.getByText("$20.00")).toBeDefined();
+    expect(screen.getByText("$55.00")).toBeDefined();
+
+    const holdButton = within(quoteCard).getByRole("button", { name: "Hold this time" });
+    expect(holdButton).toBeDefined();
+    expect(within(quoteCard).getByRole("button", { name: "Pick a different time" })).toBeDefined();
+
+    // Clicking "Hold this time" calls prepareBooking with x-client-id: "ask-ai" and Idempotency-Key
+    fireEvent.click(holdButton);
+    expect(mockPrepareBooking).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceId: "s1",
+        startsAt: mockSlots[0].startsAt,
+      }),
+      "ask-ai",
+      expect.any(String),
+    );
+
+    // ApprovalCard renders with absolute URL and action button
+    const approvalCard = await screen.findByTestId("approval-card");
+    expect(approvalCard).toBeDefined();
+    expect(screen.getByText("Ready for your approval")).toBeDefined();
+    const openApprovalLink = screen.getByRole("link", { name: "Open approval page" });
+    expect(openApprovalLink.getAttribute("href")).toBe("http://localhost:5174/approve/loc_exec123");
   });
 
   it("14. Scenario 'I want to book for 6 pm of private acoustic studio block': quote card formatted money, approval card with absolute URL, no raw JSON, no '[object Object]'", () => {
@@ -344,5 +446,61 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
     expect(text).not.toContain("rawRiskScore");
     expect(text).not.toContain("internalMetadata");
     expect(text).not.toContain("[object Object]");
+  });
+
+  it("16. Scenario 'QuoteCard expiry': when quote expires, 'Hold this time' is disabled and 'Refresh quote' is offered", async () => {
+    const expiredAssistantParts = [
+      {
+        type: "tool-call",
+        toolCallId: "call-quote-expired",
+        toolName: "quote_booking_v1",
+        args: {},
+      },
+      {
+        type: "tool-result",
+        toolCallId: "call-quote-expired",
+        toolName: "quote_booking_v1",
+        result: {
+          quoteId: "quote_expired_999",
+          expiresAt: new Date(Date.now() - 5000).toISOString(),
+          serviceName: "Royal Shave Treatment",
+          startsAt: "2026-10-28T20:00:00.000Z",
+          endsAt: "2026-10-28T20:30:00.000Z",
+          display: {
+            localDate: "Wed, Oct 28, 2026",
+            localStart: "4:00 PM",
+            localEnd: "4:30 PM",
+            timeZone: "America/New_York",
+            timeZoneLabel: "EDT",
+          },
+          total: { valueMinor: "5000", currency: "USD" },
+          deposit: { valueMinor: "1500", currency: "USD" },
+          cancellationPolicy: {
+            policyId: "pol_std",
+            summary: "24h cancellation.",
+          },
+        },
+      },
+    ];
+
+    mockUseChatState.messages = [
+      {
+        id: "msg-exp-1",
+        role: "user",
+        parts: [{ type: "text", text: "Quote me Royal Shave" }],
+      },
+      {
+        id: "msg-exp-2",
+        role: "assistant",
+        parts: expiredAssistantParts,
+      },
+    ];
+
+    render(<AskAIDrawer isOpen={true} onClose={() => {}} />);
+
+    expect(screen.getByTestId("quote-card")).toBeDefined();
+    expect(screen.getByText("Quote expired")).toBeDefined();
+    expect(screen.getAllByRole("button", { name: "Refresh quote" }).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByRole("button", { name: "Hold this time" })).toBeNull();
   });
 });

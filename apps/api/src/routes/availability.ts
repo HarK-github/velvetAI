@@ -25,6 +25,8 @@ export const availabilityRoutes: FastifyPluginAsync = async (app) => {
       from?: string;
       to?: string;
       timeZone?: string;
+      day?: "today" | "tomorrow" | string;
+      dayPart?: "morning" | "afternoon" | "evening";
     };
 
     const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
@@ -48,6 +50,8 @@ export const availabilityRoutes: FastifyPluginAsync = async (app) => {
       from: fromDate,
       to: toDate,
       timeZone: query.timeZone as IanaTimeZone | undefined,
+      day: query.day,
+      dayPart: query.dayPart,
     });
 
     return reply.status(200).send(result);

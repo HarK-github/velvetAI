@@ -220,6 +220,30 @@ export class VelvetApiClient {
     });
   }
 
+  async prepareBooking(
+    params: {
+      serviceId: string;
+      locationId: string;
+      startsAt: string;
+      timeZone: string;
+      customer: { email: string; displayName?: string };
+      note?: string;
+    },
+    clientId: string = "ask-ai",
+    idempotencyKey?: string,
+  ): Promise<any> {
+    const headers: Record<string, string> = {
+      "x-client-id": clientId,
+      "idempotency-key":
+        idempotencyKey || `prep-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    };
+    return this.request<any>("/v1/bookings/prepare", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(params),
+    });
+  }
+
   async createBookingHold(
     params: {
       quoteId: string;
@@ -316,31 +340,6 @@ export class VelvetApiClient {
     providerCaptureId?: string;
   }> {
     return this.request(`/v1/operations/${operationId}`);
-  }
-
-  async prepareBooking(params: {
-    serviceId: string;
-    locationId: string;
-    startsAt: string;
-    timeZone: string;
-    customer: { email: string; displayName?: string };
-    note?: string;
-  }): Promise<{
-    bookingId: string;
-    status: "HELD";
-    holdExpiresAt: string;
-    version: number;
-    intent: string;
-    approvalLocator: string;
-    terms: any;
-  }> {
-    return this.request("/v1/bookings/prepare", {
-      method: "POST",
-      headers: {
-        "idempotency-key": `prep-${Date.now()}-${Math.random()}`,
-      },
-      body: JSON.stringify(params),
-    });
   }
 
   async commitBooking(params: {

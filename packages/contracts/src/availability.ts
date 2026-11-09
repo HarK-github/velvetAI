@@ -23,10 +23,12 @@ export type AvailabilityRuleDTO = z.infer<typeof availabilityRuleSchema>;
 
 export const searchAvailabilityQuerySchema = z.object({
   serviceId: serviceIdSchema,
-  locationId: locationIdSchema,
-  from: rfc3339TimestampSchema,
-  to: rfc3339TimestampSchema,
-  timeZone: ianaTimeZoneSchema,
+  locationId: locationIdSchema.optional(),
+  from: rfc3339TimestampSchema.optional(),
+  to: rfc3339TimestampSchema.optional(),
+  timeZone: ianaTimeZoneSchema.optional(),
+  day: z.union([z.enum(["today", "tomorrow"]), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)]).optional(),
+  dayPart: z.enum(["morning", "afternoon", "evening"]).optional(),
 });
 export type SearchAvailabilityQuery = z.infer<typeof searchAvailabilityQuerySchema>;
 
@@ -44,6 +46,8 @@ export const availableSlotSchema = z.object({
   endsAt: rfc3339TimestampSchema,
   localStartsAt: z.string(),
   timeZone: ianaTimeZoneSchema,
+  serviceId: serviceIdSchema.optional(),
+  locationId: locationIdSchema.optional(),
   resourceId: resourceIdSchema.optional(),
   price: moneySchema,
   depositPreview: moneySchema,
@@ -56,8 +60,11 @@ export type AvailableSlot = z.infer<typeof availableSlotSchema>;
 export const availabilityResponseSchema = z.object({
   scheduleRevision: z.number().int().nonnegative(),
   generatedAt: rfc3339TimestampSchema,
+  serviceId: serviceIdSchema.optional(),
   serviceName: z.string().optional(),
   timeZone: z.string().optional(),
+  resolvedDate: z.string().optional(),
+  dayPart: z.enum(["morning", "afternoon", "evening"]).optional(),
   slots: z.array(availableSlotSchema),
 });
 export type AvailabilityResponse = z.infer<typeof availabilityResponseSchema>;

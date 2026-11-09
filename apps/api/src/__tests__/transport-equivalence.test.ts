@@ -1030,4 +1030,91 @@ describe("W8/Section 9: Four-Transport Equivalence Across REST, MCP, WebMCP Simu
     const model = liveGemini.getLanguageModel();
     expect(model).toBeDefined();
   });
+
+  // =========================================================================
+  // Operation 9: Reject past slots with SLOT_IN_PAST across REST, MCP & WebMCP
+  // =========================================================================
+  it("Equivalence 9: quote_booking and prepare_booking reject past starts with SLOT_IN_PAST across REST, MCP, WebMCP Simulation & Ask AI", async () => {
+    const pastSlot = new Date(Date.now() - 3600_000).toISOString();
+    const pastQuotePayload = {
+      serviceId,
+      locationId,
+      startsAt: pastSlot,
+      timeZone: "America/New_York",
+    };
+
+    // 1. REST Quote with past slot -> 400 SLOT_IN_PAST
+    const restQuoteRes = await app.inject({
+      method: "POST",
+      url: "/v1/booking-quotes",
+      headers: {
+        authorization: authHeader,
+        "content-type": "application/json",
+        "idempotency-key": `quote-past-${Date.now()}`,
+      },
+      body: JSON.stringify(pastQuotePayload),
+    });
+    expect(restQuoteRes.statusCode).toBe(400);
+    expect(JSON.parse(restQuoteRes.body).code).toBe("SLOT_IN_PAST");
+
+    // 2. REST Prepare with past slot -> 400 SLOT_IN_PAST
+    const restPrepRes = await app.inject({
+      method: "POST",
+      url: "/v1/bookings/prepare",
+      headers: {
+        authorization: authHeader,
+        "content-type": "application/json",
+        "idempotency-key": `prep-past-${Date.now()}`,
+      },
+      body: JSON.stringify({
+        ...pastQuotePayload,
+        customer: { email: "past@example.com" },
+      }),
+    });
+    expect(restPrepRes.statusCode).toBe(400);
+    expect(JSON.parse(restPrepRes.body).code).toBe("SLOT_IN_PAST");
+
+    // 3. MCP Quote with past slot -> tool error SLOT_IN_PAST
+    const mcpRes = await app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: {
+        authorization: authHeader,
+        "content-type": "application/json",
+        "mcp-protocol-version": "2026-07-28",
+        "mcp-method": "tools/call",
+        "mcp-name": "quote_booking.v1",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 109,
+        method: "tools/call",
+        params: {
+          name: "quote_booking.v1",
+          arguments: pastQuotePayload,
+          _meta: {
+            [PROTOCOL_VERSION_META_KEY]: "2026-07-28",
+            [CLIENT_CAPABILITIES_META_KEY]: {},
+          },
+        },
+      }),
+    });
+    expect(mcpRes.statusCode).toBe(200);
+    const mcpBody = JSON.parse(mcpRes.body);
+    expect(mcpBody.result.isError).toBe(true);
+    expect(mcpBody.result.content[0].text).toContain("SLOT_IN_PAST");
+
+    // 4. WebMCP Simulation -> throws DomainError with SLOT_IN_PAST
+    await expect(
+      sharedToolRegistry.execute("quote_booking.v1", pastQuotePayload, webMcpContext),
+    ).rejects.toThrow(/SLOT_IN_PAST/);
+
+    await expect(
+      sharedToolRegistry.execute(
+        "prepare_booking.v1",
+        { ...pastQuotePayload, customer: { email: "past@example.com" } },
+        webMcpContext,
+      ),
+    ).rejects.toThrow(/SLOT_IN_PAST/);
+  });
 });

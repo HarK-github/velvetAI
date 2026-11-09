@@ -535,9 +535,14 @@ describe("W2: PostgreSQL Catalog and Availability Integration", () => {
   });
 
   it("8. DST gap and overlap behavior: local time and UTC offsets match timezone transitions", async () => {
+    // Fixed clock in October 2026 so past-slot filter does not reject October/November historical ranges
+    const testAvailabilityService = new AvailabilityService(db, {
+      now: () => new Date("2026-10-01T00:00:00.000Z"),
+    });
+
     // Nov 1, 2026 is US Daylight Saving Time end (2:00 AM EDT -> 1:00 AM EST)
     // Querying Nov 2, 2026 (Standard Time, UTC-5): 09:00 local is 14:00 UTC
-    const nov2 = await availabilityService.getAvailability({
+    const nov2 = await testAvailabilityService.getAvailability({
       tenantId: tenantA,
       serviceId: serviceA,
       locationId: locationA,
@@ -551,7 +556,7 @@ describe("W2: PostgreSQL Catalog and Availability Integration", () => {
     expect(slotNov2?.localStartsAt).toBe("09:00");
 
     // Oct 20, 2026 (Daylight Saving Time, UTC-4): 09:00 local is 13:00 UTC
-    const oct20 = await availabilityService.getAvailability({
+    const oct20 = await testAvailabilityService.getAvailability({
       tenantId: tenantA,
       serviceId: serviceA,
       locationId: locationA,

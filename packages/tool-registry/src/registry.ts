@@ -217,12 +217,17 @@ sharedToolRegistry.register({
       from: z.string().datetime().optional(),
       to: z.string().datetime().optional(),
       timeZone: z.string().max(100).optional(),
+      day: z.union([z.enum(["today", "tomorrow"]), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)]).optional(),
+      dayPart: z.enum(["morning", "afternoon", "evening"]).optional(),
     })
     .strict(),
   outputSchema: z.object({
     slots: z.array(z.any()),
+    serviceId: z.string().optional(),
     serviceName: z.string().optional(),
     timeZone: z.string().optional(),
+    resolvedDate: z.string().optional(),
+    dayPart: z.enum(["morning", "afternoon", "evening"]).optional(),
     scheduleRevision: z.number().optional(),
     generatedAt: z.string().optional(),
   }),
@@ -244,6 +249,8 @@ sharedToolRegistry.register({
       from: input.from ? new Date(input.from) : undefined,
       to: input.to ? new Date(input.to) : undefined,
       timeZone: input.timeZone as IanaTimeZone | undefined,
+      day: input.day,
+      dayPart: input.dayPart,
     });
     return result;
   },

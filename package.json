@@ -25,6 +25,7 @@
     "dev:catalog": "tsx scripts/manage-dev-catalog.ts",
     "dev:catalog:confirm": "tsx scripts/manage-dev-catalog.ts --confirm",
     "ai:list-models": "tsx scripts/list-gemini-models.ts",
+    "ai:golden-path": "tsx scripts/ai-golden-path.ts",
     "db:migrate": "pnpm --filter @velvetai/db db:migrate",
     "db:test:prepare": "tsx scripts/prepare-test-db.ts",
     "docker:up": "docker compose up -d",
