@@ -1,7 +1,7 @@
 import { useState, useEffect, type FC } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { Link, useRouter } from "../router.js";
-import { apiClient } from "../api-client.js";
+import { apiClient, API_BASE_URL } from "../api-client.js";
 import { isAuth0Configured, computeAuthDiagnostic } from "../lib/auth-config.js";
 
 const Auth0StateButton: FC = () => {
@@ -61,7 +61,7 @@ const Auth0StateButton: FC = () => {
             computeAuthDiagnostic(token);
           }
           // First protected request to test backend Auth0 verification:
-          const res = await fetch("http://localhost:3000/v1/services", {
+          const res = await fetch(`${API_BASE_URL}/v1/services`, {
             headers: token
               ? {
                   authorization: `Bearer ${token}`,

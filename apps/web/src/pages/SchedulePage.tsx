@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { FC } from "react";
 import { Link } from "../router.js";
+import { API_BASE_URL } from "../api-client.js";
 
 interface ScheduleSlot {
   id: string;
@@ -98,7 +99,7 @@ export const SchedulePage: FC = () => {
     setRaceResult(null);
 
     // Simulate 2 parallel threads trying to claim the same slot
-    const thread1 = fetch("http://localhost:3000/v1/booking-holds", {
+    const thread1 = fetch(`${API_BASE_URL}/v1/booking-holds`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -107,7 +108,7 @@ export const SchedulePage: FC = () => {
       }),
     });
 
-    const thread2 = fetch("http://localhost:3000/v1/booking-holds", {
+    const thread2 = fetch(`${API_BASE_URL}/v1/booking-holds`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

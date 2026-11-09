@@ -2,6 +2,7 @@ import { useState, useEffect, type FC } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { Link } from "../router.js";
 import type { BookingApprovalDetails } from "@velvetai/contracts";
+import { API_BASE_URL } from "../api-client.js";
 
 interface ApprovalPageProps {
   locator: string;
@@ -28,7 +29,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`http://localhost:3000/v1/booking-approvals/${locator}`, {
+      const res = await fetch(`${API_BASE_URL}/v1/booking-approvals/${locator}`, {
         headers: {
           Accept: "application/json",
         },
@@ -82,7 +83,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
         },
       });
 
-      const res = await fetch(`http://localhost:3000/v1/booking-approvals/${locator}/confirm`, {
+      const res = await fetch(`${API_BASE_URL}/v1/booking-approvals/${locator}/confirm`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
