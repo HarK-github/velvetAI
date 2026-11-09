@@ -21,6 +21,32 @@ export function redactId(id: string): string {
   return `${id.slice(0, 8)}...${id.slice(-4)}`;
 }
 
+export function validateJudgeSubject(rawSubject: string): string {
+  const subject = typeof rawSubject === "string" ? rawSubject.trim() : "";
+  if (!subject) {
+    throw new Error("Invalid subject: Auth0 OIDC subject cannot be empty.");
+  }
+
+  // Reject obvious placeholders
+  if (/(paste|your_|<|>|example)/i.test(subject)) {
+    throw new Error(
+      `Invalid subject: Subject "${subject}" contains a placeholder pattern (PASTE, YOUR_, <, >, example). Please provide the real Auth0 or Google user ID.`,
+    );
+  }
+
+  // Require format auth0|<hex/alphanumeric 16+> or google-oauth2|<digits>
+  const isAuth0 = /^auth0\|[a-zA-Z0-9]{16,}$/.test(subject);
+  const isGoogle = /^google-oauth2\|\d+$/.test(subject);
+
+  if (!isAuth0 && !isGoogle) {
+    throw new Error(
+      `Invalid subject format: Expected "auth0|<hex/alphanumeric 16+>" or "google-oauth2|<digits>", got "${subject}".`,
+    );
+  }
+
+  return subject;
+}
+
 export async function provisionJudgeUser(
   rawSubject: string,
   options?: {
@@ -36,22 +62,7 @@ export async function provisionJudgeUser(
     );
   }
 
-  const subject = rawSubject?.trim();
-  if (!subject) {
-    throw new Error("Invalid subject: Auth0 OIDC subject cannot be empty.");
-  }
-
-  if (
-    !subject.startsWith("auth0|") &&
-    !subject.startsWith("google-oauth2|") &&
-    !subject.startsWith("oauth2|") &&
-    !subject.startsWith("email|") &&
-    !subject.startsWith("sms|")
-  ) {
-    throw new Error(
-      `Invalid subject format: Expected Auth0 OIDC subject (e.g. auth0|..., google-oauth2|...), got "${subject}".`,
-    );
-  }
+  const subject = validateJudgeSubject(rawSubject);
 
   // Always load root environment
   loadRootEnv();
@@ -209,7 +220,10 @@ if (process.argv[1]?.endsWith("provision-judge-user.ts")) {
       let subject = args.sub;
 
       if (!subject) {
-        console.log('Usage: pnpm auth:provision-judge-user --sub "auth0|<user_id>"\n');
+        console.log(
+          'Usage: pnpm auth:provision-judge-user --sub "auth0|<hex/alphanumeric 16+>" or "google-oauth2|<digits>"\n' +
+            'Example: pnpm auth:provision-judge-user --sub "auth0|672e811f582e2df5c328db14"\n',
+        );
         subject = await promptSubject("Enter Auth0 OIDC Subject (sub): ");
       }
 
