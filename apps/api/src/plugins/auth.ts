@@ -289,22 +289,6 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
       };
     }
 
-    // M2M client credentials principal per Section D.1 / Audit Section 5
-    if (subject.endsWith("@clients") || payload.gty === "client-credentials") {
-      const tenantId = ((payload["https://velvetai.com/tenant_id"] as string) ||
-        "01932b10-0000-7000-8000-000000000001") as TenantId;
-      return {
-        subject,
-        userId: "01932b10-0000-7000-8000-000000000099" as UserId,
-        tenantId,
-        roles: ["BUYER" as Role],
-        roleVersion: 1,
-        authTime: new Date().toISOString(),
-        mfaVerified: false,
-        scopes: this.extractScopes(payload, "BUYER"),
-      };
-    }
-
     // 1. Look up app_user by oidc_subject (app_users is intentionally global/non-tenant-scoped)
     let user = await this.db
       .selectFrom("app_users")

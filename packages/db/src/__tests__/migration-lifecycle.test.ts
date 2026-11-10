@@ -716,6 +716,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
   it("8. Unordered migration proof: verifies allowUnorderedMigrations applies 0006-style migration after 0007", async () => {
     let upExecuted = false;
     const { Migrator } = await import("kysely");
+    const testMigrationName = "0006_test_unordered_migration";
     const testMigrator = new Migrator({
       db: adminDb,
       allowUnorderedMigrations: true,
@@ -727,7 +728,8 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
             "0003_payment_core_ledger": { async up() {}, async down() {} },
             "0004_outbox_lease_hardening": { async up() {}, async down() {} },
             "0005_self_membership_rls": { async up() {}, async down() {} },
-            "0006_approval_signed_intent": {
+            "0006_approval_signed_intent": { async up() {}, async down() {} },
+            [testMigrationName]: {
               async up() {
                 upExecuted = true;
               },
@@ -742,14 +744,10 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     const { error, results } = await testMigrator.migrateToLatest();
     expect(error).toBeUndefined();
     expect(upExecuted).toBe(true);
-    expect(results?.find((r) => r.migrationName === "0006_approval_signed_intent")?.status).toBe(
-      "Success",
-    );
+    expect(results?.find((r) => r.migrationName === testMigrationName)?.status).toBe("Success");
 
-    // Clean up the test migration entry from kysely_migration table
-    await sql`DELETE FROM kysely_migration WHERE name = '0006_approval_signed_intent'`.execute(
-      adminDb,
-    );
+    // Clean up the synthetic test migration entry from kysely_migration table
+    await sql`DELETE FROM kysely_migration WHERE name = ${testMigrationName}`.execute(adminDb);
   });
 
   it("9. Resource claims source binding check & GiST exclusion with demo fixtures", async () => {

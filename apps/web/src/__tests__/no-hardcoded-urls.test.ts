@@ -20,12 +20,13 @@ describe("No Hardcoded URLs Scanner & API Base URL Production Safety", () => {
           }
           scanDir(fullPath);
         } else if (entry.isFile()) {
-          // Exclude test files
+          // Exclude test and Vitest setup files
           if (
             entry.name.endsWith(".test.ts") ||
             entry.name.endsWith(".test.tsx") ||
             entry.name.endsWith(".spec.ts") ||
-            entry.name.endsWith(".spec.tsx")
+            entry.name.endsWith(".spec.tsx") ||
+            entry.name === "test-setup.ts"
           ) {
             continue;
           }
