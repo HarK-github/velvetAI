@@ -16,8 +16,6 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     adminDb = createDatabaseClient(MIGRATION_TEST_DB_URL, { min: 1, max: 5 });
     // Ensure migrated to latest
     await migrateToLatest(adminDb);
-    // Ensure role attributes match baseline invariant (NOLOGIN)
-    await sql`ALTER ROLE velvet_runtime NOLOGIN;`.execute(adminDb);
   });
 
   afterAll(async () => {
