@@ -15,6 +15,8 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { formatMoney } from "@velvetai/contracts";
 import { apiClient, API_BASE_URL } from "../api-client.js";
 import { isAuth0Configured, isMockAuthEnabled, computeAuthDiagnostic } from "../lib/auth-config.js";
+import { useRouter } from "../router.js";
+import { useAskAI, type ActiveHoldState, type ActiveQuoteState } from "../context/AskAIContext.js";
 import { SafeMarkdown } from "./SafeMarkdown.js";
 
 export interface ProviderStatus {
@@ -38,6 +40,7 @@ interface AskAIDrawerInnerProps extends AskAIDrawerProps {
   authError?: Error | null;
   userEmail?: string;
   userName?: string;
+  onSignIn?: () => void;
 }
 
 export interface ProcessedItem {
@@ -157,17 +160,10 @@ export const ToolStepChip: FC<{
   );
 };
 
-const ExpandableLookupChip: FC<{ label: string; children: ReactNode }> = ({
-  label,
-  children,
-}) => {
+const ExpandableLookupChip: FC<{ label: string; children: ReactNode }> = ({ label, children }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   return (
-    <ToolStepChip
-      label={label}
-      isExpanded={isExpanded}
-      onToggle={() => setIsExpanded(!isExpanded)}
-    >
+    <ToolStepChip label={label} isExpanded={isExpanded} onToggle={() => setIsExpanded(!isExpanded)}>
       {children}
     </ToolStepChip>
   );
@@ -195,9 +191,7 @@ export const ServiceListCard: FC<{
     <div className="ai-tool-card" data-testid="service-list-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name">
-            Services
-          </span>
+          <span className="ai-tool-action-name">Services</span>
         </div>
         <div className="ai-tool-header-right">
           <span className="ai-tool-count">{uniqueServices.length} services</span>
@@ -285,14 +279,22 @@ export const SlotsCard: FC<{
   toolArgs?: any;
   onSelectSlot: (slotOrPrompt: any, toolResult?: any, toolArgs?: any) => void;
   isQuoting?: boolean;
+  isHolding?: boolean;
   isLiveEnvironment: boolean;
   timestamp?: string;
-}> = ({ toolResult, toolArgs, onSelectSlot, isQuoting = false, isLiveEnvironment, timestamp }) => {
+}> = ({
+  toolResult,
+  toolArgs,
+  onSelectSlot,
+  isQuoting = false,
+  isHolding = false,
+  isLiveEnvironment,
+  timestamp,
+}) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const slots: any[] = Array.isArray(toolResult?.slots) ? toolResult.slots : [];
 
-  const serviceName =
-    toolResult?.serviceName || toolArgs?.serviceName || "Executive Haircut";
+  const serviceName = toolResult?.serviceName || toolArgs?.serviceName || "Executive Haircut";
   const firstSlot = slots[0];
   const localDate = toolResult?.resolvedDate || firstSlot?.display?.localDate || "Tomorrow";
   const zoneLabel = firstSlot?.display?.timeZoneLabel || toolResult?.timeZone || "EST";
@@ -305,9 +307,7 @@ export const SlotsCard: FC<{
     <div className="ai-tool-card" data-testid="slots-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name">
-            {cardHeader}
-          </span>
+          <span className="ai-tool-action-name">{cardHeader}</span>
         </div>
         <div className="ai-tool-header-right">
           <span className="ai-tool-count">{slots.length} slots</span>
@@ -351,7 +351,7 @@ export const SlotsCard: FC<{
                 className="ai-slot-button mono"
                 onClick={() => onSelectSlot(slot, toolResult, toolArgs)}
                 data-prompt={promptToSend}
-                disabled={isQuoting}
+                disabled={isQuoting || isHolding}
                 aria-label={`Select slot at ${primaryTime}`}
               >
                 <span className="ai-slot-primary-time">{primaryTime}</span>
@@ -385,6 +385,13 @@ export const QuoteCard: FC<{
   onPickDifferentTime?: () => void;
   onRefreshQuote?: (quote: any, args?: any) => void;
   isHolding?: boolean;
+  isActionDisabled?: boolean;
+  isAlreadyHeld?: boolean;
+  replacePrompt?: {
+    activeHoldTime: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  } | null;
   isLiveEnvironment: boolean;
   timestamp?: string;
 }> = ({
@@ -394,6 +401,9 @@ export const QuoteCard: FC<{
   onPickDifferentTime,
   onRefreshQuote,
   isHolding = false,
+  isActionDisabled = false,
+  isAlreadyHeld = false,
+  replacePrompt = null,
   isLiveEnvironment,
   timestamp,
 }) => {
@@ -477,9 +487,7 @@ export const QuoteCard: FC<{
     <div className="ai-tool-card" data-testid="quote-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name">
-            Quote · {serviceName}
-          </span>
+          <span className="ai-tool-action-name">Quote · {serviceName}</span>
         </div>
         <div className="ai-tool-header-right">
           {timestamp && <span className="ai-tool-time">{timestamp}</span>}
@@ -524,12 +532,25 @@ export const QuoteCard: FC<{
             <span>{isExpired ? "Quote expired" : `Expires in ${formattedCountdown}`}</span>
           </div>
 
-          <div className="ai-quote-actions" style={{ marginTop: "12px", display: "flex", gap: "8px" }}>
-            {isExpired ? (
+          <div
+            className="ai-quote-actions"
+            style={{ marginTop: "12px", display: "flex", gap: "8px" }}
+          >
+            {isAlreadyHeld ? (
+              <button
+                type="button"
+                className="button button--primary button--sm is-held"
+                disabled
+                aria-label="Held"
+              >
+                Held ✓
+              </button>
+            ) : isExpired ? (
               <button
                 type="button"
                 className="button button--primary button--sm"
                 onClick={() => onRefreshQuote?.(toolResult, toolArgs)}
+                disabled={isHolding || isActionDisabled}
                 aria-label="Refresh quote"
               >
                 Refresh quote
@@ -539,7 +560,7 @@ export const QuoteCard: FC<{
                 type="button"
                 className="button button--primary button--sm"
                 onClick={() => onHoldThisTime?.(toolResult, toolArgs)}
-                disabled={isHolding}
+                disabled={isHolding || isActionDisabled}
                 aria-label="Hold this time"
               >
                 {isHolding ? "Holding slot..." : "Hold this time"}
@@ -549,16 +570,175 @@ export const QuoteCard: FC<{
               type="button"
               className="button button--secondary button--sm"
               onClick={() => onPickDifferentTime?.()}
+              disabled={isHolding || isActionDisabled}
               aria-label="Pick a different time"
             >
               Pick a different time
             </button>
           </div>
+          {replacePrompt && (
+            <div className="ai-hold-replace-prompt" role="alert">
+              <div>You&apos;re already holding {replacePrompt.activeHoldTime}. Replace it?</div>
+              <div className="ai-hold-replace-actions">
+                <button
+                  type="button"
+                  className="button button--primary button--sm"
+                  onClick={replacePrompt.onConfirm}
+                  disabled={isHolding || isActionDisabled}
+                >
+                  Yes, replace hold
+                </button>
+                <button
+                  type="button"
+                  className="button button--secondary button--sm"
+                  onClick={replacePrompt.onCancel}
+                  disabled={isHolding || isActionDisabled}
+                >
+                  Keep existing
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
+
+export function extractCleanLocator(raw: string): string {
+  return String(raw || "")
+    .replace(/^https?:\/\/[^/]+/, "")
+    .replace(/^.*\/v1\/booking-approvals\//, "")
+    .replace(/^.*\/approve\?intent=/, "")
+    .replace(/^.*\/approve\//, "")
+    .replace(/^\/+/, "");
+}
+
+export function formatHoldTimeSummary(
+  startsAt?: string,
+  display?: { localDate?: string; localStart?: string; timeZoneLabel?: string },
+  timeZone = "America/New_York",
+): string {
+  if (display?.localDate && display?.localStart) {
+    return `${display.localDate} at ${display.localStart}${display.timeZoneLabel ? ` ${display.timeZoneLabel}` : ""}`;
+  }
+  if (!startsAt) return "another time";
+  try {
+    const dt = new Date(startsAt);
+    if (isNaN(dt.getTime())) return "another time";
+    const dateStr = dt.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone,
+    });
+    const timeStr = dt.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone,
+    });
+    return `${dateStr} at ${timeStr}`;
+  } catch {
+    return "another time";
+  }
+}
+
+export function formatAskAIErrorMessage(err: unknown): { message: string; isAuthError: boolean } {
+  const errAny = err as { message?: string; status?: number; code?: string; name?: string } | null;
+  const rawMsg =
+    err instanceof Error ? err.message : typeof err === "string" ? err : errAny?.message || "";
+  let parsedCode = errAny?.code || "";
+  let parsedDetail = "";
+  const status = errAny?.status;
+
+  if (rawMsg.includes("{")) {
+    const jsonStart = rawMsg.indexOf("{");
+    try {
+      const parsed = JSON.parse(rawMsg.slice(jsonStart)) as Record<string, unknown>;
+      if (typeof parsed.code === "string") parsedCode = parsed.code;
+      if (typeof parsed.error === "string" && !parsedCode) parsedCode = parsed.error;
+      if (typeof parsed.detail === "string") parsedDetail = parsed.detail;
+      else if (typeof parsed.message === "string") parsedDetail = parsed.message;
+      else if (typeof parsed.title === "string") parsedDetail = parsed.title;
+    } catch {
+      // Ignore partial / non-JSON text
+    }
+  }
+
+  const combined = `${rawMsg} ${parsedCode} ${parsedDetail}`;
+
+  if (
+    err instanceof TypeError ||
+    /failed to fetch|networkerror|network request failed|load failed/i.test(combined)
+  ) {
+    return {
+      message: "Connection problem — check your network and try again.",
+      isAuthError: false,
+    };
+  }
+
+  if (status === 401 || /AUTH_REQUIRED|AUTHENTICATION_FAILED|unauthorized|401/i.test(combined)) {
+    return {
+      message: "Authentication required. Please sign in with Auth0 to access the concierge.",
+      isAuthError: true,
+    };
+  }
+
+  if (parsedCode === "CONCURRENCY_LIMIT_EXCEEDED" || /CONCURRENCY_LIMIT_EXCEEDED/i.test(combined)) {
+    return {
+      message: "Another concierge request is still finishing. Please wait a moment and try again.",
+      isAuthError: false,
+    };
+  }
+
+  if (
+    parsedCode === "RATE_LIMIT_EXCEEDED" ||
+    status === 429 ||
+    /RATE_LIMIT_EXCEEDED|\b429\b/i.test(combined)
+  ) {
+    return {
+      message: "Rate limit of 60 requests per minute reached. Please wait a moment.",
+      isAuthError: false,
+    };
+  }
+
+  if (combined.includes("ai_provider_authentication")) {
+    return {
+      message: "AI provider authentication failed. Please verify provider credentials.",
+      isAuthError: false,
+    };
+  }
+  if (combined.includes("ai_model_not_found")) {
+    return { message: "AI model not found or currently unavailable.", isAuthError: false };
+  }
+  if (combined.includes("ai_quota_exceeded")) {
+    return { message: "AI quota exceeded. Please try again later.", isAuthError: false };
+  }
+  if (combined.includes("ai_provider_unavailable") || status === 503 || /\b503\b/.test(combined)) {
+    return {
+      message: "AI Provider service is currently unavailable. Please try again shortly.",
+      isAuthError: false,
+    };
+  }
+  if (combined.includes("ai_stream_error")) {
+    return {
+      message: "An error occurred during AI response streaming. Please retry.",
+      isAuthError: false,
+    };
+  }
+  if (status === 403 || /\b403\b/.test(combined)) {
+    return {
+      message: "Access forbidden. Your account lacks necessary permissions or active membership.",
+      isAuthError: false,
+    };
+  }
+
+  return {
+    message: parsedDetail || rawMsg || "Failed to process request. Please try again.",
+    isAuthError: false,
+  };
+}
 
 /**
  * Explicit card for prepare_booking.v1 output
@@ -566,9 +746,10 @@ export const QuoteCard: FC<{
 export const ApprovalCard: FC<{
   toolResult: any;
   toolArgs?: any;
+  onOpenApproval?: (locator: string) => void;
   isLiveEnvironment: boolean;
   timestamp?: string;
-}> = ({ toolResult, toolArgs, isLiveEnvironment, timestamp }) => {
+}> = ({ toolResult, toolArgs, onOpenApproval, isLiveEnvironment, timestamp }) => {
   const serviceName =
     toolResult?.terms?.serviceName ||
     toolResult?.serviceName ||
@@ -604,27 +785,22 @@ export const ApprovalCard: FC<{
 
   const zoneLabel = display?.timeZoneLabel || (timeZone.includes("New_York") ? "EDT" : timeZone);
 
-  const rawLocator = toolResult?.approvalLocator || toolResult?.approval_locator || "";
-  const cleanLocator = rawLocator.replace(/^.*\/v1\/booking-approvals\//, "");
-  const approvalUrl =
-    toolResult?.approvalUrl ||
-    (rawLocator.startsWith("http://") || rawLocator.startsWith("https://")
-      ? rawLocator
-      : typeof window !== "undefined"
-        ? `${window.location.origin}/approve/${cleanLocator}`
-        : `/approve/${cleanLocator}`);
+  const rawLocator =
+    toolResult?.approvalLocator || toolResult?.approval_locator || toolResult?.approvalUrl || "";
+  const cleanLocator = extractCleanLocator(rawLocator);
+  const isReleased = toolResult?.status === "CANCELLED";
 
   return (
     <div className="ai-tool-card" data-testid="approval-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
           <span className="ai-tool-action-name">
-            Ready for your approval
+            {isReleased ? "Previous hold released" : "Ready for your approval"}
           </span>
         </div>
         <div className="ai-tool-header-right">
-          <span className="ai-tool-count" style={{ color: "#f59e0b" }}>
-            Hold active · 15m window
+          <span className="ai-tool-count" style={{ color: isReleased ? "#94a3b8" : "#f59e0b" }}>
+            {isReleased ? "Released" : "Hold active · 5m window"}
           </span>
           {timestamp && <span className="ai-tool-time">{timestamp}</span>}
           <span
@@ -639,8 +815,8 @@ export const ApprovalCard: FC<{
       <div className="ai-tool-card-content">
         <div className="ai-approval-card">
           <div className="ai-hold-badge">
-            <span>● HOLD ACTIVE</span>
-            <span className="mono">15m Window</span>
+            <span>{isReleased ? "○ HOLD RELEASED" : "● HOLD ACTIVE"}</span>
+            <span className="mono">{isReleased ? "Replaced" : "5m Window"}</span>
           </div>
           <div style={{ marginTop: "6px", fontWeight: 600, color: "#ffffff", fontSize: "13px" }}>
             {serviceName}
@@ -652,19 +828,23 @@ export const ApprovalCard: FC<{
             style={{
               margin: "6px 0 10px 0",
               fontSize: "12px",
-              color: "var(--secondary, #94a3b8)",
+              color: "#cbd5e1",
             }}
           >
-            Your AI assistant reserved this time for you. Review terms and approve to book.
+            {isReleased
+              ? "This earlier hold was released when you selected a new time."
+              : "Your AI assistant reserved this time for you. Review terms and approve to book."}
           </p>
-          <a
-            href={approvalUrl}
-            className="button button--solid ai-review-terms-button"
-            target="_self"
-            id="ai-open-approval-btn"
-          >
-            Open approval page
-          </a>
+          {!isReleased && cleanLocator && (
+            <button
+              type="button"
+              className="button button--solid ai-review-terms-button"
+              id="ai-open-approval-btn"
+              onClick={() => onOpenApproval?.(cleanLocator)}
+            >
+              Open approval page
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -687,9 +867,7 @@ export const BookingStatusCard: FC<{
     <div className="ai-tool-card" data-testid="booking-status-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name">
-            Booking status
-          </span>
+          <span className="ai-tool-action-name">Booking status</span>
         </div>
         <div className="ai-tool-header-right">
           <span className="ai-tool-count">{status}</span>
@@ -755,9 +933,7 @@ export const CancellationCard: FC<{
     <div className="ai-tool-card" data-testid="cancellation-card">
       <div className="ai-tool-card-header mono">
         <div className="ai-tool-header-left">
-          <span className="ai-tool-action-name">
-            Cancellation policy
-          </span>
+          <span className="ai-tool-action-name">Cancellation policy</span>
         </div>
         <div className="ai-tool-header-right">
           {timestamp && <span className="ai-tool-time">{timestamp}</span>}
@@ -834,27 +1010,57 @@ export const ToolErrorCard: FC<{
 };
 
 /**
- * Context-aware assistant follow-up prompt suggestions (T6)
- * Never suggests the action that was just completed.
+ * Context-aware assistant follow-up prompt suggestions (T6 / P1-14)
+ * Computes suggestions from the conversation tail and never emits "Hold <time>" when slots are empty.
  */
 export function computeFollowUpSuggestions(items: ProcessedItem[]): string[] {
   const toolItems = items.filter((it) => it.kind === "tool" && it.toolResult);
+  const tailToolItems = [...toolItems].reverse();
+  const latestTool = tailToolItems[0];
 
-  // Check for highest-order booking action in priority: prepare > quote > slots > services
-  const prepareItem = toolItems.find(
+  if (latestTool) {
+    if (
+      latestTool.toolName?.includes("prepare_cancel") ||
+      latestTool.toolResult?.cancellationAllowed !== undefined
+    ) {
+      if (latestTool.toolResult?.cancellationAllowed) {
+        return ["Confirm cancellation", "Keep booking"];
+      }
+      return ["Check booking status", "Find a new time"];
+    }
+
+    if (
+      latestTool.toolName?.includes("get_booking") ||
+      (latestTool.toolResult?.bookingId &&
+        latestTool.toolResult?.status &&
+        !latestTool.toolResult?.approvalLocator &&
+        !latestTool.toolResult?.approvalUrl)
+    ) {
+      const bookingStatus = String(latestTool.toolResult.status).toUpperCase();
+      if (bookingStatus === "HELD") {
+        return ["Open approval page", "Cancel this booking"];
+      }
+      if (bookingStatus === "CANCELLED") {
+        return ["Find a new time", "Show available services"];
+      }
+      return ["Show available services", "Check another booking"];
+    }
+  }
+
+  // Check for highest-order active action from conversation tail
+  const prepareItem = tailToolItems.find(
     (it) =>
-      it.toolName?.includes("prepare_booking") ||
-      it.toolResult?.approvalLocator ||
-      it.toolResult?.approvalUrl,
+      (it.toolName?.includes("prepare_booking") ||
+        it.toolResult?.approvalLocator ||
+        it.toolResult?.approvalUrl) &&
+      it.toolResult?.status !== "CANCELLED",
   );
   if (prepareItem) {
     return ["Open approval page", "Find a different time"];
   }
 
-  const quoteItem = toolItems.find(
-    (it) =>
-      it.toolName?.includes("quote") ||
-      (it.toolResult?.total && it.toolResult?.deposit),
+  const quoteItem = tailToolItems.find(
+    (it) => it.toolName?.includes("quote") || (it.toolResult?.total && it.toolResult?.deposit),
   );
   if (quoteItem) {
     const isExpired =
@@ -866,16 +1072,20 @@ export function computeFollowUpSuggestions(items: ProcessedItem[]): string[] {
     return ["Hold this time", "Pick a different time"];
   }
 
-  const slotsItem = toolItems.find(
-    (it) => it.toolName?.includes("find_available") || it.toolResult?.slots,
+  const slotsItem = tailToolItems.find(
+    (it) => it.toolName?.includes("find_available") || it.toolResult?.slots !== undefined,
   );
   if (slotsItem) {
-    const firstSlot = slotsItem.toolResult?.slots?.[0];
-    const timeLabel = firstSlot?.display?.localStart || "2:00 PM";
+    const slots = Array.isArray(slotsItem.toolResult?.slots) ? slotsItem.toolResult.slots : [];
+    if (slots.length === 0) {
+      return ["Check another day", "Show available services"];
+    }
+    const firstSlot = slots[0];
+    const timeLabel = firstSlot?.display?.localStart || "next available slot";
     return [`Hold ${timeLabel}`, "Show tomorrow morning", "Try another day"];
   }
 
-  const servicesItem = toolItems.find(
+  const servicesItem = tailToolItems.find(
     (it) => it.toolName?.includes("list_service") || it.toolResult?.services,
   );
   if (servicesItem) {
@@ -938,8 +1148,7 @@ export function processMessageParts(
         part.id ||
         `tool-${part.toolName || "tool"}-${i}`;
 
-      const toolName: string =
-        part.toolName || toolInvocation.toolName || part.name || "Tool";
+      const toolName: string = part.toolName || toolInvocation.toolName || part.name || "Tool";
 
       const toolResult: any =
         part.output ?? part.result ?? toolInvocation.result ?? toolInvocation.output;
@@ -985,8 +1194,7 @@ export function processMessageParts(
   // 1. If multiple list_services calls exist in this message turn, keep only the latest one
   const listServiceIndices = items
     .map((it, idx) =>
-      it.kind === "tool" &&
-      (it.toolName?.includes("list_service") || it.toolResult?.services)
+      it.kind === "tool" && (it.toolName?.includes("list_service") || it.toolResult?.services)
         ? idx
         : -1,
     )
@@ -1002,8 +1210,7 @@ export function processMessageParts(
   // 2. Deduplicate find_available_slots: if multiple slot calls in the same turn, keep only the latest one
   const slotIndices = items
     .map((it, idx) =>
-      it.kind === "tool" &&
-      (it.toolName?.includes("find_available") || it.toolResult?.slots)
+      it.kind === "tool" && (it.toolName?.includes("find_available") || it.toolResult?.slots)
         ? idx
         : -1,
     )
@@ -1030,7 +1237,10 @@ export function processMessageParts(
   if (firstQuoteOrPrepareIdx !== -1) {
     for (let i = items.length - 1; i > firstQuoteOrPrepareIdx; i--) {
       const it = items[i];
-      if (it?.kind === "tool" && (it.toolName?.includes("list_service") || it.toolResult?.services)) {
+      if (
+        it?.kind === "tool" &&
+        (it.toolName?.includes("list_service") || it.toolResult?.services)
+      ) {
         items.splice(i, 1);
       }
     }
@@ -1060,6 +1270,104 @@ export function processMessageParts(
   return items;
 }
 
+function isQuoteToolPart(part: any): boolean {
+  if (!part || typeof part !== "object") return false;
+  const toolName = String(
+    part.toolName ||
+      (typeof part.type === "string" && part.type.startsWith("tool-") ? part.type.slice(5) : ""),
+  ).toLowerCase();
+  if (toolName.includes("quote")) return true;
+  const res = part.output ?? part.result;
+  return Boolean(res && typeof res === "object" && res.total && res.deposit);
+}
+
+function replaceActiveQuoteMessage(prevMessages: any[], newQuoteMsg: any): any[] {
+  const cleaned = prevMessages
+    .map((msg) => {
+      if (!msg || !Array.isArray(msg.parts)) return msg;
+      const keptParts = msg.parts.filter((part: any) => !isQuoteToolPart(part));
+      if (keptParts.length === msg.parts.length) return msg;
+      const hasMeaningfulContent = keptParts.some(
+        (p: any) =>
+          (p.type === "text" && typeof p.text === "string" && p.text.trim().length > 0) ||
+          (p.type && p.type !== "text" && p.type !== "step-start"),
+      );
+      if (!hasMeaningfulContent) return null;
+      return { ...msg, parts: keptParts };
+    })
+    .filter(Boolean);
+  return [...cleaned, newQuoteMsg];
+}
+
+function markHoldReleasedInMessages(prevMessages: any[], releasedBookingId: string): any[] {
+  return prevMessages.map((msg) => {
+    if (!msg || !Array.isArray(msg.parts)) return msg;
+    let changed = false;
+    const nextParts = msg.parts.map((part: any) => {
+      const res = part?.output ?? part?.result;
+      if (res && typeof res === "object" && res.bookingId === releasedBookingId) {
+        changed = true;
+        if (part.output !== undefined) {
+          return { ...part, output: { ...res, status: "CANCELLED" } };
+        }
+        return { ...part, result: { ...res, status: "CANCELLED" } };
+      }
+      return part;
+    });
+    return changed ? { ...msg, parts: nextParts } : msg;
+  });
+}
+
+function deriveLatestHoldFromMessages(msgs: any[]): ActiveHoldState | null {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const msg = msgs[i];
+    const parts = processMessageParts(msg?.parts, msg?.content);
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const item = parts[j];
+      if (!item) continue;
+      if (
+        item.kind === "tool" &&
+        item.toolResult &&
+        (item.toolResult.approvalLocator ||
+          item.toolResult.approvalUrl ||
+          item.toolName?.includes("prepare_booking"))
+      ) {
+        if (item.toolResult.status === "CANCELLED") {
+          return null;
+        }
+        const bookingId = item.toolResult.bookingId || "";
+        if (!bookingId) continue;
+        const rawLocator =
+          item.toolResult.approvalLocator ||
+          item.toolResult.approval_locator ||
+          item.toolResult.approvalUrl ||
+          "";
+        const locator = extractCleanLocator(rawLocator);
+        const terms = item.toolResult.terms || item.toolResult;
+        const startsAt = terms?.startsAt || item.toolArgs?.startsAt || "";
+        const timeZone = terms?.timeZone || item.toolArgs?.timeZone || "America/New_York";
+        const serviceId =
+          terms?.serviceId || item.toolArgs?.serviceId || "01932b10-0001-7000-8000-000000000001";
+        const serviceName = terms?.serviceName || item.toolArgs?.serviceName || "Service";
+        const display = terms?.display;
+        return {
+          bookingId,
+          locator,
+          serviceId,
+          locationId: terms?.locationId || item.toolArgs?.locationId,
+          serviceName,
+          startsAt,
+          timeZone,
+          holdExpiresAt: item.toolResult.holdExpiresAt,
+          timeLabel: formatHoldTimeSummary(startsAt, display, timeZone),
+          status: "HELD",
+        };
+      }
+    }
+  }
+  return null;
+}
+
 const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
   isOpen,
   onClose,
@@ -1071,12 +1379,26 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
   authError = null,
   userEmail,
   userName,
+  onSignIn,
 }) => {
+  const { navigate } = useRouter();
+  const askAiCtx = useAskAI();
   const [inputVal, setInputVal] = useState("");
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
   const [streamAnnouncement, setStreamAnnouncement] = useState("");
   const [isQuotingSlot, setIsQuotingSlot] = useState(false);
   const [isHoldingSlot, setIsHoldingSlot] = useState(false);
+  const [fallbackActiveHold, setFallbackActiveHold] = useState<ActiveHoldState | null>(null);
+  const [pendingReplaceHold, setPendingReplaceHold] = useState<{
+    quoteData: any;
+    quoteArgs?: any;
+    existingHold: ActiveHoldState;
+  } | null>(null);
+  const isQuotingRef = useRef(false);
+  const isHoldingRef = useRef(false);
+  const isSyncingFromContextRef = useRef(false);
+  const lastHydrationVersionRef = useRef<number>(-1);
+  const lastClearVersionRef = useRef<number>(askAiCtx.clearVersion);
   const lastPromptRef = useRef<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1084,6 +1406,10 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
   const isAuthDisabled = isAuth0Configured()
     ? Boolean(isAuthLoading || !isAuthenticated || initialTokenPending)
     : Boolean(!isMockAuthEnabled() && !authToken);
+
+  const isSignedOut = isAuth0Configured()
+    ? Boolean(!isAuthLoading && !isAuthenticated)
+    : Boolean(!isMockAuthEnabled() && !authToken && !apiClient.getAuthToken());
 
   const apiBaseUrl = API_BASE_URL;
 
@@ -1093,8 +1419,9 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
     tokenResolverRef.current = tokenResolver;
   }, [tokenResolver]);
 
-  // Fetch provider status honesty endpoint
+  // Fetch provider status honesty endpoint only when the drawer is open (P1-15)
   useEffect(() => {
+    if (!isOpen) return;
     let mounted = true;
     fetch(`${apiBaseUrl}/v1/ai/status`)
       .then((res) => (res.ok ? res.json() : null))
@@ -1165,6 +1492,79 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
     transport,
   });
 
+  const [authPromptError, setAuthPromptError] = useState<Error | null>(null);
+
+  const updateActiveHold = useCallback(
+    (hold: ActiveHoldState | null) => {
+      setFallbackActiveHold(hold);
+      if (askAiCtx.hasProvider) {
+        askAiCtx.setActiveHold(hold);
+      }
+    },
+    [askAiCtx],
+  );
+
+  // Restore persisted conversation from AskAIContext on mount or sessionStorage hydration
+  useEffect(() => {
+    if (!askAiCtx.hasProvider) return;
+    if (
+      lastHydrationVersionRef.current !== askAiCtx.hydrationVersion &&
+      askAiCtx.messages.length > 0
+    ) {
+      lastHydrationVersionRef.current = askAiCtx.hydrationVersion;
+      isSyncingFromContextRef.current = true;
+      setMessages(askAiCtx.messages);
+    } else if (lastHydrationVersionRef.current === -1) {
+      lastHydrationVersionRef.current = askAiCtx.hydrationVersion;
+      if (askAiCtx.messages.length > 0 && messages.length === 0) {
+        isSyncingFromContextRef.current = true;
+        setMessages(askAiCtx.messages);
+      }
+    }
+  }, [
+    askAiCtx.hasProvider,
+    askAiCtx.hydrationVersion,
+    askAiCtx.messages,
+    messages.length,
+    setMessages,
+  ]);
+
+  // Mirror local chat messages and derived hold state back into AskAIContext for route/reload persistence
+  useEffect(() => {
+    if (!askAiCtx.hasProvider) return;
+    if (isSyncingFromContextRef.current) {
+      isSyncingFromContextRef.current = false;
+      return;
+    }
+    if (messages.length > 0) {
+      askAiCtx.setMessages(messages);
+      const derivedHold = deriveLatestHoldFromMessages(messages);
+      if (derivedHold && askAiCtx.activeHold?.bookingId !== derivedHold.bookingId) {
+        askAiCtx.setActiveHold(derivedHold);
+      }
+    }
+  }, [askAiCtx, messages]);
+
+  // Respond cleanly to explicit logout / context reset
+  useEffect(() => {
+    if (!askAiCtx.hasProvider) return;
+    if (lastClearVersionRef.current !== askAiCtx.clearVersion) {
+      lastClearVersionRef.current = askAiCtx.clearVersion;
+      stop();
+      if (typeof setMessages === "function") setMessages([]);
+      setFallbackActiveHold(null);
+      setPendingReplaceHold(null);
+      setAuthPromptError(null);
+    }
+  }, [askAiCtx.hasProvider, askAiCtx.clearVersion, setMessages, stop]);
+
+  const effectiveActiveHold: ActiveHoldState | null = useMemo(() => {
+    if (askAiCtx.hasProvider) {
+      return askAiCtx.activeHold ?? deriveLatestHoldFromMessages(messages);
+    }
+    return fallbackActiveHold ?? deriveLatestHoldFromMessages(messages);
+  }, [askAiCtx.hasProvider, askAiCtx.activeHold, fallbackActiveHold, messages]);
+
   const isLoading = status === "streaming" || status === "submitted";
 
   // Aria-live announcement for stream completion
@@ -1190,9 +1590,16 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
   useEffect(() => {
     if (prevAuthRef.current === true && isAuthenticated === false) {
       stop();
+      if (typeof setMessages === "function") setMessages([]);
+      setFallbackActiveHold(null);
+      setPendingReplaceHold(null);
+      setAuthPromptError(null);
+      if (askAiCtx.hasProvider) {
+        askAiCtx.clearConversation({ resetAuth: true });
+      }
     }
     prevAuthRef.current = isAuthenticated;
-  }, [isAuthenticated, stop]);
+  }, [isAuthenticated, stop, setMessages, askAiCtx]);
 
   // Auto-scroll to bottom of conversation
   useEffect(() => {
@@ -1222,7 +1629,11 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  const [authPromptError, setAuthPromptError] = useState<Error | null>(null);
+  const handleSignIn = useCallback(() => {
+    if (onSignIn) {
+      onSignIn();
+    }
+  }, [onSignIn]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -1267,8 +1678,12 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
       return;
     }
 
+    if (isQuotingRef.current || isHoldingRef.current) return;
+    isQuotingRef.current = true;
+    setIsQuotingSlot(true);
+    setPendingReplaceHold(null);
+
     try {
-      setIsQuotingSlot(true);
       const slot = slotOrPrompt;
       const serviceId =
         slot.serviceId ||
@@ -1290,6 +1705,20 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
         timeZone,
       });
 
+      const resolvedServiceName = quoteRes.serviceName || toolResult?.serviceName;
+      if (askAiCtx.hasProvider) {
+        const nextQuote: ActiveQuoteState = {
+          quoteId: quoteRes.quoteId,
+          serviceId,
+          locationId,
+          serviceName: resolvedServiceName,
+          startsAt,
+          timeZone,
+          expiresAt: quoteRes.expiresAt,
+        };
+        askAiCtx.setActiveQuote(nextQuote);
+      }
+
       const quoteCallId = `quote-direct-${Date.now()}`;
       const quoteMsg: any = {
         id: `msg-${Date.now()}`,
@@ -1305,46 +1734,62 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
               locationId,
               startsAt,
               timeZone,
-              serviceName: quoteRes.serviceName || toolResult?.serviceName,
+              serviceName: resolvedServiceName,
             },
           },
         ],
       };
-      setMessages((prev) => [...prev, quoteMsg]);
+      setMessages((prev) => replaceActiveQuoteMessage(prev, quoteMsg));
     } catch (err: any) {
-      console.error("Failed to quote slot directly:", err);
+      const formatted = formatAskAIErrorMessage(err);
       const errorMsg: any = {
         id: `msg-${Date.now()}`,
         role: "assistant",
         parts: [
           {
             type: "text",
-            text: `Unable to quote slot: ${err.message || "Failed to create booking quote"}.`,
+            text: `Unable to quote slot: ${formatted.message}`,
           },
         ],
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
+      isQuotingRef.current = false;
       setIsQuotingSlot(false);
     }
   };
 
-  const handleHoldThisTime = async (quoteData: any, quoteArgs?: any) => {
+  const executePrepareHold = async (
+    quoteData: any,
+    quoteArgs?: any,
+    replaceOldHold?: ActiveHoldState,
+  ) => {
+    if (isHoldingRef.current) return;
+    isHoldingRef.current = true;
+    setIsHoldingSlot(true);
+
     try {
-      setIsHoldingSlot(true);
       const serviceId =
-        quoteData.serviceId ||
-        quoteArgs?.serviceId ||
-        "01932b10-0001-7000-8000-000000000001";
+        quoteData.serviceId || quoteArgs?.serviceId || "01932b10-0001-7000-8000-000000000001";
       const locationId =
-        quoteData.locationId ||
-        quoteArgs?.locationId ||
-        "01932b10-0002-7000-8000-000000000001";
+        quoteData.locationId || quoteArgs?.locationId || "01932b10-0002-7000-8000-000000000001";
       const startsAt = quoteData.startsAt || quoteArgs?.startsAt;
-      const timeZone =
-        quoteData.display?.timeZone ||
-        quoteArgs?.timeZone ||
-        "America/New_York";
+      const timeZone = quoteData.display?.timeZone || quoteArgs?.timeZone || "America/New_York";
+
+      if (replaceOldHold) {
+        const prepCancel = await apiClient.prepareCancellation(replaceOldHold.bookingId, {
+          reason: "Replacing held slot with new selection",
+        });
+        if (!prepCancel.cancellationAllowed || !prepCancel.cancellationConfirmationToken) {
+          throw new Error(
+            prepCancel.policySummary || "Could not release your previous hold before rebooking.",
+          );
+        }
+        await apiClient.cancelBooking(replaceOldHold.bookingId, {
+          cancellationConfirmationToken: prepCancel.cancellationConfirmationToken,
+          reason: "Replacing held slot with new selection",
+        });
+      }
 
       const actionScope = `askai-prep:${quoteData.quoteId || `${serviceId}:${startsAt}`}`;
       const idempotencyKey = apiClient.getOrCreateActionKey(actionScope, "askai-prep");
@@ -1364,6 +1809,25 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
         idempotencyKey,
       );
 
+      const resolvedServiceName =
+        quoteData.serviceName || quoteArgs?.serviceName || prepareRes.terms?.serviceName;
+      const locator = extractCleanLocator(prepareRes.approvalLocator || "");
+      const newHold: ActiveHoldState = {
+        bookingId: prepareRes.bookingId,
+        locator,
+        serviceId,
+        locationId,
+        serviceName: resolvedServiceName,
+        startsAt,
+        timeZone,
+        holdExpiresAt: prepareRes.holdExpiresAt,
+        timeLabel: formatHoldTimeSummary(startsAt, quoteData.display, timeZone),
+        quoteId: quoteData.quoteId,
+        status: "HELD",
+      };
+      updateActiveHold(newHold);
+      setPendingReplaceHold(null);
+
       const prepCallId = `prep-direct-${Date.now()}`;
       const prepMsg: any = {
         id: `msg-${Date.now()}`,
@@ -1379,7 +1843,7 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
               locationId,
               startsAt,
               timeZone,
-              serviceName: quoteData.serviceName || quoteArgs?.serviceName,
+              serviceName: resolvedServiceName,
             },
           },
           {
@@ -1388,43 +1852,94 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
           },
         ],
       };
-      setMessages((prev) => [...prev, prepMsg]);
+      setMessages((prev) => {
+        const base = replaceOldHold
+          ? markHoldReleasedInMessages(prev, replaceOldHold.bookingId)
+          : prev;
+        return [...base, prepMsg];
+      });
     } catch (err: any) {
-      console.error("Failed to prepare hold directly:", err);
+      const formatted = formatAskAIErrorMessage(err);
       const errorMsg: any = {
         id: `msg-${Date.now()}`,
         role: "assistant",
         parts: [
           {
             type: "text",
-            text: `Unable to prepare hold: ${err.message || "Failed to hold slot"}.`,
+            text: `Unable to prepare hold: ${formatted.message}`,
           },
         ],
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
+      isHoldingRef.current = false;
       setIsHoldingSlot(false);
     }
   };
 
+  const handleHoldThisTime = async (quoteData: any, quoteArgs?: any) => {
+    if (isHoldingRef.current || isQuotingRef.current) return;
+
+    const targetServiceId =
+      quoteData.serviceId || quoteArgs?.serviceId || "01932b10-0001-7000-8000-000000000001";
+    const targetStartsAt = quoteData.startsAt || quoteArgs?.startsAt;
+
+    if (effectiveActiveHold && effectiveActiveHold.status === "HELD") {
+      const isSameSlot =
+        effectiveActiveHold.serviceId === targetServiceId &&
+        effectiveActiveHold.startsAt === targetStartsAt;
+      if (isSameSlot) {
+        return;
+      }
+      setPendingReplaceHold({
+        quoteData,
+        quoteArgs,
+        existingHold: effectiveActiveHold,
+      });
+      return;
+    }
+
+    await executePrepareHold(quoteData, quoteArgs);
+  };
+
+  const handleConfirmReplaceHold = async () => {
+    if (!pendingReplaceHold) return;
+    await executePrepareHold(
+      pendingReplaceHold.quoteData,
+      pendingReplaceHold.quoteArgs,
+      pendingReplaceHold.existingHold,
+    );
+  };
+
+  const handleCancelReplaceHold = () => {
+    setPendingReplaceHold(null);
+  };
+
+  const openApprovalPage = useCallback(
+    (rawLocator: string) => {
+      const cleanLocator = extractCleanLocator(rawLocator);
+      if (!cleanLocator) return;
+      navigate(`/approve/${cleanLocator}`);
+      onClose();
+    },
+    [navigate, onClose],
+  );
+
   const handleFollowUpClick = (prompt: string) => {
+    if (isQuotingRef.current || isHoldingRef.current || isLoading) return;
     if (prompt === "Open approval page") {
       for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
         const parts = processMessageParts(msg?.parts, (msg as any)?.content);
         const approvalItem = parts.find(
-          (p) => p.toolResult?.approvalUrl || p.toolResult?.approvalLocator,
+          (p) =>
+            (p.toolResult?.approvalUrl || p.toolResult?.approvalLocator) &&
+            p.toolResult?.status !== "CANCELLED",
         );
         if (approvalItem) {
           const rawLocator =
-            approvalItem.toolResult?.approvalUrl ||
-            approvalItem.toolResult?.approvalLocator;
-          const cleanLocator = rawLocator.replace(/^.*\/v1\/booking-approvals\//, "");
-          const targetUrl =
-            rawLocator.startsWith("http://") || rawLocator.startsWith("https://")
-              ? rawLocator
-              : `/approve/${cleanLocator}`;
-          window.location.href = targetUrl;
+            approvalItem.toolResult?.approvalUrl || approvalItem.toolResult?.approvalLocator;
+          openApprovalPage(rawLocator);
           return;
         }
       }
@@ -1434,11 +1949,9 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
       for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
         const parts = processMessageParts(msg?.parts, (msg as any)?.content);
-        const quoteItem = parts.find(
-          (p) => p.toolResult?.total && p.toolResult?.deposit,
-        );
+        const quoteItem = parts.find((p) => p.toolResult?.total && p.toolResult?.deposit);
         if (quoteItem) {
-          handleHoldThisTime(quoteItem.toolResult, quoteItem.toolArgs);
+          void handleHoldThisTime(quoteItem.toolResult, quoteItem.toolArgs);
           return;
         }
       }
@@ -1461,7 +1974,14 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
       stop();
     }
     setMessages([]);
+    setFallbackActiveHold(null);
+    setPendingReplaceHold(null);
     setAuthPromptError(null);
+    if (askAiCtx.hasProvider) {
+      askAiCtx.clearConversation();
+    } else {
+      apiClient.resetActionKeys();
+    }
   };
 
   const handleKeyDownInput = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -1471,50 +1991,47 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
     }
   };
 
-  const getErrorMessage = (err: Error) => {
-    const msg = err.message || "";
-    if (
-      msg.includes("AUTH_REQUIRED") ||
-      msg.includes("401") ||
-      (err as any).status === 401 ||
-      msg.includes("AUTHENTICATION_FAILED") ||
-      msg.includes("unauthorized")
-    ) {
-      return "Authentication required. Please sign in with Auth0 to access the concierge.";
+  const getErrorDetails = (err: Error) => formatAskAIErrorMessage(err);
+
+  // Enforce at most one active QuoteCard per conversation (must precede any early returns per Rules of Hooks)
+  const processedByMessage = useMemo(
+    () =>
+      messages.map((m) => ({
+        msg: m,
+        items: processMessageParts(m.parts, (m as any).content),
+      })),
+    [messages],
+  );
+
+  const latestQuoteItemId = useMemo(() => {
+    let latestId: string | null = null;
+    for (const entry of processedByMessage) {
+      for (const item of entry.items) {
+        if (
+          item.kind === "tool" &&
+          item.toolResult &&
+          ((item.toolResult.total && item.toolResult.deposit) || item.toolName?.includes("quote"))
+        ) {
+          latestId = item.id;
+        }
+      }
     }
-    if (msg.includes("ai_provider_authentication")) {
-      return "AI provider authentication failed. Please verify provider credentials.";
-    }
-    if (msg.includes("ai_model_not_found")) {
-      return "AI model not found or currently unavailable.";
-    }
-    if (msg.includes("ai_quota_exceeded")) {
-      return "AI quota exceeded. Please try again later.";
-    }
-    if (
-      msg.includes("ai_provider_unavailable") ||
-      msg.includes("503") ||
-      (err as any).status === 503
-    ) {
-      return "AI Provider service is currently unavailable. Please try again shortly.";
-    }
-    if (msg.includes("ai_stream_error")) {
-      return "An error occurred during AI response streaming. Please retry.";
-    }
-    if (msg.includes("403") || (err as any).status === 403) {
-      return "Access forbidden. Your account lacks necessary permissions or active tenant membership.";
-    }
-    if (msg.includes("429") || (err as any).status === 429) {
-      return "Rate limit of 60 requests per minute reached. Please wait a moment.";
-    }
-    return msg || "Failed to process AI response.";
-  };
+    return latestId;
+  }, [processedByMessage]);
+
+  const conversationTailItems = useMemo(
+    () => processedByMessage.flatMap((entry) => entry.items),
+    [processedByMessage],
+  );
 
   if (!isOpen) return null;
 
   const isLiveEnvironment = Boolean(
     providerStatus?.provider === "gemini" && providerStatus?.realProviderVerified,
   );
+
+  const activeErrorObj = error || authError || authPromptError;
+  const activeErrorDetails = activeErrorObj ? getErrorDetails(activeErrorObj) : null;
 
   return (
     <div
@@ -1572,40 +2089,59 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
                 ✦
               </div>
               <h3>Luxury Scheduling Concierge</h3>
-              <p>
-                Ask about services, find open times, get a quote, and hold a time for you to approve.
-              </p>
-              <div className="ai-quick-prompts">
-                <button
-                  type="button"
-                  className="ai-prompt-pill"
-                  onClick={() => handleQuickPrompt("Show available services")}
-                >
-                  Show available services
-                </button>
-                <button
-                  type="button"
-                  className="ai-prompt-pill"
-                  onClick={() =>
-                    handleQuickPrompt("Find available haircut slots tomorrow afternoon")
-                  }
-                >
-                  Find available haircut slots tomorrow afternoon
-                </button>
-                <button
-                  type="button"
-                  className="ai-prompt-pill"
-                  onClick={() => handleQuickPrompt("Prepare the 2 PM slot")}
-                >
-                  Prepare the 2 PM slot
-                </button>
-              </div>
+              {isSignedOut ? (
+                <>
+                  <p>
+                    Sign in to check live openings, lock in a 5-minute hold, and approve your
+                    booking.
+                  </p>
+                  <button
+                    type="button"
+                    className="button button--primary"
+                    onClick={handleSignIn}
+                    aria-label="Sign in or create account"
+                  >
+                    Sign in or create account
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p>
+                    Ask about services, find open times, get a quote, and hold a time for you to
+                    approve.
+                  </p>
+                  <div className="ai-quick-prompts">
+                    <button
+                      type="button"
+                      className="ai-prompt-pill"
+                      onClick={() => handleQuickPrompt("Show available services")}
+                    >
+                      Show available services
+                    </button>
+                    <button
+                      type="button"
+                      className="ai-prompt-pill"
+                      onClick={() =>
+                        handleQuickPrompt("Find available haircut slots tomorrow afternoon")
+                      }
+                    >
+                      Find available haircut slots tomorrow afternoon
+                    </button>
+                    <button
+                      type="button"
+                      className="ai-prompt-pill"
+                      onClick={() => handleQuickPrompt("Prepare the 2 PM slot")}
+                    >
+                      Prepare the 2 PM slot
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
-          {messages.map((m) => {
+          {processedByMessage.map(({ msg: m, items: displayItems }) => {
             const isUser = m.role === "user";
-            const displayItems = processMessageParts(m.parts, (m as any).content);
 
             return (
               <div
@@ -1678,17 +2214,46 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
                             toolArgs={item.toolArgs}
                             onSelectSlot={handleSlotClick}
                             isQuoting={isQuotingSlot}
+                            isHolding={isHoldingSlot}
                             isLiveEnvironment={isLiveEnvironment}
                             timestamp={item.timestamp}
                           />
                         );
                       }
 
-                      // 4. Authoritative quote card (A.2)
+                      // 4. Authoritative quote card (A.2 / P0-2: single active QuoteCard per conversation)
                       if (
                         (toolResult.total && toolResult.deposit) ||
                         item.toolName?.includes("quote")
                       ) {
+                        if (latestQuoteItemId && item.id !== latestQuoteItemId) {
+                          return null;
+                        }
+                        const qServiceId =
+                          toolResult.serviceId ||
+                          item.toolArgs?.serviceId ||
+                          "01932b10-0001-7000-8000-000000000001";
+                        const qStartsAt = toolResult.startsAt || item.toolArgs?.startsAt;
+                        const isAlreadyHeld = Boolean(
+                          effectiveActiveHold &&
+                          effectiveActiveHold.status === "HELD" &&
+                          effectiveActiveHold.serviceId === qServiceId &&
+                          effectiveActiveHold.startsAt === qStartsAt,
+                        );
+                        const matchingReplacePrompt =
+                          pendingReplaceHold &&
+                          (pendingReplaceHold.quoteData?.quoteId
+                            ? pendingReplaceHold.quoteData.quoteId === toolResult.quoteId
+                            : pendingReplaceHold.quoteData?.startsAt === qStartsAt)
+                            ? {
+                                activeHoldTime: pendingReplaceHold.existingHold.timeLabel,
+                                onConfirm: () => {
+                                  void handleConfirmReplaceHold();
+                                },
+                                onCancel: handleCancelReplaceHold,
+                              }
+                            : null;
+
                         return (
                           <QuoteCard
                             key={item.id}
@@ -1700,6 +2265,9 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
                               handleQuickPrompt("Show available haircut slots tomorrow afternoon")
                             }
                             isHolding={isHoldingSlot}
+                            isActionDisabled={isQuotingSlot || isHoldingSlot}
+                            isAlreadyHeld={isAlreadyHeld}
+                            replacePrompt={matchingReplacePrompt}
                             isLiveEnvironment={isLiveEnvironment}
                             timestamp={item.timestamp}
                           />
@@ -1717,6 +2285,7 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
                             key={item.id}
                             toolResult={toolResult}
                             toolArgs={item.toolArgs}
+                            onOpenApproval={openApprovalPage}
                             isLiveEnvironment={isLiveEnvironment}
                             timestamp={item.timestamp}
                           />
@@ -1778,23 +2347,20 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
             );
           })}
 
-          {/* Context-Aware Assistant Follow-up Suggestions Chips (T6) */}
+          {/* Context-Aware Assistant Follow-up Suggestions Chips (T6 / P1-14) */}
           {!isLoading &&
+            !isSignedOut &&
             messages.length > 0 &&
             messages[messages.length - 1]?.role === "assistant" && (
               <div className="ai-followup-chips">
                 <span className="mono ai-followup-label">Follow-up:</span>
-                {computeFollowUpSuggestions(
-                  processMessageParts(
-                    messages[messages.length - 1]?.parts,
-                    (messages[messages.length - 1] as any)?.content,
-                  ),
-                ).map((prompt, pIdx) => (
+                {computeFollowUpSuggestions(conversationTailItems).map((prompt, pIdx) => (
                   <button
                     key={pIdx}
                     type="button"
                     className="ai-followup-chip"
                     onClick={() => handleFollowUpClick(prompt)}
+                    disabled={isQuotingSlot || isHoldingSlot || isLoading}
                   >
                     {prompt}
                   </button>
@@ -1816,21 +2382,30 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
             </div>
           )}
 
-          {/* Error Banner with Retry */}
-          {(error || authError || authPromptError) && (
+          {/* Error Banner with Sign-in (on 401) or Retry */}
+          {activeErrorDetails && (
             <div className="ai-error-banner" role="alert">
               <div className="ai-error-banner-content">
-                <strong>Concierge Alert:</strong>{" "}
-                {getErrorMessage(error || authError || authPromptError!)}
+                <strong>Concierge Alert:</strong> {activeErrorDetails.message}
               </div>
-              <button
-                type="button"
-                className="ai-retry-btn mono"
-                onClick={handleRetry}
-                disabled={isLoading}
-              >
-                Retry
-              </button>
+              {activeErrorDetails.isAuthError || isSignedOut ? (
+                <button
+                  type="button"
+                  className="button button--primary button--sm"
+                  onClick={handleSignIn}
+                >
+                  Sign in
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="ai-retry-btn mono"
+                  onClick={handleRetry}
+                  disabled={isLoading}
+                >
+                  Retry
+                </button>
+              )}
             </div>
           )}
 
@@ -1885,7 +2460,8 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
 };
 
 const AskAIAuth0Resolver: FC<AskAIDrawerProps> = (props) => {
-  const { isLoading, isAuthenticated, getAccessTokenSilently, user } = useAuth0();
+  const { isLoading, isAuthenticated, getAccessTokenSilently, loginWithRedirect, user } =
+    useAuth0();
   const [initialTokenPending, setInitialTokenPending] = useState<boolean>(Boolean(isLoading));
   const [authError, setAuthError] = useState<Error | null>(null);
 
@@ -1971,6 +2547,18 @@ const AskAIAuth0Resolver: FC<AskAIDrawerProps> = (props) => {
       tokenResolver={tokenResolver}
       userEmail={user?.email}
       userName={user?.name}
+      onSignIn={() => {
+        if (typeof loginWithRedirect === "function") {
+          void loginWithRedirect({
+            appState: {
+              returnTo:
+                typeof window !== "undefined"
+                  ? `${window.location.pathname}${window.location.search}`
+                  : "/",
+            },
+          });
+        }
+      }}
     />
   );
 };

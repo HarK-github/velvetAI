@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import type { FC, ReactNode } from "react";
-import { Auth0Provider } from "@auth0/auth0-react";
+import { Auth0Provider, useAuth0 } from "@auth0/auth0-react";
 import { RouterProvider, useRouter } from "./router.js";
+import { AskAIProvider, useAskAI } from "./context/AskAIContext.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Navbar } from "./components/Navbar.js";
 import { EdgeMeta } from "./components/EdgeMeta.js";
@@ -20,12 +21,27 @@ import {
 } from "./lib/auth-config.js";
 import { API_BASE_URL, isApiConfigured } from "./api-client.js";
 
+const AskAIAuthSync: FC = () => {
+  const { isLoading, isAuthenticated, user } = useAuth0();
+  const { syncAuthState } = useAskAI();
+
+  useEffect(() => {
+    syncAuthState({
+      sub: user?.sub ?? null,
+      isAuthenticated,
+      isLoading,
+    });
+  }, [user?.sub, isAuthenticated, isLoading, syncAuthState]);
+
+  return null;
+};
+
 const AppContent: FC = () => {
   const { currentPath } = useRouter();
+  const { isOpen: isAiOpen, openDrawer, closeDrawer } = useAskAI();
   const [apiHealthy, setApiHealthy] = useState<boolean>(false);
   const [apiLatency, setApiLatency] = useState<number | null>(null);
   const [scrollPercentage, setScrollPercentage] = useState<number>(0);
-  const [isAiOpen, setIsAiOpen] = useState<boolean>(false);
 
   // Monitor Fastify REST API health
   useEffect(() => {
@@ -129,12 +145,12 @@ const AppContent: FC = () => {
         </div>
       )}
 
-      <Navbar apiHealthy={apiHealthy} apiLatency={apiLatency} onOpenAi={() => setIsAiOpen(true)} />
+      <Navbar apiHealthy={apiHealthy} apiLatency={apiLatency} onOpenAi={openDrawer} />
       <EdgeMeta scrollPercentage={scrollPercentage} />
 
       <main id="main-content">{renderCurrentPage()}</main>
 
-      <AskAIDrawer isOpen={isAiOpen} onClose={() => setIsAiOpen(false)} />
+      <AskAIDrawer isOpen={isAiOpen} onClose={closeDrawer} />
     </>
   );
 };
@@ -234,37 +250,40 @@ export function App() {
 
   return (
     <ErrorBoundary>
-      <RouterProvider>
-        {!isConfigured && (
-          <div
-            id="auth0-unconfigured-alert"
-            role="alert"
-            style={{
-              background: "rgba(239, 68, 68, 0.12)",
-              color: "var(--crimson, #ef4444)",
-              padding: "8px 16px",
-              fontSize: "12px",
-              textAlign: "center",
-              borderBottom: "1px solid rgba(239, 68, 68, 0.3)",
-              fontFamily: "var(--font-mono, monospace)",
-            }}
-          >
-            Auth0 public configuration missing. Please verify VITE_AUTH0_DOMAIN and
-            VITE_AUTH0_CLIENT_ID.
-          </div>
-        )}
-        {isConfigured ? (
-          <Auth0ProviderWithRedirect
-            domain={auth0Domain}
-            clientId={auth0ClientId}
-            audience={auth0Audience}
-          >
+      <AskAIProvider>
+        <RouterProvider>
+          {!isConfigured && (
+            <div
+              id="auth0-unconfigured-alert"
+              role="alert"
+              style={{
+                background: "rgba(239, 68, 68, 0.12)",
+                color: "var(--crimson, #ef4444)",
+                padding: "8px 16px",
+                fontSize: "12px",
+                textAlign: "center",
+                borderBottom: "1px solid rgba(239, 68, 68, 0.3)",
+                fontFamily: "var(--font-mono, monospace)",
+              }}
+            >
+              Auth0 public configuration missing. Please verify VITE_AUTH0_DOMAIN and
+              VITE_AUTH0_CLIENT_ID.
+            </div>
+          )}
+          {isConfigured ? (
+            <Auth0ProviderWithRedirect
+              domain={auth0Domain}
+              clientId={auth0ClientId}
+              audience={auth0Audience}
+            >
+              <AskAIAuthSync />
+              <AppContent />
+            </Auth0ProviderWithRedirect>
+          ) : (
             <AppContent />
-          </Auth0ProviderWithRedirect>
-        ) : (
-          <AppContent />
-        )}
-      </RouterProvider>
+          )}
+        </RouterProvider>
+      </AskAIProvider>
     </ErrorBoundary>
   );
 }

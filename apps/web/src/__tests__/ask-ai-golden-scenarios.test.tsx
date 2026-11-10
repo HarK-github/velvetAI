@@ -120,9 +120,24 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
         toolName: "list_services_v1",
         result: {
           services: [
-            { id: "s1", name: "Executive Haircut & Beard Sculpt", durationMinutes: 45, price: { valueMinor: "7500", currency: "USD" } },
-            { id: "s2", name: "Royal Shave Treatment", durationMinutes: 30, price: { valueMinor: "5000", currency: "USD" } },
-            { id: "s3", name: "Private Acoustic Studio Block", durationMinutes: 60, price: { valueMinor: "14000", currency: "USD" } },
+            {
+              id: "s1",
+              name: "Executive Haircut & Beard Sculpt",
+              durationMinutes: 45,
+              price: { valueMinor: "7500", currency: "USD" },
+            },
+            {
+              id: "s2",
+              name: "Royal Shave Treatment",
+              durationMinutes: 30,
+              price: { valueMinor: "5000", currency: "USD" },
+            },
+            {
+              id: "s3",
+              name: "Private Acoustic Studio Block",
+              durationMinutes: 60,
+              price: { valueMinor: "14000", currency: "USD" },
+            },
           ],
           total: 3,
         },
@@ -172,7 +187,11 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
 
     // 2. Slots card header has service name, date, merchant zone label, and slot count
     expect(screen.getByTestId("slots-card")).toBeDefined();
-    expect(screen.getByText(/Available times · Executive Haircut & Beard Sculpt · Wed, Oct 28, 2026 · EDT/i)).toBeDefined();
+    expect(
+      screen.getByText(
+        /Available times · Executive Haircut & Beard Sculpt · Wed, Oct 28, 2026 · EDT/i,
+      ),
+    ).toBeDefined();
     expect(screen.getByText("9 slots")).toBeDefined();
     expect(screen.queryByText(/Authoritative Available Windows/i)).toBeNull();
     expect(screen.queryByText(/Live service catalog/i)).toBeNull();
@@ -223,7 +242,7 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
     mockPrepareBooking.mockResolvedValueOnce({
       bookingId: "book_exec_123",
       status: "HELD",
-      holdExpiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      holdExpiresAt: new Date(Date.now() + 300_000).toISOString(),
       version: 1,
       intent: "intent_token_xyz",
       approvalLocator: "/v1/booking-approvals/loc_exec123",
@@ -233,7 +252,9 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
       },
     });
 
-    const firstChip = screen.getByRole("button", { name: /Select slot at 12:00 PM – 12:45 PM EDT/i });
+    const firstChip = screen.getByRole("button", {
+      name: /Select slot at 12:00 PM – 12:45 PM EDT/i,
+    });
     fireEvent.click(firstChip);
 
     // Assert NO prompt was sent to the model
@@ -269,12 +290,15 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
       expect.any(String),
     );
 
-    // ApprovalCard renders with absolute URL and action button
+    // ApprovalCard renders with action button (SPA navigation, no full-page href link)
     const approvalCard = await screen.findByTestId("approval-card");
     expect(approvalCard).toBeDefined();
     expect(screen.getByText("Ready for your approval")).toBeDefined();
-    const openApprovalLink = screen.getByRole("link", { name: "Open approval page" });
-    expect(openApprovalLink.getAttribute("href")).toBe("http://localhost:5174/approve/loc_exec123");
+    expect(
+      screen.getAllByRole("button", { name: "Open approval page" }).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByRole("link", { name: "Open approval page" })).toBeNull();
+    expect(within(quoteCard).getByRole("button", { name: "Held" })).toBeDefined();
   });
 
   it("14. Scenario 'I want to book for 6 pm of private acoustic studio block': quote card formatted money, approval card with absolute URL, no raw JSON, no '[object Object]'", () => {
@@ -374,16 +398,20 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
 
     // 2. Financial breakdown in QuoteCard
     expect(screen.getByText("$140.00")).toBeDefined(); // Total
-    expect(screen.getByText("$35.00")).toBeDefined();  // Deposit
+    expect(screen.getByText("$35.00")).toBeDefined(); // Deposit
     expect(screen.getByText("$105.00")).toBeDefined(); // Balance Due
-    expect(screen.getByText(/Full deposit refund if cancelled at least 24 hours prior/i)).toBeDefined();
+    expect(
+      screen.getByText(/Full deposit refund if cancelled at least 24 hours prior/i),
+    ).toBeDefined();
 
-    // 3. ApprovalCard renders with absolute URL
+    // 3. ApprovalCard renders with client-side button and 5m hold copy
     expect(screen.getByTestId("approval-card")).toBeDefined();
     expect(screen.getByText("Ready for your approval")).toBeDefined();
-    expect(screen.getByText(/Hold active · 15m window/i)).toBeDefined();
-    const openApprovalLink = screen.getByRole("link", { name: "Open approval page" });
-    expect(openApprovalLink.getAttribute("href")).toBe("http://localhost:5174/approve/loc_studio6pm");
+    expect(screen.getByText(/Hold active · 5m window/i)).toBeDefined();
+    expect(
+      screen.getAllByRole("button", { name: "Open approval page" }).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByRole("link", { name: "Open approval page" })).toBeNull();
 
     // 4. Critical data hygiene: NO quoteId, NO policyId, NO raw valueMinor, NO "[object Object]"
     const text = container.textContent || "";
@@ -500,7 +528,9 @@ describe("Ask AI Golden Path Scenarios (TZ=Asia/Kolkata)", () => {
 
     expect(screen.getByTestId("quote-card")).toBeDefined();
     expect(screen.getByText("Quote expired")).toBeDefined();
-    expect(screen.getAllByRole("button", { name: "Refresh quote" }).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByRole("button", { name: "Refresh quote" }).length).toBeGreaterThanOrEqual(
+      1,
+    );
     expect(screen.queryByRole("button", { name: "Hold this time" })).toBeNull();
   });
 });

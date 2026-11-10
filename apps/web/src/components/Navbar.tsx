@@ -3,6 +3,7 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { Link, useRouter } from "../router.js";
 import { apiClient, ApiError } from "../api-client.js";
 import { isAuth0Configured, computeAuthDiagnostic, clearAuthCache } from "../lib/auth-config.js";
+import { useAskAI } from "../context/AskAIContext.js";
 
 const Auth0StateButton: FC = () => {
   const {
@@ -14,6 +15,7 @@ const Auth0StateButton: FC = () => {
     logout,
     getAccessTokenSilently,
   } = useAuth0();
+  const { clearConversation } = useAskAI();
   const [authStatus, setAuthStatus] = useState<string | null>(null);
   const [authDetail, setAuthDetail] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -246,8 +248,10 @@ const Auth0StateButton: FC = () => {
           type="button"
           onClick={() => {
             clearAuthCache();
+            clearConversation({ resetAuth: true });
             apiClient.setAuthToken("");
             apiClient.setTokenProvider(async () => undefined);
+            apiClient.resetActionKeys();
             computeAuthDiagnostic(undefined);
             logout({ logoutParams: { returnTo: window.location.origin } });
           }}

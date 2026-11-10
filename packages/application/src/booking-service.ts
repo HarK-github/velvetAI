@@ -207,264 +207,264 @@ export class BookingService {
 
     try {
       return await withTenantTransaction(this.db, tenantId, async (trx) => {
-      // 1. Resolve service and active version
-      const service = await trx
-        .selectFrom("services")
-        .innerJoin("service_versions", "service_versions.id", "services.current_version_id")
-        .where("services.id", "=", input.serviceId)
-        .where("services.status", "=", "ACTIVE")
-        .selectAll("service_versions")
-        .executeTakeFirst();
+        // 1. Resolve service and active version
+        const service = await trx
+          .selectFrom("services")
+          .innerJoin("service_versions", "service_versions.id", "services.current_version_id")
+          .where("services.id", "=", input.serviceId)
+          .where("services.status", "=", "ACTIVE")
+          .selectAll("service_versions")
+          .executeTakeFirst();
 
-      if (!service) {
-        throw new DomainError("Service not found or inactive", "SERVICE_NOT_FOUND", 404);
-      }
+        if (!service) {
+          throw new DomainError("Service not found or inactive", "SERVICE_NOT_FOUND", 404);
+        }
 
-      // 2. Select assignable resource for the location
-      const resource = await trx
-        .selectFrom("resources")
-        .where("tenant_id", "=", tenantId)
-        .where("location_id", "=", input.locationId)
-        .where("status", "=", "ACTIVE")
-        .selectAll()
-        .executeTakeFirst();
+        // 2. Select assignable resource for the location
+        const resource = await trx
+          .selectFrom("resources")
+          .where("tenant_id", "=", tenantId)
+          .where("location_id", "=", input.locationId)
+          .where("status", "=", "ACTIVE")
+          .selectAll()
+          .executeTakeFirst();
 
-      if (!resource) {
-        throw new DomainError("No active resource found for location", "RESOURCE_NOT_FOUND", 404);
-      }
+        if (!resource) {
+          throw new DomainError("No active resource found for location", "RESOURCE_NOT_FOUND", 404);
+        }
 
-      const startsAt = new Date(input.startsAt);
-      const currentNow = this.clock ? this.clock.now() : new Date();
-      if (startsAt.getTime() <= currentNow.getTime()) {
-        throw new DomainError(
-          "SLOT_IN_PAST: Booking slot start time cannot be in the past",
-          "SLOT_IN_PAST",
-          400,
-        );
-      }
-      const endsAt = new Date(startsAt.getTime() + service.duration_minutes * 60_000);
-      const bookingId = crypto.randomUUID() as BookingId;
-      const holdExpiresAt = new Date(currentNow.getTime() + 15 * 60_000); // 15-min slot hold
+        const startsAt = new Date(input.startsAt);
+        const currentNow = this.clock ? this.clock.now() : new Date();
+        if (startsAt.getTime() <= currentNow.getTime()) {
+          throw new DomainError(
+            "SLOT_IN_PAST: Booking slot start time cannot be in the past",
+            "SLOT_IN_PAST",
+            400,
+          );
+        }
+        const endsAt = new Date(startsAt.getTime() + service.duration_minutes * 60_000);
+        const bookingId = crypto.randomUUID() as BookingId;
+        const holdExpiresAt = new Date(currentNow.getTime() + 300_000); // 5-min (300s) slot hold
 
-      // Ensure customer record exists
-      let customer = await trx
-        .selectFrom("customers")
-        .where("tenant_id", "=", tenantId)
-        .where("email_ciphertext", "=", input.customer.email)
-        .select("id")
-        .executeTakeFirst();
+        // Ensure customer record exists
+        let customer = await trx
+          .selectFrom("customers")
+          .where("tenant_id", "=", tenantId)
+          .where("email_ciphertext", "=", input.customer.email)
+          .select("id")
+          .executeTakeFirst();
 
-      if (!customer) {
-        const customerId = crypto.randomUUID();
+        if (!customer) {
+          const customerId = crypto.randomUUID();
+          await trx
+            .insertInto("customers")
+            .values({
+              id: customerId,
+              tenant_id: tenantId,
+              email_ciphertext: input.customer.email,
+              display_name_ciphertext: input.customer.displayName ?? null,
+              status: "ACTIVE",
+            })
+            .execute();
+          customer = { id: customerId };
+        }
+
+        // 3. Create quote record for reference
+        const quoteId = crypto.randomUUID();
         await trx
-          .insertInto("customers")
+          .insertInto("booking_quotes")
           .values({
-            id: customerId,
+            id: quoteId,
             tenant_id: tenantId,
-            email_ciphertext: input.customer.email,
-            display_name_ciphertext: input.customer.displayName ?? null,
-            status: "ACTIVE",
+            service_version_id: service.id,
+            customer_id: customer.id,
+            starts_at: startsAt,
+            ends_at: endsAt,
+            total_minor: service.price_minor,
+            deposit_minor: service.base_deposit_minor,
+            currency: service.currency,
+            canonical_hash: canonicalHash({ startsAt, endsAt, price: service.price_minor }),
+            expires_at: holdExpiresAt,
           })
           .execute();
-        customer = { id: customerId };
-      }
 
-      // 3. Create quote record for reference
-      const quoteId = crypto.randomUUID();
-      await trx
-        .insertInto("booking_quotes")
-        .values({
-          id: quoteId,
-          tenant_id: tenantId,
-          service_version_id: service.id,
-          customer_id: customer.id,
-          starts_at: startsAt,
-          ends_at: endsAt,
-          total_minor: service.price_minor,
-          deposit_minor: service.base_deposit_minor,
-          currency: service.currency,
-          canonical_hash: canonicalHash({ startsAt, endsAt, price: service.price_minor }),
-          expires_at: holdExpiresAt,
-        })
-        .execute();
+        // 4. Create booking row with status = 'HELD'
+        await trx
+          .insertInto("bookings")
+          .values({
+            id: bookingId,
+            tenant_id: tenantId,
+            customer_id: customer.id,
+            quote_id: quoteId,
+            status: "HELD",
+            version: 1,
+            hold_expires_at: holdExpiresAt,
+            starts_at: startsAt,
+            ends_at: endsAt,
+            resource_id: resource.id,
+          })
+          .execute();
 
-      // 4. Create booking row with status = 'HELD'
-      await trx
-        .insertInto("bookings")
-        .values({
-          id: bookingId,
-          tenant_id: tenantId,
-          customer_id: customer.id,
-          quote_id: quoteId,
-          status: "HELD",
-          version: 1,
-          hold_expires_at: holdExpiresAt,
-          starts_at: startsAt,
-          ends_at: endsAt,
-          resource_id: resource.id,
-        })
-        .execute();
-
-      // 5. Acquire transaction-scoped advisory lock per (tenant_id, resource_id) and insert resource claim
-      //    with authoritative GiST exclusion constraint; maps both 23P01 and 40P01 to 409 SlotUnavailableError.
-      conflictDetailsBuilder = () => {
-        const alt1Start = new Date(endsAt.getTime());
-        const alt1End = new Date(alt1Start.getTime() + service.duration_minutes * 60_000);
-        const alt2Start = new Date(alt1End.getTime());
-        const alt2End = new Date(alt2Start.getTime() + service.duration_minutes * 60_000);
-        return {
-          conflictSlot: { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() },
-          alternatives: [
-            { startsAt: alt1Start.toISOString(), endsAt: alt1End.toISOString() },
-            { startsAt: alt2Start.toISOString(), endsAt: alt2End.toISOString() },
-          ],
+        // 5. Acquire transaction-scoped advisory lock per (tenant_id, resource_id) and insert resource claim
+        //    with authoritative GiST exclusion constraint; maps both 23P01 and 40P01 to 409 SlotUnavailableError.
+        conflictDetailsBuilder = () => {
+          const alt1Start = new Date(endsAt.getTime());
+          const alt1End = new Date(alt1Start.getTime() + service.duration_minutes * 60_000);
+          const alt2Start = new Date(alt1End.getTime());
+          const alt2End = new Date(alt2Start.getTime() + service.duration_minutes * 60_000);
+          return {
+            conflictSlot: { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() },
+            alternatives: [
+              { startsAt: alt1Start.toISOString(), endsAt: alt1End.toISOString() },
+              { startsAt: alt2Start.toISOString(), endsAt: alt2End.toISOString() },
+            ],
+          };
         };
-      };
 
-      const claimId = crypto.randomUUID();
-      await insertBlockingResourceClaim(
-        trx,
-        {
-          claimId,
-          tenantId,
-          bookingId,
-          claimSource: "BOOKING",
-          resourceId: resource.id,
-          startsAt,
-          endsAt,
-          state: "HELD",
-          holdExpiresAt,
-          expiresAt: holdExpiresAt,
-        },
-        conflictDetailsBuilder,
-      );
+        const claimId = crypto.randomUUID();
+        await insertBlockingResourceClaim(
+          trx,
+          {
+            claimId,
+            tenantId,
+            bookingId,
+            claimSource: "BOOKING",
+            resourceId: resource.id,
+            startsAt,
+            endsAt,
+            state: "HELD",
+            holdExpiresAt,
+            expiresAt: holdExpiresAt,
+          },
+          conflictDetailsBuilder,
+        );
 
-      // 6. Persist immutable server-side hold snapshot per Amendment D.1
-      const snapshotId = crypto.randomUUID();
-      const cancellationHash = sha256Hex(
-        `cancellation-policy-${service.cancellation_policy_id}-v1`,
-      );
-      const canonicalInputHash = canonicalHash(input);
+        // 6. Persist immutable server-side hold snapshot per Amendment D.1
+        const snapshotId = crypto.randomUUID();
+        const cancellationHash = sha256Hex(
+          `cancellation-policy-${service.cancellation_policy_id}-v1`,
+        );
+        const canonicalInputHash = canonicalHash(input);
 
-      await trx
-        .insertInto("booking_hold_snapshots")
-        .values({
-          id: snapshotId,
+        await trx
+          .insertInto("booking_hold_snapshots")
+          .values({
+            id: snapshotId,
+            tenant_id: tenantId,
+            booking_id: bookingId,
+            service_version_id: service.id,
+            resource_id: resource.id,
+            starts_at: startsAt,
+            ends_at: endsAt,
+            total_minor: service.price_minor,
+            deposit_minor: service.base_deposit_minor,
+            currency: service.currency,
+            currency_scale: 2,
+            cancellation_policy_id: service.cancellation_policy_id,
+            cancellation_policy_version: 1,
+            cancellation_policy_hash: cancellationHash,
+            merchant_id: tenantId,
+            client_id: clientId,
+            actor_id: actor.userId,
+            canonical_hash: canonicalInputHash,
+          })
+          .execute();
+
+        // 7. Create ES256 signed booking intent per Amendment D.3
+        const intentJti = crypto.randomUUID();
+        const nowSec = Math.floor(Date.now() / 1000);
+        const expSec = Math.floor(holdExpiresAt.getTime() / 1000);
+
+        const signedIntent = await signBookingIntent({
+          iss: "https://api.velvetai.example",
+          aud: "velvetai-booking",
+          sub: actor.subject,
+          client_id: clientId,
           tenant_id: tenantId,
-          booking_id: bookingId,
-          service_version_id: service.id,
-          resource_id: resource.id,
-          starts_at: startsAt,
-          ends_at: endsAt,
+          jti: intentJti,
+          iat: nowSec,
+          nbf: nowSec - 5, // clock skew tolerance
+          exp: expSec,
+          purpose: "booking_commit",
+          hold_id: bookingId,
+          hold_version: 1,
+          tool_name: "prepare_booking",
+          tool_version: "v1",
+          schema_hash: sha256Hex("prepare_booking.v1.schema"),
+          canonical_argument_hash: canonicalInputHash,
+          merchant_id: tenantId,
           total_minor: service.price_minor,
           deposit_minor: service.base_deposit_minor,
-          currency: service.currency,
+          currency: service.currency as CurrencyCode,
           currency_scale: 2,
-          cancellation_policy_id: service.cancellation_policy_id,
+          price_version: service.version,
+          cancellation_policy_id: service.cancellation_policy_id as CancellationPolicyId,
           cancellation_policy_version: 1,
           cancellation_policy_hash: cancellationHash,
-          merchant_id: tenantId,
-          client_id: clientId,
-          actor_id: actor.userId,
-          canonical_hash: canonicalInputHash,
-        })
-        .execute();
+          allowed_surfaces: ["web", "mcp_streamable_http"],
+        });
 
-      // 7. Create ES256 signed booking intent per Amendment D.3
-      const intentJti = crypto.randomUUID();
-      const nowSec = Math.floor(Date.now() / 1000);
-      const expSec = Math.floor(holdExpiresAt.getTime() / 1000);
+        // 8. Create non-authorizing interaction locator & register buyer confirmation slot
+        const interactionLocator = `loc_${crypto.randomBytes(16).toString("hex")}`;
+        const interactionToken = `itok_${crypto.randomBytes(24).toString("hex")}`;
+        const confirmationSlotId = crypto.randomUUID();
+        const placeholderHash = sha256Hex(`pending_${interactionLocator}`);
 
-      const signedIntent = await signBookingIntent({
-        iss: "https://api.velvetai.example",
-        aud: "velvetai-booking",
-        sub: actor.subject,
-        client_id: clientId,
-        tenant_id: tenantId,
-        jti: intentJti,
-        iat: nowSec,
-        nbf: nowSec - 5, // clock skew tolerance
-        exp: expSec,
-        purpose: "booking_commit",
-        hold_id: bookingId,
-        hold_version: 1,
-        tool_name: "prepare_booking",
-        tool_version: "v1",
-        schema_hash: sha256Hex("prepare_booking.v1.schema"),
-        canonical_argument_hash: canonicalInputHash,
-        merchant_id: tenantId,
-        total_minor: service.price_minor,
-        deposit_minor: service.base_deposit_minor,
-        currency: service.currency as CurrencyCode,
-        currency_scale: 2,
-        price_version: service.version,
-        cancellation_policy_id: service.cancellation_policy_id as CancellationPolicyId,
-        cancellation_policy_version: 1,
-        cancellation_policy_hash: cancellationHash,
-        allowed_surfaces: ["web", "mcp_streamable_http"],
-      });
+        // Determine surface and buyer binding per Finding 3
+        const isM2MClient = actor.subject.endsWith("@clients");
+        const surface = isM2MClient
+          ? "mcp"
+          : clientId === "ask-ai" || clientId.includes("ai")
+            ? "ask_ai"
+            : "web";
 
-      // 8. Create non-authorizing interaction locator & register buyer confirmation slot
-      const interactionLocator = `loc_${crypto.randomBytes(16).toString("hex")}`;
-      const interactionToken = `itok_${crypto.randomBytes(24).toString("hex")}`;
-      const confirmationSlotId = crypto.randomUUID();
-      const placeholderHash = sha256Hex(`pending_${interactionLocator}`);
+        // MCP-prepared holds have no human buyer at prepare time (the M2M agent prepared them).
+        // For holds prepared by Ask AI or the web (human session), the hold is bound to that human from the start.
+        const initialBuyerUserId = isM2MClient ? null : actor.userId;
 
-      // Determine surface and buyer binding per Finding 3
-      const isM2MClient = actor.subject.endsWith("@clients");
-      const surface = isM2MClient
-        ? "mcp"
-        : clientId === "ask-ai" || clientId.includes("ai")
-          ? "ask_ai"
-          : "web";
+        await trx
+          .insertInto("buyer_confirmations")
+          .values({
+            id: confirmationSlotId,
+            tenant_id: tenantId,
+            booking_id: bookingId,
+            confirmation_jti: crypto.randomUUID(),
+            token_hash: placeholderHash,
+            buyer_user_id: initialBuyerUserId,
+            interaction_locator: interactionLocator,
+            signed_intent: signedIntent,
+            signed_intent_hash: sha256Hex(signedIntent),
+            prepared_by_surface: surface,
+            expires_at: holdExpiresAt,
+          })
+          .execute();
 
-      // MCP-prepared holds have no human buyer at prepare time (the M2M agent prepared them).
-      // For holds prepared by Ask AI or the web (human session), the hold is bound to that human from the start.
-      const initialBuyerUserId = isM2MClient ? null : actor.userId;
+        // Append outbox and audit events
+        await trx
+          .insertInto("outbox_events")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: tenantId,
+            aggregate_type: "booking",
+            aggregate_id: bookingId,
+            event_type: "booking.held",
+            payload: { bookingId, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() },
+          })
+          .execute();
 
-      await trx
-        .insertInto("buyer_confirmations")
-        .values({
-          id: confirmationSlotId,
-          tenant_id: tenantId,
-          booking_id: bookingId,
-          confirmation_jti: crypto.randomUUID(),
-          token_hash: placeholderHash,
-          buyer_user_id: initialBuyerUserId,
-          interaction_locator: interactionLocator,
-          signed_intent: signedIntent,
-          signed_intent_hash: sha256Hex(signedIntent),
-          prepared_by_surface: surface,
-          expires_at: holdExpiresAt,
-        })
-        .execute();
-
-      // Append outbox and audit events
-      await trx
-        .insertInto("outbox_events")
-        .values({
-          id: crypto.randomUUID(),
-          tenant_id: tenantId,
-          aggregate_type: "booking",
-          aggregate_id: bookingId,
-          event_type: "booking.held",
-          payload: { bookingId, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() },
-        })
-        .execute();
-
-      await trx
-        .insertInto("audit_events")
-        .values({
-          id: crypto.randomUUID(),
-          tenant_id: tenantId,
-          actor_id: actor.userId,
-          actor_type: "USER",
-          action: "booking.held",
-          resource_type: "booking",
-          resource_id: bookingId,
-          metadata_redacted: { startsAt: startsAt.toISOString() },
-        })
-        .execute();
+        await trx
+          .insertInto("audit_events")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: tenantId,
+            actor_id: actor.userId,
+            actor_type: "USER",
+            action: "booking.held",
+            resource_type: "booking",
+            resource_id: bookingId,
+            metadata_redacted: { startsAt: startsAt.toISOString() },
+          })
+          .execute();
 
         const webOrigin =
           process.env.PUBLIC_WEB_ORIGIN || process.env.WEB_BASE_URL || "http://localhost:5174";

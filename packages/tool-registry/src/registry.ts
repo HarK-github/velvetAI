@@ -217,7 +217,9 @@ sharedToolRegistry.register({
       from: z.string().datetime().optional(),
       to: z.string().datetime().optional(),
       timeZone: z.string().max(100).optional(),
-      day: z.union([z.enum(["today", "tomorrow"]), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)]).optional(),
+      day: z
+        .union([z.enum(["today", "tomorrow"]), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)])
+        .optional(),
       dayPart: z.enum(["morning", "afternoon", "evening"]).optional(),
     })
     .strict(),
@@ -365,7 +367,7 @@ sharedToolRegistry.register({
       return {
         bookingId: "mock-booking",
         status: "HELD" as const,
-        holdExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+        holdExpiresAt: new Date(Date.now() + 300_000).toISOString(),
         version: 1,
         intent: "mock.intent.jwt",
         approvalLocator: "/v1/booking-approvals/mock-loc",

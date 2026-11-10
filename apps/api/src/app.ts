@@ -103,6 +103,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       return cb(null, false);
     },
     credentials: true,
+    exposedHeaders: ["Date"],
   });
 
   // Auth and Idempotency Middleware on Root App

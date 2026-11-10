@@ -8,6 +8,7 @@ import {
   postConfirmApproval,
 } from "../lib/approval-api.js";
 import { apiClient, generateIdempotencyKey } from "../api-client.js";
+import { useAskAI } from "../context/AskAIContext.js";
 import { PayPalButton, type PayPalPaymentSuccess } from "../components/PayPalButton.js";
 
 export type ApprovalPageState =
@@ -21,6 +22,9 @@ export type ApprovalPageState =
   | "verifying_payment"
   | "confirmed"
   | "payment_failed"
+  | "payment_cancelled"
+  | "capture_uncertain"
+  | "approved_awaiting_agent"
   | "already_done"
   | "error";
 
@@ -36,11 +40,16 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     loginWithRedirect,
     getAccessTokenSilently,
   } = useAuth0();
+  const { openDrawer } = useAskAI();
 
   const [details, setDetails] = useState<BookingApprovalDetails | null>(null);
   const [serverTimeOffset, setServerTimeOffset] = useState<number>(0);
   const [pageState, setPageState] = useState<ApprovalPageState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoaded, setIsLoaded] = useState<boolean>(false);
+  const [pendingOperationId, setPendingOperationId] = useState<string | null>(null);
+  const [paymentWindowExpired, setPaymentWindowExpired] = useState<boolean>(false);
+  const [isCheckingStatus, setIsCheckingStatus] = useState<boolean>(false);
 
   // Form & action state
   const [agreedToTerms, setAgreedToTerms] = useState<boolean>(false);
@@ -74,6 +83,8 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
   const loadDetails = useCallback(async () => {
     setPageState("loading");
     setErrorMessage(null);
+    setIsLoaded(false);
+    setPaymentWindowExpired(false);
 
     try {
       const { details: fetchedDetails, serverTime } = await fetchApprovalDetails(locator);
@@ -97,34 +108,48 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
         return;
       }
 
-      // Auth gate
-      if (isAuthLoading) {
-        setPageState("loading");
-        return;
-      }
-
-      if (!isAuthenticated) {
-        setPageState("sign_in_required");
-        return;
-      }
-
-      setPageState("ready");
+      setIsLoaded(true);
     } catch (err: unknown) {
       const errorObj = err as Error & { status?: number; code?: string };
       if (errorObj.status === 410 || errorObj.code === "HOLD_EXPIRED") {
         setPageState("expired");
+      } else if (
+        errorObj.status === 404 ||
+        errorObj.code === "APPROVAL_NOT_FOUND" ||
+        /not found/i.test(errorObj.message || "")
+      ) {
+        setErrorMessage("This booking link wasn't found or has expired.");
+        setPageState("error");
+      } else if (/failed to fetch/i.test(errorObj.message || "")) {
+        setErrorMessage("Connection problem — check your network and try again.");
+        setPageState("error");
       } else {
-        setErrorMessage(errorObj.message || "Unable to load approval details.");
+        setErrorMessage(
+          errorObj.message || "An unexpected error occurred while loading this reservation.",
+        );
         setPageState("error");
       }
     }
-  }, [locator, isAuthLoading, isAuthenticated]);
+  }, [locator]);
 
   useEffect(() => {
     if (locator) {
-      loadDetails();
+      void loadDetails();
     }
   }, [locator, loadDetails]);
+
+  // Derive auth-gated UI state separately from single fetch per locator (P0-4)
+  useEffect(() => {
+    if (!isLoaded || !details) return;
+    if (pageState !== "loading" && pageState !== "sign_in_required" && pageState !== "ready") {
+      return;
+    }
+    if (isAuthLoading) {
+      setPageState("loading");
+      return;
+    }
+    setPageState(isAuthenticated ? "ready" : "sign_in_required");
+  }, [isLoaded, details, isAuthLoading, isAuthenticated, pageState]);
 
   // Live countdown calculation
   const remainingSeconds = useMemo(() => {
@@ -134,9 +159,13 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     return Math.max(0, Math.floor((expiresMs - effectiveNow) / 1000));
   }, [details?.expiresAt, now, serverTimeOffset]);
 
-  // Expiration transition
+  // Expiration transition (covers both ready and sign_in_required states per P1-13)
   useEffect(() => {
-    if (details && pageState === "ready" && remainingSeconds <= 0) {
+    if (
+      details &&
+      (pageState === "ready" || pageState === "sign_in_required") &&
+      remainingSeconds <= 0
+    ) {
       setPageState("expired");
     }
   }, [details, pageState, remainingSeconds]);
@@ -228,7 +257,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     }
   };
 
-  // Secondary Action: Approve only (for MCP holds)
+  // Secondary Action: Approve only (for MCP holds -> approved_awaiting_agent, never already_done)
   const handleApproveOnly = async () => {
     setPageState("committing");
     setErrorMessage(null);
@@ -236,7 +265,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     try {
       const token = await getAuthToken();
       await postConfirmApproval(locator, token);
-      setPageState("already_done");
+      setPageState("approved_awaiting_agent");
     } catch (err: unknown) {
       const errorObj = err as Error & { status?: number; code?: string };
       if (
@@ -258,10 +287,107 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
   const handlePaymentOutcome = (outcome: PayPalPaymentSuccess) => {
     if (outcome.bookingStatus === "CONFIRMED") {
       setConfirmedBookingId(outcome.bookingId);
+      setPendingOperationId(null);
       setPageState("confirmed");
+    } else if (
+      outcome.bookingStatus === "CAPTURE_UNCERTAIN" ||
+      outcome.paymentStatus === "UNCERTAIN"
+    ) {
+      setConfirmedBookingId(outcome.bookingId);
+      setPendingOperationId(outcome.operationId || null);
+      setErrorMessage(null);
+      setPageState("verifying_payment");
     } else {
       setErrorMessage("Payment capture was unsuccessful. Your hold remains active.");
       setPageState("payment_failed");
+    }
+  };
+
+  // Poll /v1/operations/:operationId during verifying_payment: 3s for first 2m, then 10s (P0-5)
+  useEffect(() => {
+    if (pageState !== "verifying_payment" || !pendingOperationId) {
+      return;
+    }
+
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    const startedAt = Date.now();
+
+    const pollOperation = async () => {
+      try {
+        const op = await apiClient.getOperation(pendingOperationId);
+        if (cancelled) return;
+
+        if (op.state === "SUCCEEDED") {
+          setConfirmedBookingId((prev) => prev || details?.bookingId || null);
+          setPendingOperationId(null);
+          setPageState("confirmed");
+          return;
+        }
+        if (op.state === "FAILED_TERMINAL") {
+          setPendingOperationId(null);
+          setErrorMessage(
+            "Payment capture could not be completed. Your hold remains active if within the window.",
+          );
+          setPageState("payment_failed");
+          return;
+        }
+      } catch {
+        // Keep polling on transient lookup error within window
+      }
+
+      if (cancelled) return;
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs >= 600_000) {
+        setErrorMessage(
+          "Payment verification timed out. Please check payment status or contact support.",
+        );
+        setPageState("payment_failed");
+        return;
+      }
+
+      const nextInterval = elapsedMs < 120_000 ? 3_000 : 10_000;
+      timerId = setTimeout(() => {
+        void pollOperation();
+      }, nextInterval);
+    };
+
+    timerId = setTimeout(() => {
+      void pollOperation();
+    }, 3_000);
+
+    return () => {
+      cancelled = true;
+      if (timerId !== null) {
+        clearTimeout(timerId);
+      }
+    };
+  }, [pageState, pendingOperationId, details?.bookingId]);
+
+  const handleCheckUncertainStatus = async () => {
+    if (pendingOperationId) {
+      setPageState("verifying_payment");
+      return;
+    }
+    setIsCheckingStatus(true);
+    try {
+      const { details: latest } = await fetchApprovalDetails(locator);
+      setDetails(latest);
+      if (latest.status === "CONSUMED" || latest.bookingStatus === "CONFIRMED") {
+        setConfirmedBookingId(latest.bookingId);
+        setPageState("confirmed");
+        return;
+      }
+      if (new Date(latest.expiresAt).getTime() <= Date.now() + serverTimeOffset) {
+        setPageState("expired");
+        return;
+      }
+      setErrorMessage("Your payment has not been captured yet. Your hold is still active.");
+      setPageState("payment_failed");
+    } catch {
+      setErrorMessage("Still unable to reach the server. Please try checking again shortly.");
+    } finally {
+      setIsCheckingStatus(false);
     }
   };
 
@@ -347,9 +473,9 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     return { price, deposit };
   }, [details]);
 
-  // Clean customer-facing attribution
+  // Clean customer-facing attribution (hidden when details are missing or link failed)
   const attributionText = useMemo(() => {
-    if (!details) return "Prepared by Ask AI";
+    if (!details || pageState === "error") return null;
     if (details.preparedBySurface === "mcp") {
       return "Prepared by an external AI agent (MCP)";
     }
@@ -357,6 +483,21 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
       return "Prepared by you";
     }
     return "Prepared by Ask AI";
+  }, [details, pageState]);
+
+  const holdUntilText = useMemo(() => {
+    if (!details?.expiresAt) return "hold expiration";
+    const tz = details.display?.timeZone || details.timeZone || "America/New_York";
+    try {
+      return new Intl.DateTimeFormat("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: tz,
+        timeZoneName: "short",
+      }).format(new Date(details.expiresAt));
+    } catch {
+      return details.expiresAt;
+    }
   }, [details]);
 
   return (
@@ -370,24 +511,33 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
         }}
       >
         <div style={{ maxWidth: "var(--max-width)", margin: "0 auto" }}>
-          <p className="eyebrow mono" data-testid="page-eyebrow">
-            <span
-              className={`signal-dot ${
-                pageState === "confirmed" || pageState === "already_done"
-                  ? "signal-dot--emerald"
-                  : pageState === "wrong_buyer" ||
-                      pageState === "expired" ||
-                      pageState === "error" ||
-                      pageState === "payment_failed"
-                    ? "signal-dot--red"
-                    : "signal-dot--gold"
-              }`}
-              aria-hidden="true"
-            ></span>
-            {attributionText}
-          </p>
+          {attributionText && (
+            <p className="eyebrow mono" data-testid="page-eyebrow">
+              <span
+                className={`signal-dot ${
+                  pageState === "confirmed" ||
+                  pageState === "already_done" ||
+                  pageState === "approved_awaiting_agent"
+                    ? "signal-dot--emerald"
+                    : pageState === "wrong_buyer" ||
+                        pageState === "expired" ||
+                        pageState === "payment_failed"
+                      ? "signal-dot--red"
+                      : "signal-dot--gold"
+                }`}
+                aria-hidden="true"
+              ></span>
+              {attributionText}
+            </p>
+          )}
           <h1 className="display" style={{ fontSize: "clamp(32px, 5vw, 60px)", maxWidth: "840px" }}>
-            {pageState === "confirmed" ? (
+            {pageState === "error" || (!details && pageState !== "loading") ? (
+              <>
+                Booking Link Unavailable.
+                <br />
+                <span className="accent">Unable to verify this reservation.</span>
+              </>
+            ) : pageState === "confirmed" ? (
               <>
                 Booking Confirmed.
                 <br />
@@ -398,6 +548,18 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
                 Booking Confirmed.
                 <br />
                 <span className="accent">Reservation already authorized.</span>
+              </>
+            ) : pageState === "approved_awaiting_agent" ? (
+              <>
+                Approved.
+                <br />
+                <span className="accent">Your assistant can now complete the booking.</span>
+              </>
+            ) : pageState === "expired" && paymentWindowExpired ? (
+              <>
+                Time released.
+                <br />
+                <span className="accent">The payment window has closed.</span>
               </>
             ) : pageState === "expired" ? (
               <>
@@ -415,18 +577,24 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
               <>
                 Review & Approve.
                 <br />
-                <span className="accent">Your AI assistant reserved this time for you.</span>
+                <span className="accent">Confirm your reservation.</span>
               </>
             )}
           </h1>
           <p className="lede" style={{ marginTop: "16px", maxWidth: "720px" }}>
-            {pageState === "confirmed" || pageState === "already_done"
-              ? "Your reservation is securely confirmed on our schedule."
-              : pageState === "expired"
-                ? "This reservation has expired. Please ask your assistant to find a new time."
-                : pageState === "wrong_buyer"
-                  ? "This approval belongs to another account."
-                  : "Your AI assistant reserved this time for you. Review and approve to book."}
+            {pageState === "error" || (!details && pageState !== "loading")
+              ? "Please request a fresh booking link or choose a new time."
+              : pageState === "confirmed" || pageState === "already_done"
+                ? "Your reservation is securely confirmed on our schedule."
+                : pageState === "approved_awaiting_agent"
+                  ? "Your approval has been recorded. Your assistant can finalize the reservation."
+                  : pageState === "expired" && paymentWindowExpired
+                    ? "Your payment window closed and the slot has been released."
+                    : pageState === "expired"
+                      ? "This reservation has expired. Please ask your assistant to find a new time."
+                      : pageState === "wrong_buyer"
+                        ? "This approval belongs to another account."
+                        : "Your AI assistant reserved this time for you. Review and approve to book."}
           </p>
         </div>
       </section>
@@ -526,13 +694,17 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
               data-testid="state-expired"
             >
               <h3 style={{ margin: "0 0 12px 0" }}>
-                This reservation has expired. Please ask your assistant to find a new time.
+                {paymentWindowExpired
+                  ? "Time released"
+                  : "This reservation has expired. Please ask your assistant to find a new time."}
               </h3>
               <p style={{ color: "var(--text-dim)", margin: "0 0 24px 0" }}>
-                Booking holds are held for a limited time to ensure availability for all guests.
+                {paymentWindowExpired
+                  ? "Your payment window closed before deposit completion, so this slot has been released."
+                  : "Booking holds are held for a limited time to ensure availability for all guests."}
               </p>
               <Link to="/book" className="button button--solid">
-                Return to Booking
+                {paymentWindowExpired ? "Find a new time" : "Return to Booking"}
               </Link>
             </div>
           )}
@@ -604,6 +776,126 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
             </div>
           )}
 
+          {/* State 10b: PAYMENT_CANCELLED */}
+          {pageState === "payment_cancelled" && (
+            <div
+              style={{
+                background: "var(--stage)",
+                border: "1px solid var(--hairline)",
+                borderRadius: "16px",
+                padding: "36px",
+                boxShadow: "0 12px 32px rgba(13, 13, 15, 0.08)",
+              }}
+              data-testid="state-payment-cancelled"
+            >
+              <h3 style={{ margin: "0 0 10px 0" }}>
+                Payment cancelled — your hold is still active until {holdUntilText}.
+              </h3>
+              <p style={{ color: "var(--text-body)", margin: "0 0 24px 0" }}>
+                No charge was made. You can resume checkout before your hold window expires.
+              </p>
+              <button
+                type="button"
+                className="button button--solid"
+                onClick={() => setPageState("pay_deposit")}
+              >
+                Pay again
+              </button>
+            </div>
+          )}
+
+          {/* State 10c: CAPTURE_UNCERTAIN (network drop during capture) */}
+          {pageState === "capture_uncertain" && (
+            <div
+              style={{
+                background: "rgba(245, 158, 11, 0.08)",
+                border: "1px solid rgba(245, 158, 11, 0.3)",
+                borderRadius: "16px",
+                padding: "36px",
+              }}
+              data-testid="state-capture-uncertain"
+            >
+              <h3 style={{ margin: "0 0 10px 0" }}>We couldn&apos;t confirm the payment yet</h3>
+              <p style={{ color: "var(--text-body)", margin: "0 0 24px 0" }}>
+                {errorMessage ||
+                  "A network interruption prevented us from receiving PayPal's capture confirmation. Check your payment status before trying again."}
+              </p>
+              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="button button--solid"
+                  onClick={() => {
+                    void handleCheckUncertainStatus();
+                  }}
+                  disabled={isCheckingStatus}
+                >
+                  {isCheckingStatus ? "Checking status..." : "Check payment status"}
+                </button>
+                <button
+                  type="button"
+                  className="button button--outline"
+                  onClick={() => setPageState("pay_deposit")}
+                  disabled={isCheckingStatus}
+                >
+                  Try again
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* State 11a: APPROVED_AWAITING_AGENT (Approve-only for MCP holds, P0-6) */}
+          {pageState === "approved_awaiting_agent" && (
+            <div
+              style={{
+                background: "var(--stage)",
+                border: "1px solid var(--hairline)",
+                borderRadius: "16px",
+                padding: "36px",
+                boxShadow: "0 12px 32px rgba(13, 13, 15, 0.08)",
+              }}
+              data-testid="state-approved-awaiting-agent"
+            >
+              <div
+                style={{
+                  background: "rgba(16, 185, 129, 0.12)",
+                  border: "1px solid rgba(16, 185, 129, 0.3)",
+                  borderRadius: "8px",
+                  padding: "16px 20px",
+                  marginBottom: "24px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                }}
+              >
+                <span className="signal-dot signal-dot--emerald" style={{ flexShrink: 0 }}></span>
+                <div>
+                  <strong style={{ color: "#10b981" }}>
+                    Approved. Your assistant can now complete the booking.
+                  </strong>
+                  <div style={{ fontSize: "14px", color: "var(--text-body)", marginTop: "4px" }}>
+                    Your one-time approval token is ready for your agent to finalize the
+                    reservation.
+                  </div>
+                </div>
+              </div>
+
+              {details && (
+                <div style={{ marginBottom: "28px" }}>
+                  <h3 style={{ margin: "0 0 8px 0" }}>{details.serviceName}</h3>
+                  {timePresentation && (
+                    <div style={{ color: "var(--text-body)", fontSize: "15px" }}>
+                      {timePresentation.merchantTime}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <Link to="/schedule" className="button button--solid">
+                View in Schedule &rarr;
+              </Link>
+            </div>
+          )}
+
           {/* State 11: ALREADY_DONE */}
           {pageState === "already_done" && (
             <div
@@ -663,7 +955,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
                 border: "1px solid var(--hairline)",
                 borderRadius: "16px",
                 padding: "36px",
-                boxShadow: "0 20px 40px rgba(0, 0, 0, 0.4)",
+                boxShadow: "0 12px 32px rgba(13, 13, 15, 0.08)",
               }}
               data-testid="state-confirmed"
             >
@@ -732,12 +1024,18 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
                 <Link to="/schedule" className="button button--solid">
                   View in Schedule &rarr;
                 </Link>
+                <button type="button" className="button button--secondary" onClick={openDrawer}>
+                  Book another with Ask AI
+                </button>
+                <Link to="/" className="button button--outline">
+                  Back to home
+                </Link>
                 {details && (
                   <a
                     href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(details.serviceName)}&dates=${details.startsAt.replace(/[-:]/g, "").replace(/\.\d+/, "")}/${details.endsAt.replace(/[-:]/g, "").replace(/\.\d+/, "")}&details=${encodeURIComponent("VelvetAI Luxury Grooming Reservation")}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="button"
+                    className="button button--outline"
                   >
                     Add to Google Calendar ↗
                   </a>
@@ -754,7 +1052,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
                 border: "1px solid var(--hairline)",
                 borderRadius: "16px",
                 padding: "36px",
-                boxShadow: "0 20px 40px rgba(0, 0, 0, 0.4)",
+                boxShadow: "0 12px 32px rgba(13, 13, 15, 0.08)",
               }}
               data-testid="state-pay-deposit"
             >
@@ -808,6 +1106,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
 
               <PayPalButton
                 bookingId={confirmedBookingId || details.bookingId}
+                serverTimeOffsetMs={serverTimeOffset}
                 orderIdempotencyKey={
                   paymentOrderKeys?.bookingId === (confirmedBookingId || details.bookingId)
                     ? paymentOrderKeys.key
@@ -815,6 +1114,15 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
                 }
                 getCaptureIdempotencyKey={getCaptureIdempotencyKey}
                 onPaymentOutcome={handlePaymentOutcome}
+                onCancel={() => setPageState("payment_cancelled")}
+                onPaymentExpired={() => {
+                  setPaymentWindowExpired(true);
+                  setPageState("expired");
+                }}
+                onCaptureNetworkError={() => {
+                  setErrorMessage(null);
+                  setPageState("capture_uncertain");
+                }}
               />
             </div>
           )}
@@ -827,7 +1135,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
                 border: "1px solid var(--hairline)",
                 borderRadius: "16px",
                 padding: "36px",
-                boxShadow: "0 20px 40px rgba(0, 0, 0, 0.4)",
+                boxShadow: "0 12px 32px rgba(13, 13, 15, 0.08)",
               }}
               data-testid={
                 pageState === "sign_in_required" ? "state-sign-in-required" : "state-ready"
@@ -861,9 +1169,11 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
 
               {/* Service & Time Info */}
               <div style={{ marginBottom: "28px" }}>
-                <p className="eyebrow mono" style={{ marginBottom: "6px" }}>
-                  {attributionText.toUpperCase()}
-                </p>
+                {attributionText && (
+                  <p className="eyebrow mono" style={{ marginBottom: "6px" }}>
+                    {attributionText.toUpperCase()}
+                  </p>
+                )}
                 <h2 style={{ margin: "0 0 10px 0", fontSize: "28px" }}>{details.serviceName}</h2>
                 {details.resourceName && (
                   <p style={{ color: "var(--text-dim)", margin: "0 0 12px 0", fontSize: "16px" }}>
