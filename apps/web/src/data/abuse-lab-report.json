@@ -1,0 +1,518 @@
+{
+  "generatedAt": "2026-11-10T18:14:28.569Z",
+  "commitSha": "a9a5c8df743680a2b8806ec5c3088da9f0a8bdf6",
+  "total": 51,
+  "passed": 51,
+  "scenarios": [
+    {
+      "id": "SEC-001",
+      "name": "Artifact mismatch: Intent A combined with Confirmation B",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "An attacker swaps a confirmation from one booking onto another to hijack terms or price.",
+      "protects": "Every approval confirmation is cryptographically bound to its exact hold ID.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-002",
+      "name": "Confirmation token reuse with altered idempotency key",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "An attacker replays a spent buyer approval using a fresh idempotency key.",
+      "protects": "Confirmations are one-time records locked and stamped consumed in PostgreSQL.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-003",
+      "name": "One hundred simultaneous commits with one confirmation",
+      "category": "CONCURRENCY",
+      "severity": "CRITICAL",
+      "threat": "A burst of parallel commit requests tries to book or charge a single approval twice.",
+      "protects": "PostgreSQL row locks and GiST constraints ensure at most one winner succeeds.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-004",
+      "name": "Actor, OAuth client, and tenant substitution prevention",
+      "category": "TENANCY",
+      "severity": "CRITICAL",
+      "threat": "A caller takes a valid booking intent and submits it under a different tenant, app, or user.",
+      "protects": "Commit verifies signed tenant, client, and user claims against the authenticated session.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-005",
+      "name": "Transport surface substitution: intent replayed through unlisted transport",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "An agent tries to replay a web-only booking intent over the external MCP channel.",
+      "protects": "Each signed intent pins its permitted transport surfaces in its verified claims.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-006",
+      "name": "Tool/schema/version substitution after prepare",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "A client alters tool schema or version between holding a slot and committing it.",
+      "protects": "Hold snapshots lock the original schema hash and policy terms at prepare time.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-007",
+      "name": "Duplicate JSON keys rejected before object parsing",
+      "category": "CRYPTO",
+      "severity": "HIGH",
+      "threat": "An attacker sends duplicate JSON keys hoping the validator and handler disagree on price.",
+      "protects": "The Fastify parser inspects raw JSON bytes and rejects duplicate keys with HTTP 400.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-008",
+      "name": "Unicode NFC/NFD canonicalization differences",
+      "category": "CRYPTO",
+      "severity": "HIGH",
+      "threat": "Crafted decomposed Unicode strings attempt to bypass signature or idempotency checks.",
+      "protects": "Strings undergo deterministic NFC normalization and RFC 8785 canonicalization before hashing.",
+      "result": "PASS",
+      "durationMs": 1
+    },
+    {
+      "id": "SEC-009",
+      "name": "Money validation: exponent notation, excessive precision, negative and overflow",
+      "category": "PAYMENT",
+      "severity": "HIGH",
+      "threat": "Malformed numbers like 1e5 or oversized integers try to corrupt payment math.",
+      "protects": "All money values use validated integer minor-unit strings with 64-bit bounds checks.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-010",
+      "name": "Zero-decimal and three-decimal currency scale mismatch",
+      "category": "PAYMENT",
+      "severity": "HIGH",
+      "threat": "Assumed 2-decimal math overcharges or undercharges zero-decimal and 3-decimal currencies.",
+      "protects": "Currency scaling uses an explicit ISO-4217 table matched against the service snapshot.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-011",
+      "name": "Commit at exp - 1, exactly exp, and after exp",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "Stale signed intents or holds are submitted at or past their expiration boundary.",
+      "protects": "Expiry checks enforce strict less-than inequalities on signed tokens and DB clock time.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-012",
+      "name": "JWS attack suite: alg none, algorithm confusion, unknown kid, remote jku, wrong typ",
+      "category": "CRYPTO",
+      "severity": "CRITICAL",
+      "threat": "Attackers forge booking intents using alg:none, foreign keys (jku), unknown key IDs, or wrong token types.",
+      "protects": "JWS verification requires ES256, velvetai-intent+jwt type, local trusted keys, and no remote URLs.",
+      "result": "PASS",
+      "durationMs": 3
+    },
+    {
+      "id": "SEC-013",
+      "name": "Approval URL shared with another buyer",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "Knowing someone else's approval URL lets another signed-in user approve their booking.",
+      "protects": "Approval rejects any authenticated user whose ID and email do not match the hold owner.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-014",
+      "name": "Role or tenant membership revoked after approval",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "An attacker keeps acting with an old token after their tenant access was revoked.",
+      "protects": "Local PostgreSQL memberships and role versions are checked on every protected request.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-015",
+      "name": "MCP action: accept without browser approval completion",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "An MCP client sends accepted flags claiming the human approved without completing browser approval.",
+      "protects": "Server commits require an opaque hashed confirmation minted exclusively on the approval endpoint.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-016",
+      "name": "Transaction crash boundary: crash after confirmation consumption",
+      "category": "IDEMPOTENCY",
+      "severity": "CRITICAL",
+      "threat": "A process crash mid-commit leaves the buyer confirmation spent while the booking stays uncommitted.",
+      "protects": "Confirmation consumption, booking state change, and outbox insert share one atomic DB transaction.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-017",
+      "name": "Transaction crash boundary: crash after outbox insertion",
+      "category": "IDEMPOTENCY",
+      "severity": "HIGH",
+      "threat": "A crash right after saving a booking leaves side effects stuck or lost.",
+      "protects": "Outbox events commit in the same DB transaction and recover cleanly via leased worker polling.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-018",
+      "name": "PayPal capture succeeds before local persistence",
+      "category": "PAYMENT",
+      "severity": "CRITICAL",
+      "threat": "Network loss right after PayPal captures funds leaves the booking status unknown locally.",
+      "protects": "PayPal orders embed tenant and booking references so reconciliation and webhooks heal state safely.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-019",
+      "name": "Cancellation/expiry/commit race prevention",
+      "category": "CONCURRENCY",
+      "severity": "CRITICAL",
+      "threat": "Simultaneous expiry, cancellation, or commit corrupts claim blocking state or double-books a slot.",
+      "protects": "Row-level locks, optimistic booking versioning, and DB check constraints forbid invalid claim drift.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-020",
+      "name": "Long-transaction expiry uses database clock_timestamp()",
+      "category": "CONCURRENCY",
+      "severity": "HIGH",
+      "threat": "A long-running database transaction exploits snapshot start time to commit an expired hold.",
+      "protects": "Hold expiry checks evaluate PostgreSQL clock_timestamp() in real wall-clock time.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-021",
+      "name": "RLS context leak through a one-connection pool",
+      "category": "TENANCY",
+      "severity": "CRITICAL",
+      "threat": "Pooled database connections leak Tenant A's tenant setting into Tenant B's query.",
+      "protects": "FORCE RLS binds queries to transaction-local app.tenant_id under non-bypass runtime role.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-022",
+      "name": "Outbox relay resumes after its lease was reassigned",
+      "category": "CONCURRENCY",
+      "severity": "HIGH",
+      "threat": "A paused worker wakes up late and acknowledges an outbox job already claimed by another worker.",
+      "protects": "Outbox acknowledgments fence updates on the exact UUID lease token.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-023",
+      "name": "BullMQ worker executes a stalled job twice",
+      "category": "IDEMPOTENCY",
+      "severity": "HIGH",
+      "threat": "At-least-once background job redelivery triggers duplicate captures or duplicate notifications.",
+      "protects": "Workers verify terminal DB states and deterministic request keys before executing side effects.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-024",
+      "name": "PayPal simulator event sent to production webhook route",
+      "category": "PAYMENT",
+      "severity": "HIGH",
+      "threat": "Unverified or mismatched environment webhooks try to mark unpaid bookings as confirmed.",
+      "protects": "Webhook verification requires cryptographic PayPal signature check and matching environment/connection.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-025",
+      "name": "Refund performed externally in PayPal dashboard",
+      "category": "PAYMENT",
+      "severity": "MEDIUM",
+      "threat": "A refund issued outside velvetAI leaves the local ledger and booking state out of sync.",
+      "protects": "Verified PAYMENT.CAPTURE.REFUNDED webhooks reconcile captures and post reversal entries.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-026",
+      "name": "Webhook certificate URL validation (SSRF / non-PayPal host prevention)",
+      "category": "CRYPTO",
+      "severity": "CRITICAL",
+      "threat": "Forged webhook headers point cert_url at internal cloud metadata IPs or attacker servers.",
+      "protects": "Certificate URLs must strictly use HTTPS on official api[.sandbox].paypal.com hosts.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-027",
+      "name": "Order reports COMPLETED while capture reports PENDING",
+      "category": "PAYMENT",
+      "severity": "CRITICAL",
+      "threat": "Trusting an order status alone confirms an appointment before PayPal capture finishes settling.",
+      "protects": "Bookings transition to CONFIRMED strictly when the underlying capture status equals COMPLETED.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "SEC-028",
+      "name": "Wrong sandbox app or wrong environment webhook",
+      "category": "PAYMENT",
+      "severity": "HIGH",
+      "threat": "Webhooks from another sandbox app or environment try to forge payment events for this tenant.",
+      "protects": "Every webhook validates against the tenant connection's configured PayPal webhook ID.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-001",
+      "name": "MCP protocol header/body mismatch",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "A client sends mismatched header and body protocol versions to confuse version guards.",
+      "protects": "The stateless MCP endpoint requires exact header and metadata version agreement.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-002",
+      "name": "Missing protocol version header on stateless MCP endpoint",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "An unversioned client omits the MCP-Protocol-Version header to bypass strict parsing.",
+      "protects": "All POST /mcp requests without MCP-Protocol-Version fail closed with HTTP 400.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-003",
+      "name": "Unsupported protocol revision rejection",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "An attacker downgrades MCP to an older legacy revision with weaker session rules.",
+      "protects": "POST /mcp rejects legacy revisions like 2024-11-05 at the transport gate with HTTP 400.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-004",
+      "name": "GET/DELETE session request against stateless MCP endpoint",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "A caller probes stateful SSE or session termination endpoints on GET or DELETE /mcp.",
+      "protects": "Only stateless POST /mcp is allowed; GET and DELETE return 405 Method Not Allowed.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-005",
+      "name": "Forged Auth0 issuer in bearer token",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "An attacker mints JWTs from an untrusted third-party identity provider.",
+      "protects": "RS256 JWKS verification enforces an exact match on the configured Auth0 issuer.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-006",
+      "name": "Wrong Auth0 audience or resource claim",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "A valid JWT issued for a different API or service is replayed against velvetAI.",
+      "protects": "Bearer tokens must explicitly match the target REST or MCP audience identifier.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-007",
+      "name": "Missing required scope guard enforcement",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "A read-only token tries to invoke write operations like preparing a hold or judge reset.",
+      "protects": "Every protected route and tool validates required scopes before executing logic.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-008",
+      "name": "Revoked local PostgreSQL membership with valid Auth0 token",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "A kicked-out user continues calling endpoints until their JWT naturally expires.",
+      "protects": "Local PostgreSQL membership revocation and role_version take effect immediately.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-009",
+      "name": "Execution of unallowlisted tool",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "An agent or model tries to call an arbitrary or undocumented tool name.",
+      "protects": "Only explicitly registered and schema-validated tools exist in sharedToolRegistry.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-010",
+      "name": "Model attempts commit without verified browser confirmation",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "An AI assistant tries to autonomously commit a booking or capture customer funds.",
+      "protects": "Commit tools are blocked for model execution with COMMIT_NOT_PERMITTED_FOR_AI.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-011",
+      "name": "MCP navigation accepted but approval not completed in browser",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "Visiting or fetching the approval page link is treated as consent without clicking Approve.",
+      "protects": "Only a POST /confirm by the signed-in buyer marks a confirmation eligible for commit.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-012",
+      "name": "WebMCP cross-origin frame attempts execution",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "An embedded third-party iframe tries to invoke velvetAI browser WebMCP tools.",
+      "protects": "Same-origin Permissions-Policy headers restrict tool exposure strictly to self.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-013",
+      "name": "WebMCP consequential hint removed by malicious client",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "A browser extension strips advisory tool risk hints expecting the server to skip checks.",
+      "protects": "Advisory hints never weaken backend confirmation, auth, or payment invariants.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-014",
+      "name": "Tool/schema version changed after prepare",
+      "category": "AUTH",
+      "severity": "HIGH",
+      "threat": "A caller tampers with schema versions mid-flight between prepare and commit.",
+      "protects": "Commit validates the signed intent schema bindings before finalizing state.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-015",
+      "name": "Prompt injection in user chat input",
+      "category": "INJECTION",
+      "severity": "HIGH",
+      "threat": "A user embeds fake <system> tags inside chat trying to override concierge rules.",
+      "protects": "Role tags are stripped and user text is fenced inside untrusted input delimiters.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-016",
+      "name": "Prompt injection in third-party tool output",
+      "category": "INJECTION",
+      "severity": "HIGH",
+      "threat": "Malicious customer notes or service descriptions instruct the AI to auto-approve or pay.",
+      "protects": "Customer notes are stripped from model context and commits require browser confirmation.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-017",
+      "name": "Tool-call loop exceeds maximum budget (20 calls)",
+      "category": "CONCURRENCY",
+      "severity": "HIGH",
+      "threat": "A runaway or adversarial prompt traps Ask AI in an endless tool-calling loop.",
+      "protects": "Ask AI hard-caps tool invocations per turn at 20 calls and aborts overflow.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-018",
+      "name": "Gemini provider timeout after 30-second budget",
+      "category": "CONCURRENCY",
+      "severity": "HIGH",
+      "threat": "A stalled upstream AI provider hangs API worker threads and exhausts request capacity.",
+      "protects": "Every AI invocation enforces a 30-second AbortController timeout and concurrency cap.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-019",
+      "name": "Fake model versus real-provider result labeling",
+      "category": "AUTH",
+      "severity": "MEDIUM",
+      "threat": "Simulated offline AI responses could be misrepresented as live LLM verification.",
+      "protects": "AI status explicitly separates offline deterministic mode from verified Gemini calls.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-020",
+      "name": "Confirmation token or OAuth token requested through model",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "Prompt injection asks the LLM to print confirmation tokens or Bearer secrets.",
+      "protects": "Raw confirmation and auth tokens never enter tool payloads or LLM message history.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-021",
+      "name": "Agent approves its own hold with its M2M token",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "An autonomous MCP agent prepares a hold and tries to self-approve using its M2M token.",
+      "protects": "Approval rejects @clients M2M credentials with HTTP 403 HUMAN_APPROVAL_REQUIRED.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-022",
+      "name": "Unauthenticated request confirms locator",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "An anonymous caller who guesses or sees an approval URL tries to confirm the hold.",
+      "protects": "Unauthenticated confirm requests fail closed with HTTP 401 and mint no confirmation.",
+      "result": "PASS",
+      "durationMs": 0
+    },
+    {
+      "id": "TRANS-023",
+      "name": "Buyer B confirms Buyer A's locator",
+      "category": "AUTH",
+      "severity": "CRITICAL",
+      "threat": "A different signed-in user tries to approve and claim another customer's hold URL.",
+      "protects": "Approval verifies buyer identity against the hold owner and rejects mismatches with BUYER_MISMATCH.",
+      "result": "PASS",
+      "durationMs": 0
+    }
+  ]
+}
