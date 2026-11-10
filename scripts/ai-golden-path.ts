@@ -37,7 +37,9 @@ export async function runAiGoldenPath(targetUrl?: string) {
   // Probe target API
   let probeOk = false;
   try {
-    const probeRes = await fetch(`${defaultUrl}/health/live`, { signal: AbortSignal.timeout(2000) });
+    const probeRes = await fetch(`${defaultUrl}/health/live`, {
+      signal: AbortSignal.timeout(2000),
+    });
     if (probeRes.ok) {
       // Test auth header
       const authProbe = await fetch(
@@ -101,7 +103,12 @@ export async function runAiGoldenPath(targetUrl?: string) {
     const availData = (await availRes.json()) as any;
 
     if (!availRes.ok || !Array.isArray(availData.slots) || availData.slots.length === 0) {
-      logStep("1", "Find Tomorrow Afternoon Slots", false, `HTTP ${availRes.status}: ${JSON.stringify(availData)}`);
+      logStep(
+        "1",
+        "Find Tomorrow Afternoon Slots",
+        false,
+        `HTTP ${availRes.status}: ${JSON.stringify(availData)}`,
+      );
     } else {
       const firstSlot = availData.slots[0];
       logStep(
@@ -134,7 +141,12 @@ export async function runAiGoldenPath(targetUrl?: string) {
     const quoteData = (await quoteRes.json()) as any;
 
     if (!quoteRes.ok || !quoteData.quoteId || !quoteData.total?.valueMinor) {
-      logStep("2", "Create Booking Quote", false, `HTTP ${quoteRes.status}: ${JSON.stringify(quoteData)}`);
+      logStep(
+        "2",
+        "Create Booking Quote",
+        false,
+        `HTTP ${quoteRes.status}: ${JSON.stringify(quoteData)}`,
+      );
     } else {
       logStep(
         "2",
@@ -170,8 +182,18 @@ export async function runAiGoldenPath(targetUrl?: string) {
     });
     const prepData = (await prepRes.json()) as any;
 
-    if (!prepRes.ok || prepData.status !== "HELD" || !prepData.approvalLocator || !prepData.approvalUrl) {
-      logStep("3", "Prepare Booking Hold", false, `HTTP ${prepRes.status}: ${JSON.stringify(prepData)}`);
+    if (
+      !prepRes.ok ||
+      prepData.status !== "HELD" ||
+      !prepData.approvalLocator ||
+      !prepData.approvalUrl
+    ) {
+      logStep(
+        "3",
+        "Prepare Booking Hold",
+        false,
+        `HTTP ${prepRes.status}: ${JSON.stringify(prepData)}`,
+      );
     } else {
       const isAbsoluteUrl =
         prepData.approvalUrl.startsWith("http://") || prepData.approvalUrl.startsWith("https://");
@@ -201,7 +223,12 @@ export async function runAiGoldenPath(targetUrl?: string) {
     const approvalData = (await approvalRes.json()) as any;
 
     if (!approvalRes.ok || approvalData.status !== "PENDING") {
-      logStep("4", "Get Approval Details", false, `HTTP ${approvalRes.status}: ${JSON.stringify(approvalData)}`);
+      logStep(
+        "4",
+        "Get Approval Details",
+        false,
+        `HTTP ${approvalRes.status}: ${JSON.stringify(approvalData)}`,
+      );
     } else {
       // Assert terms match quote and slot
       const termsMatch =
@@ -300,9 +327,13 @@ export async function runAiGoldenPath(targetUrl?: string) {
       );
     }
 
-    console.log("\n================================================================================");
+    console.log(
+      "\n================================================================================",
+    );
     console.log("ALL 6 AI GOLDEN PATH STEPS PASSED OVER REAL HTTP!");
-    console.log("================================================================================\n");
+    console.log(
+      "================================================================================\n",
+    );
   } finally {
     if (standaloneServer) {
       await standaloneServer.app.close();

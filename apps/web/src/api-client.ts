@@ -504,13 +504,16 @@ export class VelvetApiClient {
       "cancel-prep",
       idempotencyKey,
       (key) =>
-        this.request<PrepareCancellationResponse>(`/v1/bookings/${bookingId}/prepare-cancellation`, {
-          method: "POST",
-          headers: {
-            "Idempotency-Key": key,
+        this.request<PrepareCancellationResponse>(
+          `/v1/bookings/${bookingId}/prepare-cancellation`,
+          {
+            method: "POST",
+            headers: {
+              "Idempotency-Key": key,
+            },
+            body: JSON.stringify(params),
           },
-          body: JSON.stringify(params),
-        }),
+        ),
       { keepKeyOnSuccess: false },
     );
   }

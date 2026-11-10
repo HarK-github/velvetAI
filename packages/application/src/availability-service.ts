@@ -110,7 +110,9 @@ export class AvailabilityService {
         return { scheduleRevision: 0, generatedAt, slots: [] };
       }
 
-      const effectiveTimeZone = (options.timeZone || location.timezone || "America/New_York") as IanaTimeZone;
+      const effectiveTimeZone = (options.timeZone ||
+        location.timezone ||
+        "America/New_York") as IanaTimeZone;
 
       // Operating hours by dayPart: morning 08:00–12:00, afternoon 12:00–17:00, evening 17:00–21:00
       let startHour = "09:00:00";
@@ -167,7 +169,9 @@ export class AvailabilityService {
         }).format(resolvedDateObj);
       } else {
         if (!windowFrom) {
-          const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: effectiveTimeZone }).format(now);
+          const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: effectiveTimeZone }).format(
+            now,
+          );
           windowFrom = getUtcForLocalTime(todayStr, startHour, effectiveTimeZone);
         }
         if (!windowTo) {

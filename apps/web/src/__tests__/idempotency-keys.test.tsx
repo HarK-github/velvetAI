@@ -194,7 +194,12 @@ describe("Idempotency-Key Enforcement & Retry Reuse Across Web App", () => {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: () => Promise.resolve({ bookingId: "bk_r1", bookingStatus: "CONFIRMED", paymentStatus: "CAPTURED" }),
+          json: () =>
+            Promise.resolve({
+              bookingId: "bk_r1",
+              bookingStatus: "CONFIRMED",
+              paymentStatus: "CAPTURED",
+            }),
         });
       }
 
@@ -226,7 +231,9 @@ describe("Idempotency-Key Enforcement & Retry Reuse Across Web App", () => {
     // Payment order retry reuses identical key
     await expect(client.createPaymentOrder("bk_r1")).rejects.toThrow();
     await client.createPaymentOrder("bk_r1");
-    const orderKeys = keysByUrl.get("https://api.velvetai.example/v1/bookings/bk_r1/payment-order")!;
+    const orderKeys = keysByUrl.get(
+      "https://api.velvetai.example/v1/bookings/bk_r1/payment-order",
+    )!;
     expect(orderKeys.length).toBe(2);
     expect(orderKeys[0]).toBe(orderKeys[1]);
 
@@ -484,7 +491,9 @@ describe("Idempotency-Key Enforcement & Retry Reuse Across Web App", () => {
     });
 
     // Click Pay -> first capture returns PAYMENT_FAILED, unmounting PayPalButton
-    fireEvent.click(screen.getByRole("button", { name: /Authorize & Capture via PayPal Sandbox/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Authorize & Capture via PayPal Sandbox/i }),
+    );
     await waitFor(() => {
       expect(screen.getByTestId("state-payment-failed")).toBeDefined();
     });
@@ -499,7 +508,9 @@ describe("Idempotency-Key Enforcement & Retry Reuse Across Web App", () => {
       expect(seenHeaders.filter((h) => h.url.endsWith("/payment-order")).length).toBe(2);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Authorize & Capture via PayPal Sandbox/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Authorize & Capture via PayPal Sandbox/i }),
+    );
     await waitFor(() => {
       expect(screen.getByTestId("state-confirmed")).toBeDefined();
     });
