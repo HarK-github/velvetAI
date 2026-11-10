@@ -8,8 +8,20 @@ import {
   Database,
   getTestDatabaseUrl,
 } from "@velvetai/db";
-import { Kysely } from "kysely";
+import { BookingService } from "@velvetai/application";
+import {
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type Dialect,
+  type Driver,
+  type DatabaseConnection,
+  type CompiledQuery,
+  type QueryResult,
+} from "kysely";
 import { buildApp } from "../app.js";
+import { bookingService, setBookingService } from "../routes/bookings.js";
 
 const TEST_DB_URL = getTestDatabaseUrl();
 
@@ -25,6 +37,7 @@ describe("API Frontend Endpoints & Middleware", () => {
   let db: Kysely<Database>;
 
   beforeAll(async () => {
+    process.env.PUBLIC_DEMO_TENANT_ID = DEV_TENANT_ID;
     db = createDatabaseClient(TEST_DB_URL, { min: 2, max: 10 });
     await migrateToLatest(db);
 
@@ -362,5 +375,112 @@ describe("API Frontend Endpoints & Middleware", () => {
       expect(problem.status).toBe(400);
       expect(problem.detail).toContain('Duplicate JSON key detected: "amount"');
     });
+  });
+
+  it("POST /v1/bookings/prepare maps PostgreSQL 40P01 deadlock_detected to HTTP 409 slot_unavailable (never 500)", async () => {
+    const pgDeadlockErr = Object.assign(new Error("deadlock detected"), { code: "40P01" });
+    const customerId = crypto.randomUUID();
+    const cancellationPolicyId = "01932b10-0003-7000-8000-000000000001";
+
+    const conn: DatabaseConnection = {
+      async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
+        const sqlLower = compiledQuery.sql.toLowerCase();
+        if (sqlLower.includes('from "services"')) {
+          return {
+            rows: [
+              {
+                id: DEV_SERVICE_VERSION_ID,
+                tenant_id: DEV_TENANT_ID,
+                service_id: DEV_SERVICE_ID,
+                version: 1,
+                name: "Executive Haircut & Beard Sculpt",
+                description: null,
+                duration_minutes: 45,
+                buffer_before_minutes: 0,
+                buffer_after_minutes: 15,
+                price_minor: "7500",
+                base_deposit_minor: "2000",
+                currency: "USD",
+                cancellation_policy_id: cancellationPolicyId,
+                published_at: new Date(),
+              } as unknown as R,
+            ],
+          };
+        }
+        if (sqlLower.includes('from "resources"')) {
+          return {
+            rows: [
+              {
+                id: DEV_RESOURCE_ID,
+                tenant_id: DEV_TENANT_ID,
+                location_id: DEV_LOCATION_ID,
+                resource_type: "CHAIR",
+                display_name: "Master Chair 1",
+                status: "ACTIVE",
+                created_at: new Date(),
+              } as unknown as R,
+            ],
+          };
+        }
+        if (sqlLower.includes('from "customers"')) {
+          return { rows: [{ id: customerId } as unknown as R] };
+        }
+        if (sqlLower.includes('insert into "resource_claims"')) {
+          throw pgDeadlockErr;
+        }
+        return { rows: [] };
+      },
+      async *streamQuery() {},
+    };
+
+    const driver: Driver = {
+      async init() {},
+      async acquireConnection() {
+        return conn;
+      },
+      async beginTransaction() {},
+      async commitTransaction() {},
+      async rollbackTransaction() {},
+      async releaseConnection() {},
+      async destroy() {},
+    };
+
+    const dialect: Dialect = {
+      createAdapter: () => new PostgresAdapter(),
+      createDriver: () => driver,
+      createIntrospector: (dbInstance) => new PostgresIntrospector(dbInstance),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+    };
+
+    const mockDb = new Kysely<Database>({ dialect });
+    const previousService = bookingService;
+    setBookingService(new BookingService(mockDb));
+
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/v1/bookings/prepare",
+        headers: { "idempotency-key": `deadlock-409-test-${Date.now()}` },
+        payload: {
+          serviceId: DEV_SERVICE_ID,
+          locationId: DEV_LOCATION_ID,
+          startsAt: "2026-12-30T10:00:00.000Z",
+          timeZone: "America/New_York",
+          customer: {
+            displayName: "Deadlock HTTP Buyer",
+            email: "deadlock.http@example.com",
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.headers["content-type"]).toContain("application/problem+json");
+      const problem = res.json();
+      expect(problem.status).toBe(409);
+      expect(problem.code).toBe("slot_unavailable");
+    } finally {
+      setBookingService(previousService);
+      await mockDb.destroy();
+    }
   });
 });

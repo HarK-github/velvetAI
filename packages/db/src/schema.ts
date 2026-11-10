@@ -31,6 +31,9 @@ export interface Database {
   outbox_events: OutboxEventTable;
   inbox_events: InboxEventTable;
   audit_events: AuditEventTable;
+  judge_runs: JudgeRunTable;
+  demo_schedule_fixtures: DemoScheduleFixtureTable;
+  synthetic_history: SyntheticHistoryTable;
 }
 
 export interface TenantTable {
@@ -158,7 +161,8 @@ export interface BookingTable {
 export interface ResourceClaimTable {
   id: string;
   tenant_id: string;
-  booking_id: string;
+  booking_id: string | null;
+  claim_source: ColumnType<string, string | undefined, never>;
   resource_id: string;
   blocked_during: unknown; // tstzrange in PostgreSQL
   starts_at: ColumnType<Date, string | Date, never>;
@@ -424,4 +428,44 @@ export interface AuditEventTable {
   resource_id: string | null;
   metadata_redacted: unknown;
   occurred_at: ColumnType<Date, string | Date | undefined, never>;
+}
+
+export interface JudgeRunTable {
+  id: string;
+  tenant_id: string;
+  seed_version: string;
+  status: "RUNNING" | "SUCCEEDED" | "FAILED" | string;
+  started_at: ColumnType<Date, string | Date | undefined, never>;
+  finished_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  requested_by: string;
+  steps: ColumnType<unknown, string | unknown | undefined, unknown>;
+  summary: ColumnType<unknown | null, string | unknown | null | undefined, unknown | null>;
+}
+
+export interface DemoScheduleFixtureTable {
+  id: string;
+  tenant_id: string;
+  judge_run_id: string;
+  resource_id: string;
+  service_id: string;
+  starts_at: ColumnType<Date, string | Date, never>;
+  ends_at: ColumnType<Date, string | Date, never>;
+  display_status: "CONFIRMED" | "CHECKED_IN" | "COMPLETED" | "NO_SHOW" | "CANCELLED" | string;
+  buyer_key: string;
+  deposit_paid: boolean;
+  claim_id: string | null;
+}
+
+export interface SyntheticHistoryTable {
+  id: string;
+  tenant_id: string;
+  judge_run_id: string;
+  resource_id: string;
+  service_id: string;
+  starts_at: ColumnType<Date, string | Date, never>;
+  ends_at: ColumnType<Date, string | Date, never>;
+  outcome: "ATTENDED" | "NO_SHOW" | "CANCELLED_LATE" | "CANCELLED_EARLY" | string;
+  lead_time_hours: number;
+  deposit_paid: boolean;
+  buyer_key: string;
 }

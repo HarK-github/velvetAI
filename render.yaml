@@ -3,7 +3,7 @@
 
 databases:
   - name: velvetai-db
-    plan: basic-256mb
+    plan: free
     postgresMajorVersion: "17"
     databaseName: velvetai
     user: velvetai_owner
@@ -36,13 +36,14 @@ services:
     name: velvetai-api
     runtime: docker
     dockerfilePath: ./Dockerfile.api
-    plan: starter
+    plan: free
     healthCheckPath: /health/ready
-    preDeployCommand: pnpm --filter @velvetai/db db:migrate
     envVars:
       - fromGroup: velvetai-sandbox-secrets
       - key: NODE_ENV
         value: production
+      - key: EMBED_WORKER
+        value: "true"
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_MIGRATION_URL
@@ -69,18 +70,12 @@ services:
         value: gemini-3.5-flash-lite
       - key: AI_DAILY_TURN_BUDGET
         value: "1500"
-
-  - type: worker
-    name: velvetai-worker
-    runtime: docker
-    dockerfilePath: ./Dockerfile.worker
-    plan: starter
-    envVars:
-      - fromGroup: velvetai-sandbox-secrets
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        sync: false
+      - key: SELF_SIGNUP_ENABLED
+        value: "true"
+      - key: SELF_SIGNUP_TENANT_ID
+        value: "01932b10-0000-7000-8000-000000000a01"
+      - key: PUBLIC_DEMO_TENANT_ID
+        value: "01932b10-0000-7000-8000-000000000a01"
 
   - type: web
     name: velvetai-web

@@ -9,7 +9,7 @@ COPY apps ./apps
 COPY packages ./packages
 
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @velvetai/contracts... build && pnpm --filter @velvetai/api build
+RUN pnpm --filter @velvetai/api... build
 
 FROM node:24-alpine AS runner
 

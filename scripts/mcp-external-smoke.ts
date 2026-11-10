@@ -16,14 +16,17 @@ export interface SmokeResult {
   details: string;
 }
 
-async function fetchM2mToken(): Promise<string> {
+async function fetchM2mToken(defaultAudience?: string): Promise<string> {
   const domain =
     process.env.VITE_AUTH0_DOMAIN ||
     (process.env.AUTH0_ISSUER_URL ? new URL(process.env.AUTH0_ISSUER_URL).hostname : null);
   const clientId = process.env.AUTH0_AGENT_CLIENT_ID;
   const clientSecret = process.env.AUTH0_AGENT_CLIENT_SECRET;
   const audience =
-    process.env.MCP_RESOURCE_URL || process.env.AUTH0_MCP_AUDIENCE || "http://localhost:3000/mcp";
+    process.env.MCP_RESOURCE_URL ||
+    process.env.AUTH0_MCP_AUDIENCE ||
+    defaultAudience ||
+    "http://localhost:3000/mcp";
 
   if (!domain || !clientId || !clientSecret) {
     throw new Error(
@@ -58,9 +61,13 @@ export async function runMcpSmoke(options?: {
   autoApprove?: boolean;
 }): Promise<{ results: SmokeResult[]; allPassed: boolean }> {
   loadRootEnv();
-  const baseUrl =
+  const rawBaseUrl =
     options?.baseUrl ||
-    (process.env.MCP_URL ? new URL(process.env.MCP_URL).origin : "http://localhost:3000");
+    (process.env.MCP_URL ? new URL(process.env.MCP_URL).origin : undefined) ||
+    process.env.MCP_SERVER_URL ||
+    process.env.API_BASE_URL ||
+    "http://localhost:3000";
+  const baseUrl = rawBaseUrl.replace(/\/$/, "");
   const mcpUrl = process.env.MCP_URL ? new URL(process.env.MCP_URL) : new URL("/mcp", baseUrl);
   const autoApprove = options?.autoApprove ?? process.argv.includes("--auto-approve");
 
@@ -75,7 +82,7 @@ export async function runMcpSmoke(options?: {
   let token = options?.token;
   if (!token) {
     console.log("[mcp:smoke] Fetching Auth0 M2M Bearer token via client credentials grant...");
-    token = await fetchM2mToken();
+    token = await fetchM2mToken(mcpUrl.toString());
     console.log("[mcp:smoke] Successfully obtained Auth0 M2M Bearer token.");
   }
 
@@ -344,8 +351,12 @@ export async function runMcpSmoke(options?: {
     process.exit(1);
   }
 
-  const webPort = process.env.WEB_PORT || "5173";
-  const webApprovalUrl = `http://localhost:${webPort}/approve/${locatorId}`;
+  const webOrigin = (
+    process.env.PUBLIC_WEB_ORIGIN ||
+    process.env.WEB_BASE_URL ||
+    `http://localhost:${process.env.WEB_PORT || "5173"}`
+  ).replace(/\/$/, "");
+  const webApprovalUrl = `${webOrigin}/approve/${locatorId}`;
   const apiApprovalUrl = `${baseUrl}/v1/booking-approvals/${locatorId}`;
 
   console.log("\n========================================================");

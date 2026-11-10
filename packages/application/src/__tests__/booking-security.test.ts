@@ -1,6 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "node:crypto";
-import { Kysely } from "kysely";
+import {
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type Dialect,
+  type Driver,
+  type DatabaseConnection,
+  type CompiledQuery,
+  type QueryResult,
+} from "kysely";
 import {
   Database,
   createDatabaseClient,
@@ -27,6 +37,7 @@ import {
   IanaTimeZone,
   BookingId,
   CancellationPolicyId,
+  SlotUnavailableError,
 } from "@velvetai/contracts";
 
 const TEST_DB_URL = getTestDatabaseUrl();
@@ -944,6 +955,195 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       await expect(verifyBookingIntent(unknownKidToken)).rejects.toThrow(
         /Unknown kid 'unknown-rotated-kid'/,
       );
+    });
+  });
+
+  describe("Production Hold/Claim Concurrency & 40P01/23P01 Error Mapping", () => {
+    it("100 concurrent BookingService.prepareBooking calls on the same slot yield 1 winner and 99 409 conflicts", async () => {
+      const slotStart = "2026-12-28T15:00:00.000Z" as Rfc3339Timestamp;
+
+      let winners = 0;
+      let conflicts = 0;
+      let otherErrors = 0;
+
+      await Promise.all(
+        Array.from({ length: 100 }, async (_, idx) => {
+          try {
+            await bookingService.prepareBooking(
+              tenantA,
+              {
+                userId: userA,
+                subject: subjectA,
+                tenantId: tenantA,
+                roles: ["OWNER"],
+              },
+              `client-race-${idx}`,
+              {
+                serviceId: serviceA,
+                locationId: locationA,
+                startsAt: slotStart,
+                timeZone: "America/New_York" as IanaTimeZone,
+                customer: {
+                  displayName: `Race Buyer ${idx}`,
+                  email: `race-${idx}@example.com`,
+                },
+              },
+            );
+            winners++;
+          } catch (err: unknown) {
+            if (
+              err instanceof SlotUnavailableError &&
+              err.status === 409 &&
+              err.code === "slot_unavailable"
+            ) {
+              conflicts++;
+            } else {
+              otherErrors++;
+            }
+          }
+        }),
+      );
+
+      expect(otherErrors).toBe(0);
+      expect(winners).toBe(1);
+      expect(conflicts).toBe(99);
+    }, 15000);
+
+    it("BookingService.prepareBooking acquires advisory lock first and maps PostgreSQL 40P01 deadlock_detected to 409 SlotUnavailableError", async () => {
+      const executedSql: Array<{ sql: string; parameters: readonly unknown[] }> = [];
+      let rolledBack = false;
+      const cancellationPolicyId = crypto.randomUUID();
+      const customerId = crypto.randomUUID();
+
+      const pgDeadlockErr = Object.assign(new Error("deadlock detected"), { code: "40P01" });
+
+      const conn: DatabaseConnection = {
+        async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
+          executedSql.push({ sql: compiledQuery.sql, parameters: compiledQuery.parameters });
+          const sqlLower = compiledQuery.sql.toLowerCase();
+
+          if (sqlLower.includes('from "services"')) {
+            return {
+              rows: [
+                {
+                  id: serviceVersionA,
+                  tenant_id: tenantA,
+                  service_id: serviceA,
+                  version: 1,
+                  name: "Security Consult",
+                  description: null,
+                  duration_minutes: 30,
+                  buffer_before_minutes: 0,
+                  buffer_after_minutes: 0,
+                  price_minor: "5000",
+                  base_deposit_minor: "1500",
+                  currency: "USD",
+                  cancellation_policy_id: cancellationPolicyId,
+                  published_at: new Date(),
+                } as unknown as R,
+              ],
+            };
+          }
+
+          if (sqlLower.includes('from "resources"')) {
+            return {
+              rows: [
+                {
+                  id: resourceA,
+                  tenant_id: tenantA,
+                  location_id: locationA,
+                  resource_type: "ROOM",
+                  display_name: "Suite 1",
+                  status: "ACTIVE",
+                  created_at: new Date(),
+                } as unknown as R,
+              ],
+            };
+          }
+
+          if (sqlLower.includes('from "customers"')) {
+            return {
+              rows: [{ id: customerId } as unknown as R],
+            };
+          }
+
+          if (sqlLower.includes('insert into "resource_claims"')) {
+            throw pgDeadlockErr;
+          }
+
+          return { rows: [] };
+        },
+        async *streamQuery() {
+          // unused
+        },
+      };
+
+      const driver: Driver = {
+        async init() {},
+        async acquireConnection() {
+          return conn;
+        },
+        async beginTransaction() {},
+        async commitTransaction() {},
+        async rollbackTransaction() {
+          rolledBack = true;
+        },
+        async releaseConnection() {},
+        async destroy() {},
+      };
+
+      const dialect: Dialect = {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => driver,
+        createIntrospector: (dbInstance) => new PostgresIntrospector(dbInstance),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      };
+
+      const deadlockDb = new Kysely<Database>({ dialect });
+      const isolatedBookingService = new BookingService(deadlockDb);
+
+      let caught: unknown;
+      try {
+        await isolatedBookingService.prepareBooking(
+          tenantA,
+          {
+            userId: userA,
+            subject: subjectA,
+            tenantId: tenantA,
+            roles: ["OWNER"],
+          },
+          "client-deadlock-test",
+          {
+            serviceId: serviceA,
+            locationId: locationA,
+            startsAt: "2026-12-29T10:00:00.000Z" as Rfc3339Timestamp,
+            timeZone: "America/New_York" as IanaTimeZone,
+            customer: {
+              displayName: "Deadlock Buyer",
+              email: "deadlock@example.com",
+            },
+          },
+        );
+      } catch (err) {
+        caught = err;
+      } finally {
+        await deadlockDb.destroy();
+      }
+
+      expect(caught).toBeInstanceOf(SlotUnavailableError);
+      const slotErr = caught as SlotUnavailableError;
+      expect(slotErr.status).toBe(409);
+      expect(slotErr.code).toBe("slot_unavailable");
+      expect(slotErr.details?.alternatives).toHaveLength(2);
+      expect(rolledBack).toBe(true);
+
+      const lockIdx = executedSql.findIndex((q) => q.sql.includes("pg_advisory_xact_lock"));
+      const insertIdx = executedSql.findIndex((q) =>
+        q.sql.toLowerCase().includes('insert into "resource_claims"'),
+      );
+      expect(lockIdx).toBeGreaterThanOrEqual(0);
+      expect(insertIdx).toBeGreaterThan(lockIdx);
+      expect(executedSql[lockIdx]?.parameters).toEqual([tenantA, resourceA]);
     });
   });
 });

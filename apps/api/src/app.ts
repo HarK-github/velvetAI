@@ -18,6 +18,7 @@ import { riskRoutes } from "./routes/risk.js";
 import { paymentsRoutes, webhookRoutes, paymentService } from "./routes/payments.js";
 import { mcpRoutes, setMcpDb } from "./routes/mcp.js";
 import { aiRoutes } from "./routes/ai.js";
+import { judgeRoutes, setJudgeDb } from "./routes/judge.js";
 import { registerAuth } from "./plugins/auth.js";
 import { registerIdempotency } from "./plugins/idempotency.js";
 import { Kysely } from "kysely";
@@ -76,8 +77,31 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     },
   );
 
+  const allowedOrigins = Array.from(
+    new Set([
+      ...(env.ALLOWED_ORIGINS
+        ? env.ALLOWED_ORIGINS.split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : []),
+      env.WEB_BASE_URL,
+      "http://localhost:5173",
+      "https://velvetai-five.vercel.app",
+    ]),
+  );
+
   app.register(cors, {
-    origin: [env.WEB_BASE_URL, "http://localhost:5173"],
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (
+        allowedOrigins.includes(origin) ||
+        origin.endsWith(".vercel.app") ||
+        origin.endsWith(".onrender.com")
+      ) {
+        return cb(null, true);
+      }
+      return cb(null, false);
+    },
     credentials: true,
   });
 
@@ -129,6 +153,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     setAvailabilityService(new AvailabilityService(options.db));
     setBookingService(new BookingService(options.db, paymentService));
     setMcpDb(options.db);
+    setJudgeDb(options.db);
   }
 
   // Business & frontend endpoints
@@ -139,6 +164,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   app.register(paymentsRoutes);
   app.register(webhookRoutes);
   app.register(mcpRoutes);
+  app.register(judgeRoutes);
   app.register(aiRoutes, options);
 
   // RFC 9457 Problem Details error handler

@@ -232,6 +232,7 @@ export const roleSchema = z.enum([
   "SUPPORT",
   "WORKER",
   "ABUSE_LAB",
+  "JUDGE",
 ]);
 export type Role = z.infer<typeof roleSchema>;
 
@@ -244,6 +245,10 @@ export const scopeSchema = z.enum([
   "booking:cancel",
   "merchant:schedule",
   "merchant:refund",
+  "judge:reset",
+  "judge:abuse_lab",
+  "judge:fault_injection",
+  "judge:proof",
 ]);
 export type Scope = z.infer<typeof scopeSchema>;
 
@@ -285,5 +290,17 @@ export const DEFAULT_ROLE_SCOPES: Record<Role, Scope[]> = {
     "booking:cancel",
     "merchant:schedule",
     "merchant:refund",
+  ],
+  JUDGE: [
+    "booking:read",
+    "booking:quote",
+    "booking:prepare",
+    "booking:commit",
+    "booking:cancel",
+    "merchant:schedule",
+    "judge:reset",
+    "judge:abuse_lab",
+    "judge:fault_injection",
+    "judge:proof",
   ],
 };

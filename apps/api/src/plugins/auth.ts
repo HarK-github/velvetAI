@@ -1,7 +1,11 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import * as jose from "jose";
 import { Kysely, sql } from "kysely";
-import { AuthenticatedPrincipal, AuthenticationPort } from "@velvetai/application";
+import {
+  AuthenticatedPrincipal,
+  AuthenticationPort,
+  OnboardingService,
+} from "@velvetai/application";
 import {
   TenantId,
   UserId,
@@ -15,6 +19,7 @@ import {
 } from "@velvetai/contracts";
 import { Database, createDatabaseClient, withUserTransaction } from "@velvetai/db";
 import { validateEnv } from "@velvetai/observability";
+import { getClientIp } from "./public-rate-limit.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -52,6 +57,7 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
   private readonly jwksUri: string;
   private readonly db?: Kysely<Database>;
   private readonly allowDevTokens: boolean;
+  private readonly onboardingService?: OnboardingService;
   private jwks?: jose.JWTVerifyGetKey;
 
   constructor(options?: Auth0AdapterOptions) {
@@ -63,6 +69,9 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
       env.AUTH0_JWKS_URI ??
       `${this.issuer.replace(/\/+$/, "")}/.well-known/jwks.json`;
     this.db = options?.db;
+    if (this.db) {
+      this.onboardingService = new OnboardingService(this.db);
+    }
 
     const isProduction = env.NODE_ENV === "production";
     const isMockEnabled = env.OIDC_MOCK_ENABLED === true;
@@ -119,6 +128,7 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
     token: string,
     requestedTenantId?: string,
     expectedAudience?: string,
+    clientIp?: string,
   ): Promise<AuthenticatedPrincipal> {
     // 1. Dev / Offline Test Token Fast Path
     if (token.startsWith("test-token:") || token === "test-token") {
@@ -155,8 +165,8 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
       throw new DomainError("JWT missing expiration (exp) claim", "invalid_jwt", 401);
     }
 
-    // 4. Local PostgreSQL Membership Authority Resolution
-    return await this.resolveLocalMembership(subject, payload);
+    // 4. Local PostgreSQL Membership Authority Resolution (with JIT self-provisioning when enabled)
+    return await this.resolveLocalMembership(subject, payload, clientIp);
   }
 
   private async authenticateDevToken(
@@ -256,6 +266,7 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
   private async resolveLocalMembership(
     subject: string,
     payload: jose.JWTPayload,
+    clientIp?: string,
   ): Promise<AuthenticatedPrincipal> {
     if (!this.db) {
       // In isolated environments without DB connection, use token claims
@@ -295,23 +306,47 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
     }
 
     // 1. Look up app_user by oidc_subject (app_users is intentionally global/non-tenant-scoped)
-    const user = await this.db
+    let user = await this.db
       .selectFrom("app_users")
       .where("oidc_subject", "=", subject)
       .select(["id"])
       .executeTakeFirst();
 
     if (!user) {
-      throw new DomainError(
-        "User has not been provisioned in local database",
-        "user_not_provisioned",
-        403,
-      );
+      // Part 1: JIT buyer provisioning check
+      const env = validateEnv();
+      const isSelfSignupEnabled =
+        env.SELF_SIGNUP_ENABLED === true || process.env.SELF_SIGNUP_ENABLED === "true";
+
+      const isM2MToken =
+        subject.endsWith("@clients") ||
+        subject.includes("@clients") ||
+        payload.gty === "client-credentials";
+
+      if (!isSelfSignupEnabled || isM2MToken) {
+        throw new DomainError(
+          "User has not been provisioned in local database",
+          "user_not_provisioned",
+          403,
+        );
+      }
+
+      if (!this.onboardingService) {
+        throw new DomainError("Onboarding service is unavailable", "internal_error", 500);
+      }
+
+      const provisioned = await this.onboardingService.selfProvisionBuyer({
+        subject,
+        clientIp,
+        emailVerified: payload.email_verified === true,
+      });
+
+      user = { id: provisioned.userId };
     }
 
     // 2. Set transaction-local authenticated user context (app.user_id) and query memberships.
     // The self_membership_select_policy allows an authenticated local user to read only their own membership rows.
-    const memberships = await withUserTransaction(this.db, user.id, async (trx) => {
+    let memberships = await withUserTransaction(this.db, user.id, async (trx) => {
       return await trx
         .selectFrom("memberships")
         .where("user_id", "=", user.id)
@@ -320,7 +355,34 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
     });
 
     if (memberships.length === 0) {
-      throw new DomainError("No local membership found for user", "membership_not_found", 403);
+      // If user exists without membership and self-signup is enabled, provision BUYER membership
+      const env = validateEnv();
+      const isSelfSignupEnabled =
+        env.SELF_SIGNUP_ENABLED === true || process.env.SELF_SIGNUP_ENABLED === "true";
+      const isM2MToken =
+        subject.endsWith("@clients") ||
+        subject.includes("@clients") ||
+        payload.gty === "client-credentials";
+
+      if (isSelfSignupEnabled && !isM2MToken && this.onboardingService) {
+        await this.onboardingService.selfProvisionBuyer({
+          subject,
+          clientIp,
+          emailVerified: payload.email_verified === true,
+        });
+
+        memberships = await withUserTransaction(this.db, user.id, async (trx) => {
+          return await trx
+            .selectFrom("memberships")
+            .where("user_id", "=", user.id)
+            .select(["id", "tenant_id", "role", "role_version", "revoked_at"])
+            .execute();
+        });
+      }
+
+      if (memberships.length === 0) {
+        throw new DomainError("No local membership found for user", "membership_not_found", 403);
+      }
     }
 
     const activeMemberships = memberships.filter((m) => m.revoked_at === null);
@@ -356,13 +418,14 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
     }
 
     const role = membership.role as Role;
+    const roles: Role[] = role === "JUDGE" ? ["JUDGE", "BUYER", "SCHEDULER"] : [role];
     const scopes = this.extractScopes(payload, role);
 
     return {
       subject,
       userId: user.id as UserId,
       tenantId: membership.tenant_id as TenantId,
-      roles: [role],
+      roles,
       roleVersion: membership.role_version,
       authTime: new Date().toISOString(),
       mfaVerified: true,
@@ -468,9 +531,22 @@ export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest("principal", undefined);
   app.decorateRequest("tenantId", undefined);
   app.decorateRequest("clientId", undefined);
-  app.decorate("authenticateBearerToken", async (token: string, requestedTenantId?: TenantId) => {
-    return authAdapter.authenticateBearerToken(token, requestedTenantId);
-  });
+  app.decorate(
+    "authenticateBearerToken",
+    async (
+      token: string,
+      requestedTenantId?: TenantId,
+      expectedAudience?: string,
+      clientIp?: string,
+    ) => {
+      return authAdapter.authenticateBearerToken(
+        token,
+        requestedTenantId,
+        expectedAudience,
+        clientIp,
+      );
+    },
+  );
 
   // RFC 9728: OAuth 2.0 Protected Resource Metadata (REST API audience)
   app.get("/.well-known/oauth-protected-resource", async (_request, reply) => {
@@ -531,6 +607,16 @@ export function registerAuth(app: FastifyInstance): void {
         ? request.headers["x-client-id"]
         : "default-client";
 
+    const clientIp = getClientIp(request);
+
+    const isPublicReadRoute =
+      request.method === "GET" &&
+      (request.url === "/v1/services" ||
+        request.url.startsWith("/v1/services/") ||
+        request.url.startsWith("/v1/services?") ||
+        request.url === "/v1/availability" ||
+        request.url.startsWith("/v1/availability?"));
+
     const authHeader = request.headers.authorization;
     let token: string | undefined;
 
@@ -539,6 +625,11 @@ export function registerAuth(app: FastifyInstance): void {
     }
 
     if (!token) {
+      // Public read routes allowed without token
+      if (isPublicReadRoute) {
+        return;
+      }
+
       if (request.url.startsWith("/v1/booking-approvals/")) {
         // Let booking approvals endpoints enforce their own specific HUMAN_APPROVAL_REQUIRED error semantics
         return;
@@ -561,7 +652,12 @@ export function registerAuth(app: FastifyInstance): void {
 
     try {
       // Authoritative principal resolution derives tenant_id strictly from database membership
-      const principal = await authAdapter.authenticateBearerToken(token);
+      const principal = await authAdapter.authenticateBearerToken(
+        token,
+        undefined,
+        undefined,
+        clientIp,
+      );
       request.principal = principal;
       request.tenantId = principal.tenantId;
     } catch (err: unknown) {

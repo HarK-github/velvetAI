@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import { Kysely, sql } from "kysely";
-import { Database, withTenantTransaction } from "@velvetai/db";
+import {
+  Database,
+  withTenantTransaction,
+  insertBlockingResourceClaim,
+  mapPgSlotConflictError,
+} from "@velvetai/db";
 import {
   BookingId,
   BookingQuoteId,
@@ -198,7 +203,10 @@ export class BookingService {
     clientId: string,
     input: PrepareBookingInput,
   ): Promise<PrepareBookingResponse> {
-    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+    let conflictDetailsBuilder: (() => Record<string, unknown>) | undefined;
+
+    try {
+      return await withTenantTransaction(this.db, tenantId, async (trx) => {
       // 1. Resolve service and active version
       const service = await trx
         .selectFrom("services")
@@ -297,45 +305,39 @@ export class BookingService {
         })
         .execute();
 
-      // 5. Insert resource claim with GiST exclusion constraint on (tenant_id, resource_id, blocked_during) WHERE (blocking)
-      const claimId = crypto.randomUUID();
-      try {
-        await trx
-          .insertInto("resource_claims")
-          .values({
-            id: claimId,
-            tenant_id: tenantId,
-            booking_id: bookingId,
-            resource_id: resource.id,
-            starts_at: startsAt,
-            ends_at: endsAt,
-            blocked_during: sql`tstzrange(${startsAt.toISOString()}::timestamptz, ${endsAt.toISOString()}::timestamptz, '[)')`,
-            state: "HELD",
-            blocking: true,
-            hold_expires_at: holdExpiresAt,
-            expires_at: holdExpiresAt,
-          })
-          .execute();
-      } catch (err: unknown) {
-        const pgError = err as { code?: string; message?: string };
-        // PostgreSQL code 23P01 is exclusion_violation
-        if (pgError.code === "23P01" || pgError.message?.includes("no_overlapping_claims")) {
-          // Provide alternative slots 30 and 60 minutes later
-          const alt1Start = new Date(endsAt.getTime());
-          const alt1End = new Date(alt1Start.getTime() + service.duration_minutes * 60_000);
-          const alt2Start = new Date(alt1End.getTime());
-          const alt2End = new Date(alt2Start.getTime() + service.duration_minutes * 60_000);
+      // 5. Acquire transaction-scoped advisory lock per (tenant_id, resource_id) and insert resource claim
+      //    with authoritative GiST exclusion constraint; maps both 23P01 and 40P01 to 409 SlotUnavailableError.
+      conflictDetailsBuilder = () => {
+        const alt1Start = new Date(endsAt.getTime());
+        const alt1End = new Date(alt1Start.getTime() + service.duration_minutes * 60_000);
+        const alt2Start = new Date(alt1End.getTime());
+        const alt2End = new Date(alt2Start.getTime() + service.duration_minutes * 60_000);
+        return {
+          conflictSlot: { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() },
+          alternatives: [
+            { startsAt: alt1Start.toISOString(), endsAt: alt1End.toISOString() },
+            { startsAt: alt2Start.toISOString(), endsAt: alt2End.toISOString() },
+          ],
+        };
+      };
 
-          throw new SlotUnavailableError("The selected slot is no longer available", {
-            conflictSlot: { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() },
-            alternatives: [
-              { startsAt: alt1Start.toISOString(), endsAt: alt1End.toISOString() },
-              { startsAt: alt2Start.toISOString(), endsAt: alt2End.toISOString() },
-            ],
-          });
-        }
-        throw err;
-      }
+      const claimId = crypto.randomUUID();
+      await insertBlockingResourceClaim(
+        trx,
+        {
+          claimId,
+          tenantId,
+          bookingId,
+          claimSource: "BOOKING",
+          resourceId: resource.id,
+          startsAt,
+          endsAt,
+          state: "HELD",
+          holdExpiresAt,
+          expiresAt: holdExpiresAt,
+        },
+        conflictDetailsBuilder,
+      );
 
       // 6. Persist immutable server-side hold snapshot per Amendment D.1
       const snapshotId = crypto.randomUUID();
@@ -464,26 +466,29 @@ export class BookingService {
         })
         .execute();
 
-      const webOrigin =
-        process.env.PUBLIC_WEB_ORIGIN || process.env.WEB_BASE_URL || "http://localhost:5174";
-      const approvalUrl = `${webOrigin}/approve/${interactionLocator}`;
-      const effectiveTimeZone = input.timeZone || "America/New_York";
-      const displayInfo = formatSlotDisplay(startsAt, endsAt, effectiveTimeZone);
+        const webOrigin =
+          process.env.PUBLIC_WEB_ORIGIN || process.env.WEB_BASE_URL || "http://localhost:5174";
+        const approvalUrl = `${webOrigin}/approve/${interactionLocator}`;
+        const effectiveTimeZone = input.timeZone || "America/New_York";
+        const displayInfo = formatSlotDisplay(startsAt, endsAt, effectiveTimeZone);
 
-      return {
-        bookingId,
-        status: "HELD",
-        holdExpiresAt: holdExpiresAt.toISOString() as Rfc3339Timestamp,
-        version: 1,
-        intent: signedIntent,
-        approvalLocator: `/v1/booking-approvals/${interactionLocator}`,
-        approvalUrl,
-        interactionToken,
-        serviceName: service.name,
-        display: displayInfo,
-        requiresHumanConfirmation: true as const,
-      };
-    });
+        return {
+          bookingId,
+          status: "HELD",
+          holdExpiresAt: holdExpiresAt.toISOString() as Rfc3339Timestamp,
+          version: 1,
+          intent: signedIntent,
+          approvalLocator: `/v1/booking-approvals/${interactionLocator}`,
+          approvalUrl,
+          interactionToken,
+          serviceName: service.name,
+          display: displayInfo,
+          requiresHumanConfirmation: true as const,
+        };
+      });
+    } catch (err: unknown) {
+      throw mapPgSlotConflictError(err, conflictDetailsBuilder);
+    }
   }
 
   /**
@@ -1474,6 +1479,8 @@ export class BookingService {
         const expiredClaims = await trx
           .selectFrom("resource_claims")
           .where("state", "=", "HELD")
+          .where("claim_source", "=", "BOOKING")
+          .where("booking_id", "is not", null)
           .where(sql<boolean>`hold_expires_at <= clock_timestamp()`)
           .select(["id", "booking_id", "tenant_id"])
           .limit(limit)
@@ -1486,6 +1493,10 @@ export class BookingService {
         }
 
         for (const claim of expiredClaims) {
+          if (!claim.booking_id) {
+            continue;
+          }
+
           // Transition claim to EXPIRED and release blocking status
           await trx
             .updateTable("resource_claims")

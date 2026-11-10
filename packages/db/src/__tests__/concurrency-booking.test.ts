@@ -1,8 +1,25 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "node:crypto";
-import { sql, Kysely } from "kysely";
+import {
+  sql,
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type Dialect,
+  type Driver,
+  type DatabaseConnection,
+  type CompiledQuery,
+  type QueryResult,
+} from "kysely";
+import { SlotUnavailableError } from "@velvetai/contracts";
 import { Database } from "../schema.js";
-import { withTenantTransaction } from "../index.js";
+import {
+  withTenantTransaction,
+  insertBlockingResourceClaim,
+  mapPgSlotConflictError,
+  isSlotConflictPgError,
+} from "../index.js";
 import { setupTestDatabase, seedTenantContext, SeededTenantContext } from "./test-helper.js";
 
 describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
@@ -75,29 +92,24 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
             })
             .execute();
 
-          // Attempt authoritative GiST claim
-          await trx
-            .insertInto("resource_claims")
-            .values({
-              id: claimId,
-              tenant_id: seedA.tenantId,
-              booking_id: bookingId,
-              resource_id: seedA.resourceId,
-              starts_at: slotStart,
-              ends_at: slotEnd,
-              blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-              state: "HELD",
-              blocking: true,
-              hold_expires_at: holdExpiry,
-              expires_at: holdExpiry,
-            })
-            .execute();
+          // Call authoritative production hold/claim insert helper (advisory lock + GiST exclusion)
+          await insertBlockingResourceClaim(trx, {
+            claimId,
+            tenantId: seedA.tenantId,
+            bookingId,
+            claimSource: "BOOKING",
+            resourceId: seedA.resourceId,
+            startsAt: slotStart,
+            endsAt: slotEnd,
+            state: "HELD",
+            holdExpiresAt: holdExpiry,
+            expiresAt: holdExpiry,
+          });
         });
 
         successfulCommits++;
       } catch (err: unknown) {
-        const pgErr = err as { code?: string; message?: string };
-        if (pgErr.code === "23P01" || pgErr.message?.includes("no_overlapping_claims")) {
+        if (err instanceof SlotUnavailableError && err.status === 409 && err.code === "slot_unavailable") {
           exclusionConflicts++;
         } else {
           otherErrors++;
@@ -571,26 +583,21 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
               })
               .execute();
 
-            await trx
-              .insertInto("resource_claims")
-              .values({
-                id: crypto.randomUUID(),
-                tenant_id: seedA.tenantId,
-                booking_id: repBookingId,
-                resource_id: seedA.resourceId,
-                starts_at: slotStart,
-                ends_at: slotEnd,
-                blocked_during: sql`tstzrange(${slotStart.toISOString()}::timestamptz, ${slotEnd.toISOString()}::timestamptz, '[)')`,
-                state: "HELD",
-                blocking: true,
-                hold_expires_at: holdExpiry,
-              })
-              .execute();
+            await insertBlockingResourceClaim(trx, {
+              claimId: crypto.randomUUID(),
+              tenantId: seedA.tenantId,
+              bookingId: repBookingId,
+              claimSource: "BOOKING",
+              resourceId: seedA.resourceId,
+              startsAt: slotStart,
+              endsAt: slotEnd,
+              state: "HELD",
+              holdExpiresAt: holdExpiry,
+            });
           });
           replacementWinners++;
         } catch (err: unknown) {
-          const pgCode = (err as { code?: string }).code;
-          if (pgCode === "23P01" || pgCode === "40P01") {
+          if (err instanceof SlotUnavailableError && err.status === 409) {
             replacementConflicts++;
           } else {
             otherErrors.push(err);
@@ -599,12 +606,7 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
       }),
     );
 
-    if (otherErrors.length > 0) {
-      console.error(
-        "Replacement other errors:",
-        otherErrors.map((e) => e?.code || e?.message),
-      );
-    }
+    expect(otherErrors.length).toBe(0);
     expect(replacementWinners).toBe(1);
     expect(replacementConflicts).toBe(9);
 
@@ -746,5 +748,162 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
     }
 
     expect(rangeError).toBe(true);
+  });
+
+  it("7. Production claim insert acquires advisory lock first and maps 40P01 and 23P01 identically to 409 SlotUnavailableError", async () => {
+    const createMockDb = (errorToThrowOnInsert: Error) => {
+      const executedSql: Array<{ sql: string; parameters: readonly unknown[] }> = [];
+      let inTx = false;
+      let rolledBack = false;
+
+      const conn: DatabaseConnection = {
+        async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
+          executedSql.push({ sql: compiledQuery.sql, parameters: compiledQuery.parameters });
+          if (compiledQuery.sql.includes('insert into "resource_claims"')) {
+            throw errorToThrowOnInsert;
+          }
+          return { rows: [] };
+        },
+        async *streamQuery() {
+          // unused
+        },
+      };
+
+      const driver: Driver = {
+        async init() {},
+        async acquireConnection() {
+          return conn;
+        },
+        async beginTransaction() {
+          inTx = true;
+        },
+        async commitTransaction() {
+          inTx = false;
+        },
+        async rollbackTransaction() {
+          rolledBack = true;
+          inTx = false;
+        },
+        async releaseConnection() {},
+        async destroy() {},
+      };
+
+      const dialect: Dialect = {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => driver,
+        createIntrospector: (dbInstance) => new PostgresIntrospector(dbInstance),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      };
+
+      return {
+        mockDb: new Kysely<Database>({ dialect }),
+        executedSql,
+        getState: () => ({ inTx, rolledBack }),
+      };
+    };
+
+    const pgDeadlockErr = Object.assign(new Error("deadlock detected"), { code: "40P01" });
+    const pgExclusionErr = Object.assign(
+      new Error('conflicting key value violates exclusion constraint "no_overlapping_claims"'),
+      { code: "23P01" },
+    );
+    const pgRlsErr = Object.assign(new Error("new row violates row-level security policy"), {
+      code: "42501",
+    });
+
+    const slotStart = new Date("2026-11-06T10:00:00.000Z");
+    const slotEnd = new Date("2026-11-06T10:30:00.000Z");
+
+    // A. PostgreSQL 40P01 -> SlotUnavailableError (409), advisory lock runs before insert, tx rolled back
+    {
+      const { mockDb, executedSql, getState } = createMockDb(pgDeadlockErr);
+      let caught: unknown;
+      try {
+        await withTenantTransaction(mockDb, seedA.tenantId, async (trx) => {
+          await insertBlockingResourceClaim(
+            trx,
+            {
+              claimId: crypto.randomUUID(),
+              tenantId: seedA.tenantId,
+              bookingId: crypto.randomUUID(),
+              resourceId: seedA.resourceId,
+              startsAt: slotStart,
+              endsAt: slotEnd,
+              state: "HELD",
+            },
+            () => ({ conflictSlot: { startsAt: slotStart.toISOString(), endsAt: slotEnd.toISOString() } }),
+          );
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(SlotUnavailableError);
+      const slotErr = caught as SlotUnavailableError;
+      expect(slotErr.status).toBe(409);
+      expect(slotErr.code).toBe("slot_unavailable");
+      expect(getState().rolledBack).toBe(true);
+
+      const lockIdx = executedSql.findIndex((q) => q.sql.includes("pg_advisory_xact_lock"));
+      const insertIdx = executedSql.findIndex((q) => q.sql.includes('insert into "resource_claims"'));
+      expect(lockIdx).toBeGreaterThanOrEqual(0);
+      expect(insertIdx).toBeGreaterThan(lockIdx);
+      expect(executedSql[lockIdx]?.parameters).toEqual([seedA.tenantId, seedA.resourceId]);
+      await mockDb.destroy();
+    }
+
+    // B. PostgreSQL 23P01 -> identical SlotUnavailableError (409)
+    {
+      const { mockDb } = createMockDb(pgExclusionErr);
+      let caught: unknown;
+      try {
+        await withTenantTransaction(mockDb, seedA.tenantId, async (trx) => {
+          await insertBlockingResourceClaim(trx, {
+            claimId: crypto.randomUUID(),
+            tenantId: seedA.tenantId,
+            bookingId: crypto.randomUUID(),
+            resourceId: seedA.resourceId,
+            startsAt: slotStart,
+            endsAt: slotEnd,
+            state: "HELD",
+          });
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(SlotUnavailableError);
+      const slotErr = caught as SlotUnavailableError;
+      expect(slotErr.status).toBe(409);
+      expect(slotErr.code).toBe("slot_unavailable");
+      await mockDb.destroy();
+    }
+
+    // C. Non-conflict errors (e.g. 42501) propagate unchanged
+    {
+      const { mockDb } = createMockDb(pgRlsErr);
+      await expect(
+        withTenantTransaction(mockDb, seedA.tenantId, async (trx) => {
+          await insertBlockingResourceClaim(trx, {
+            claimId: crypto.randomUUID(),
+            tenantId: seedA.tenantId,
+            bookingId: crypto.randomUUID(),
+            resourceId: seedA.resourceId,
+            startsAt: slotStart,
+            endsAt: slotEnd,
+            state: "HELD",
+          });
+        }),
+      ).rejects.toThrow(/row-level security/);
+      await mockDb.destroy();
+    }
+
+    // D. Helper assertions for wrapped cause chain
+    const wrappedDeadlock = Object.assign(new Error("query failed"), { cause: pgDeadlockErr });
+    expect(isSlotConflictPgError(wrappedDeadlock)).toBe(true);
+    const mapped = mapPgSlotConflictError(wrappedDeadlock);
+    expect(mapped).toBeInstanceOf(SlotUnavailableError);
+    expect((mapped as SlotUnavailableError).status).toBe(409);
+    expect((mapped as SlotUnavailableError).code).toBe("slot_unavailable");
   });
 });

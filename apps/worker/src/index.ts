@@ -1,5 +1,6 @@
 import { createLogger, validateEnv, loadRootEnv } from "@velvetai/observability";
 import { createDatabaseClient, Database } from "@velvetai/db";
+import { PaymentPort } from "@velvetai/application";
 import { Kysely } from "kysely";
 import { OutboxProcessor, InMemoryOutboxStore, OutboxStore } from "./outbox-processor.js";
 import { PostgreSqlOutboxStore } from "./postgres-outbox-store.js";
@@ -19,7 +20,7 @@ export class OutboxWorker {
   readonly holdReaper?: HoldReaperProcessor;
   readonly reconciliation?: ReconciliationProcessor;
 
-  constructor(store?: OutboxStore, db?: Kysely<Database>) {
+  constructor(store?: OutboxStore, db?: Kysely<Database>, paymentPort?: PaymentPort) {
     loadRootEnv();
     validateEnv();
 
@@ -55,12 +56,33 @@ export class OutboxWorker {
       }
       const dbClient = db || createDatabaseClient(dbUrl);
       this.holdReaper = new HoldReaperProcessor(dbClient);
+      if (paymentPort) {
+        this.reconciliation = new ReconciliationProcessor(dbClient, paymentPort);
+      }
     }
   }
 
-  async start(): Promise<void> {
+  async start(intervalMs = 2000): Promise<void> {
     this.isRunning = true;
     this.logger.info("Outbox worker started");
+
+    if (intervalMs > 0 && !this.timer) {
+      this.timer = setInterval(async () => {
+        if (!this.isRunning) return;
+        try {
+          await this.processor.processNextBatch(20);
+          if (this.holdReaper) {
+            await this.holdReaper.reapOnce(50);
+          }
+          if (this.reconciliation) {
+            await this.reconciliation.reconcilePendingOperations(20);
+          }
+        } catch (err) {
+          this.logger.error({ err }, "Error in outbox worker background cycle");
+        }
+      }, intervalMs);
+      this.timer.unref();
+    }
   }
 
   async stop(): Promise<void> {

@@ -6,6 +6,7 @@ import * as paymentCoreLedger from "./migrations/0003_payment_core_ledger.js";
 import * as outboxLeaseHardening from "./migrations/0004_outbox_lease_hardening.js";
 import * as selfMembershipRls from "./migrations/0005_self_membership_rls.js";
 import * as approvalSignedIntent from "./migrations/0006_approval_signed_intent.js";
+import * as judgeTenantSeedAndReset from "./migrations/0007_judge_tenant_seed_and_reset.js";
 
 class StaticMigrationProvider implements MigrationProvider {
   async getMigrations(): Promise<Record<string, Migration>> {
@@ -34,6 +35,10 @@ class StaticMigrationProvider implements MigrationProvider {
         up: approvalSignedIntent.up,
         down: approvalSignedIntent.down,
       },
+      "0007_judge_tenant_seed_and_reset": {
+        up: judgeTenantSeedAndReset.up,
+        down: judgeTenantSeedAndReset.down,
+      },
     };
   }
 }
@@ -42,6 +47,7 @@ export function createMigrator(db: Kysely<Database>): Migrator {
   return new Migrator({
     db,
     provider: new StaticMigrationProvider(),
+    allowUnorderedMigrations: true,
   });
 }
 

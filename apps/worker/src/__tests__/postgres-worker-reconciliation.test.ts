@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import crypto from "node:crypto";
 import { sql, Kysely } from "kysely";
 import {
@@ -145,13 +145,15 @@ describe("W5: PostgreSQL Outbox Store & Reconciliation Worker", () => {
     outboxStore = new PostgreSqlOutboxStore(db, 3, 100, 1000);
     mockPort = new MockPaymentPort();
     reconciliation = new ReconciliationProcessor(db, mockPort);
+  });
 
+  beforeEach(async () => {
     tenantId = crypto.randomUUID() as TenantId;
     await db
       .insertInto("tenants")
       .values({
         id: tenantId,
-        name: "W5 Worker Tenant",
+        name: `W5 Worker Tenant ${tenantId.slice(0, 8)}`,
         default_currency: "USD",
         status: "ACTIVE",
       })

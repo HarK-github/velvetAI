@@ -8,27 +8,24 @@ This document provides the authoritative, tested deployment architecture, config
 
 ```
                   +---------------------------+
-                  |   velvetai-web (Static)   |
+                  |   velvetai-web (Vercel)   |
                   |     (React 19 / Vite)     |
+                  | https://velvetai-five.    |
+                  |       vercel.app          |
                   +-------------+-------------+
                                 |
                                 v (HTTPS REST & SSE)
 +------------------+     +------+--------------------+     +------------------------+
 |  PayPal Sandbox  |<--->|    velvetai-api (Web)     |<--->|      velvetai-db       |
-|    REST API v2   |     |  (Fastify 5 / Docker)     |     | (Managed PostgreSQL 17)|
-+------------------+     +---------------------------+     +-----------+------------+
-        ^                               ^                              ^
-        |                               |                              |
-        |                +--------------+------------+                 |
-        +--------------->|   velvetai-worker (Bg)    |<----------------+
-                         |  (Outbox & Reconciliation)|
+|    REST API v2   |     |  (Fastify 5 / Docker)     |     | (Managed PostgreSQL 17 |
++------------------+     | + Embedded Outbox Worker  |     |   or Neon/Supabase)    |
+                         |   (Zero-Cost $0 Setup)    |     +------------------------+
                          +---------------------------+
 ```
 
-1. **`velvetai-api`** (Web Service, Docker runtime): Fastify 5 REST API, MCP 2026-07-28 endpoint (`/mcp`), Ask AI (`/v1/ai/chat` with Google Gemini & rate limiting), and PayPal webhooks. Health check path: `/health/ready`.
-2. **`velvetai-worker`** (Background Worker, Docker runtime): Transactional outbox relay (`FOR UPDATE SKIP LOCKED`), hold reaper, and PayPal reconciliation processor.
-3. **`velvetai-web`** (Static Site, Node 24 build): React 19 SPA built with Vite, Auth0 SPA SDK, and PayPal JS SDK v6.
-4. **`velvetai-db`** (Managed PostgreSQL 17): PostgreSQL 17 database enforcing `FORCE ROW LEVEL SECURITY`, `btree_gist` exclusion constraints, and isolated non-superuser runtime role (`velvet_runtime`).
+1. **`velvetai-api`** (Web Service, Docker runtime, Free Tier on Render): Fastify 5 REST API, MCP 2026-07-28 endpoint (`/mcp`), Ask AI (`/v1/ai/chat` with Google Gemini & rate limiting), PayPal webhooks, and **Embedded Outbox Worker** (`EMBED_WORKER=true`).
+2. **`velvetai-web`** (Vercel Hobby Tier, Free): React 19 SPA built with Vite and deployed via Vercel CLI (`https://velvetai-five.vercel.app`).
+3. **`velvetai-db`** (PostgreSQL 17, Free Tier on Render or external Neon/Supabase): PostgreSQL 17 database enforcing `FORCE ROW LEVEL SECURITY`, `btree_gist` exclusion constraints, and isolated non-superuser runtime role (`velvet_runtime`).
 
 ---
 
@@ -54,51 +51,65 @@ When changes merge to `main`, running `git push origin main` pushes simultaneous
 
 ### Shared Secret Group (`velvetai-sandbox-secrets`)
 
-| Variable                       | Secret | Description                                                | Example / Placeholder                                          |
-| :----------------------------- | :----: | :--------------------------------------------------------- | :------------------------------------------------------------- |
-| `PAYPAL_ENVIRONMENT`           |   No   | PayPal execution mode (must be `sandbox`)                  | `sandbox`                                                      |
-| `PAYPAL_CLIENT_ID`             |  Yes   | PayPal REST Sandbox App Client ID                          | `AU_...`                                                       |
-| `PAYPAL_CLIENT_SECRET`         |  Yes   | PayPal REST Sandbox App Client Secret                      | `EL_...`                                                       |
-| `PAYPAL_WEBHOOK_ID`            |  Yes   | Webhook ID returned when creating webhook in PayPal portal | `WH-...`                                                       |
-| `GOOGLE_GENERATIVE_AI_API_KEY` |  Yes   | Google AI Studio API Key for Gemini                        | `AIzaSy...`                                                    |
-| `INTENT_SIGNING_KEY`           |  Yes   | ES256 (P-256) PKCS#8 private key as Base64 PEM             | Generated via `crypto.generateKeyPairSync("ec", ...)`          |
-| `CONFIRMATION_TOKEN_SECRET`    |  Yes   | 32-byte cryptographically random hex secret                | 64 hex characters via `crypto.randomBytes(32).toString("hex")` |
-| `ENVELOPE_ENCRYPTION_KEY`      |  Yes   | 32-byte field encryption hex key                           | 64 hex characters via `crypto.randomBytes(32).toString("hex")` |
+| Variable                       | Secret | Description                                                                            | Value / Source                                                 | Needed at 1st Deploy? |
+| :----------------------------- | :----: | :------------------------------------------------------------------------------------- | :------------------------------------------------------------- | :-------------------- |
+| `PAYPAL_ENVIRONMENT`           |   No   | PayPal execution mode (must be `sandbox`)                                              | `sandbox`                                                      | Yes                   |
+| `PAYPAL_CLIENT_ID`             |  Yes   | PayPal REST Sandbox App Client ID                                                      | Copied from PayPal Sandbox Developer App                       | Yes                   |
+| `PAYPAL_CLIENT_SECRET`         |  Yes   | PayPal REST Sandbox App Client Secret                                                  | Copied from PayPal Sandbox Developer App                       | Yes                   |
+| `PAYPAL_WEBHOOK_ID`            |  Yes   | PayPal Webhook ID returned after registering webhook (safe temp: `WH-SANDBOX-DEFAULT`) | `WH-SANDBOX-DEFAULT` (replace with real ID after creating whk) | Yes (use safe temp)   |
+| `GOOGLE_GENERATIVE_AI_API_KEY` |  Yes   | Google AI Studio API Key for Gemini                                                    | Secret from Google AI Studio                                   | Yes                   |
+| `INTENT_SIGNING_KEY`           |  Yes   | ES256 (P-256) PKCS#8 private key as Base64 PEM (validated by `env.ts`)                 | Generated via Node `crypto.generateKeyPairSync("ec", ...)`     | Yes                   |
+| `CONFIRMATION_TOKEN_SECRET`    |  Yes   | 32-byte cryptographically random hex secret (validated length >= 32)                   | 64 hex characters via `crypto.randomBytes(32).toString("hex")` | Yes                   |
+| `ENVELOPE_ENCRYPTION_KEY`      |  Yes   | 32-byte field encryption hex key (validated 64 hex characters, non-dev)                | 64 hex characters via `crypto.randomBytes(32).toString("hex")` | Yes                   |
 
-### API Service (`velvetai-api`)
+### API Web Service (`velvetai-api`)
 
-| Variable                 | Secret | Description                                                  | Example / Placeholder                                        |
-| :----------------------- | :----: | :----------------------------------------------------------- | :----------------------------------------------------------- |
-| `NODE_ENV`               |   No   | Application environment                                      | `production`                                                 |
-| `DATABASE_URL`           |  Yes   | Internal connection URI for restricted role `velvet_runtime` | `postgresql://velvet_runtime:<pass>@dpg-...-a:5432/velvetai` |
-| `DATABASE_MIGRATION_URL` |  Yes   | Owner connection URI wired via `fromDatabase: velvetai-db`   | Automatically populated by Render Blueprint                  |
-| `AUTH0_ISSUER`           |   No   | Auth0 OIDC Issuer URL with trailing slash                    | `https://dev-ru8k002bt7vgmtj5.us.auth0.com/`                 |
-| `AUTH0_AUDIENCE`         |   No   | Auth0 API identifier for velvetAI API                        | `https://velvetai.example/api`                               |
-| `MCP_RESOURCE_URL`       |   No   | Render MCP API identifier registered in Auth0                | `https://<api-service>.onrender.com/mcp`                     |
-| `PUBLIC_WEB_ORIGIN`      |   No   | Canonical origin of the frontend static site                 | `https://<web-service>.onrender.com`                         |
-| `ALLOWED_ORIGINS`        |   No   | CORS allowed origins                                         | `https://<web-service>.onrender.com`                         |
-| `ALLOWED_HOSTS`          |   No   | Fastify trusted hostnames                                    | `<api-service>.onrender.com`                                 |
-| `AI_PROVIDER`            |   No   | Active AI model provider                                     | `gemini`                                                     |
-| `AI_MODEL`               |   No   | Primary Gemini model ID                                      | `gemini-3.5-flash-lite`                                      |
-| `AI_DAILY_TURN_BUDGET`   |   No   | Global daily turn budget cap for public demo                 | `1500`                                                       |
+| Variable                 | Secret | Description                                                                                 | Value / Source                                                    | Needed at 1st Deploy?           |
+| :----------------------- | :----: | :------------------------------------------------------------------------------------------ | :---------------------------------------------------------------- | :------------------------------ |
+| `NODE_ENV`               |   No   | Application environment                                                                     | `production`                                                      | Yes                             |
+| `PORT`                   |   No   | Fastify listening port                                                                      | Automatically set by Render (`3000` default)                      | Yes                             |
+| `HOST`                   |   No   | Fastify listening interface                                                                 | `0.0.0.0`                                                         | Yes                             |
+| `DATABASE_MIGRATION_URL` |  Yes   | Database owner connection URI wired from database                                           | Wired automatically via `fromDatabase: { name: velvetai-db }`     | Yes (preDeploy migrations)      |
+| `DATABASE_URL`           |  Yes   | Internal connection URI for restricted role `velvet_runtime` (`sslmode=require`)            | Set manually after running `scripts/render-db-bootstrap.sql`      | No (configured right after DB)  |
+| `OIDC_MOCK_ENABLED`      |   No   | OIDC mock bypass toggle (strictly false in production)                                      | `false`                                                           | Yes                             |
+| `AUTH0_ISSUER`           |   No   | Auth0 OIDC Issuer URL with trailing slash                                                   | `https://dev-ru8k002bt7vgmtj5.us.auth0.com/`                      | Yes                             |
+| `AUTH0_AUDIENCE`         |   No   | Auth0 API identifier for velvetAI API                                                       | `https://velvetai.example/api`                                    | Yes                             |
+| `AUTH0_JWKS_URI`         |   No   | Auth0 JSON Web Key Set URI (optional, derived from issuer if omitted)                       | `https://dev-ru8k002bt7vgmtj5.us.auth0.com/.well-known/jwks.json` | Yes                             |
+| `OIDC_ISSUER`            |   No   | Fallback OIDC Issuer URL                                                                    | `https://dev-ru8k002bt7vgmtj5.us.auth0.com/`                      | Yes                             |
+| `OIDC_AUDIENCE`          |   No   | Fallback OIDC Audience                                                                      | `https://velvetai.example/api`                                    | Yes                             |
+| `MCP_RESOURCE_URL`       |   No   | Auth0 Resource Identifier for Hosted MCP API                                                | `https://<api-host>.onrender.com/mcp` (initially velvetai-api...) | Yes (update if suffix assigned) |
+| `PUBLIC_WEB_ORIGIN`      |   No   | Canonical origin of the frontend static site                                                | `https://<web-host>.onrender.com` (initially velvetai-web...)     | Yes (update if suffix assigned) |
+| `ALLOWED_ORIGINS`        |   No   | CORS allowed origins comma-separated                                                        | `https://<web-host>.onrender.com` (initially velvetai-web...)     | Yes (update if suffix assigned) |
+| `ALLOWED_HOSTS`          |   No   | Fastify trusted hostnames comma-separated (host only, no protocol)                          | `<api-host>.onrender.com` (initially velvetai-api.onrender.com)   | Yes (update if suffix assigned) |
+| `AI_PROVIDER`            |   No   | Active AI model provider                                                                    | `gemini`                                                          | Yes                             |
+| `AI_MODEL`               |   No   | Primary Gemini model ID                                                                     | `gemini-3.5-flash-lite`                                           | Yes                             |
+| `AI_DAILY_TURN_BUDGET`   |   No   | Global daily turn budget cap for public demo                                                | `1500`                                                            | Yes                             |
+| `SELF_SIGNUP_ENABLED`    |   No   | Enable JIT buyer self-service provisioning on first Auth0 login                             | `true`                                                            | Yes                             |
+| `SELF_SIGNUP_TENANT_ID`  |   No   | Target tenant ID for self-signup buyers (defaults to Judge Demo Tenant)                     | `01932b10-0000-7000-8000-000000000a01`                            | Yes                             |
+| `PUBLIC_DEMO_TENANT_ID`  |   No   | Default tenant ID for unauthenticated public reads (/v1/services, /v1/availability)         | `01932b10-0000-7000-8000-000000000a01`                            | Yes                             |
+| `SELF_SIGNUP_ENABLED`    |   No   | Enable JIT buyer self-service provisioning on first Auth0 login                             | `true`                                                            | Yes                             |
+| `SELF_SIGNUP_TENANT_ID`  |   No   | Target tenant ID for self-signup buyers (defaults to Judge Demo Tenant)                      | `01932b10-0000-7000-8000-000000000a01`                           | Yes                             |
+| `PUBLIC_DEMO_TENANT_ID`  |   No   | Default tenant ID for unauthenticated public reads (/v1/services, /v1/availability)         | `01932b10-0000-7000-8000-000000000a01`                           | Yes                             |
+| `REDIS_URL`              |   No   | Redis connection URL (not used by runtime; outbox is in PostgreSQL, health returns mock ok) | Not required (defaults to `redis://localhost:6379`)               | No                              |
 
 ### Background Worker (`velvetai-worker`)
 
-| Variable       | Secret | Description                                                  | Example / Placeholder                                        |
-| :------------- | :----: | :----------------------------------------------------------- | :----------------------------------------------------------- |
-| `NODE_ENV`     |   No   | Application environment                                      | `production`                                                 |
-| `DATABASE_URL` |  Yes   | Internal connection URI for restricted role `velvet_runtime` | `postgresql://velvet_runtime:<pass>@dpg-...-a:5432/velvetai` |
+| Variable       | Secret | Description                                                                      | Value / Source                                               | Needed at 1st Deploy?          |
+| :------------- | :----: | :------------------------------------------------------------------------------- | :----------------------------------------------------------- | :----------------------------- |
+| `NODE_ENV`     |   No   | Application environment                                                          | `production`                                                 | Yes                            |
+| `DATABASE_URL` |  Yes   | Internal connection URI for restricted role `velvet_runtime` (`sslmode=require`) | Set manually after running `scripts/render-db-bootstrap.sql` | No (configured right after DB) |
+| `REDIS_URL`    |   No   | Redis connection URL (not used by worker; uses PostgreSQL `outbox_events`)       | Not required (defaults to `redis://localhost:6379`)          | No                             |
 
 ### Frontend Static Site (`velvetai-web`)
 
-| Variable                | Secret | Description                             | Example / Placeholder                |
-| :---------------------- | :----: | :-------------------------------------- | :----------------------------------- |
-| `NODE_VERSION`          |   No   | Build container Node runtime            | `24`                                 |
-| `VITE_API_BASE_URL`     |   No   | Public HTTPS base URL of `velvetai-api` | `https://<api-service>.onrender.com` |
-| `VITE_AUTH0_DOMAIN`     |   No   | Auth0 tenant domain                     | `dev-ru8k002bt7vgmtj5.us.auth0.com`  |
-| `VITE_AUTH0_CLIENT_ID`  |   No   | Auth0 SPA Client ID                     | `UDUndVMtt7rVZS874ztyNbcrRBSKNhMc`   |
-| `VITE_AUTH0_AUDIENCE`   |   No   | Auth0 API Audience                      | `https://velvetai.example/api`       |
-| `VITE_PAYPAL_CLIENT_ID` |   No   | PayPal Sandbox Client ID for JS SDK v6  | `AU_...`                             |
+| Variable                | Secret | Description                                                   | Value / Source                                                | Needed at 1st Deploy?           |
+| :---------------------- | :----: | :------------------------------------------------------------ | :------------------------------------------------------------ | :------------------------------ |
+| `NODE_VERSION`          |   No   | Build container Node runtime                                  | `24`                                                          | Yes                             |
+| `VITE_API_BASE_URL`     |   No   | Public HTTPS base URL of `velvetai-api` (baked at build time) | `https://<api-host>.onrender.com` (initially velvetai-api...) | Yes (rebuild if suffix differs) |
+| `VITE_AUTH0_DOMAIN`     |   No   | Auth0 tenant domain                                           | `dev-ru8k002bt7vgmtj5.us.auth0.com`                           | Yes                             |
+| `VITE_AUTH0_CLIENT_ID`  |   No   | Auth0 SPA Client ID                                           | `UDUndVMtt7rVZS874ztyNbcrRBSKNhMc`                            | Yes                             |
+| `VITE_AUTH0_AUDIENCE`   |   No   | Auth0 API Audience                                            | `https://velvetai.example/api`                                | Yes                             |
+| `VITE_PAYPAL_CLIENT_ID` |   No   | PayPal Sandbox Client ID for JS SDK v6                        | Copied from PayPal Sandbox Developer App (client id)          | Yes                             |
 
 ---
 
@@ -138,11 +149,45 @@ git remote -v
    # 3. Generate ENVELOPE_ENCRYPTION_KEY (32 random bytes as 64-character hex string)
    node -e 'console.log(require("node:crypto").randomBytes(32).toString("hex"))'
    ```
+   - For `PAYPAL_WEBHOOK_ID`: Enter temporary placeholder `WH-SANDBOX-DEFAULT`. Production env validation accepts it at boot time, allowing the API to deploy cleanly before the webhook endpoint is registered in the PayPal portal.
 6. Click **Apply**. Render will provision the database and trigger initial builds.
+
+#### First Deploy Expectations (What Succeeds & What Fails)
+
+On the very first Blueprint apply, the services will display the following behavior:
+
+- **`velvetai-db`**: SUCCEEDS and transitions to status **Available**.
+- **`velvetai-api`**:
+  - Build phase SUCCEEDS.
+  - `preDeployCommand: pnpm --filter @velvetai/db db:migrate` SUCCEEDS using `DATABASE_MIGRATION_URL` (database owner). It runs migrations 0001–0005.
+  - Service container startup FAILS with exit code 1 because `DATABASE_URL` is empty (`sync: false`).
+- **`velvetai-worker`**: Service container startup FAILS with exit code 1 because `DATABASE_URL` is empty.
+- **`velvetai-web`**: Build SUCCEEDS with initial placeholder `VITE_API_BASE_URL`.
+
+**What "Good" Looks Like in Logs on First Apply:**
+
+1. In `velvetai-api` → **Deploy Logs** → **Pre-Deploy**:
+   ```text
+   Target database: velvetai
+   Running migrations...
+   0001_initial_schema: OK
+   0002_slot_claim_rls_hardening: OK
+   0003_payment_core_ledger: OK
+   0004_outbox_lease_hardening: OK
+   0005_self_membership_rls: OK
+   All migrations completed successfully.
+   ```
+2. In `velvetai-api` → **Logs** (Service startup):
+   ```text
+   Environment validation failed:
+    - DATABASE_URL: Required
+   ```
+
+This startup failure is **expected, safe, and deliberate**: per Section J, the API and worker must never run using the superuser/owner database credentials. They remain idle until the restricted `velvet_runtime` user is bootstrapped in Phase 2.
 
 ---
 
-### Phase 2: Database Bootstrap (Restricted Runtime Role)
+### Phase 2: Database Bootstrap & Runtime Role Governance
 
 Once `velvetai-db` reaches status **Available**:
 
@@ -158,23 +203,70 @@ Once `velvetai-db` reaches status **Available**:
    ```
 4. Verify the output:
    - `btree_gist` extension enabled.
-   - Role `velvet_runtime` created/updated with `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE LOGIN`.
+   - Role `velvet_runtime` configured with `LOGIN PASSWORD ... NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`.
    - Table count reports all 25 tenant tables under `FORCE ROW LEVEL SECURITY`.
+
+#### Migration Execution Order & Future Migrations (0006–0010)
+
+- **Execution Order**:
+  1. `preDeployCommand` runs migrations 0001–0005 as database owner (`DATABASE_MIGRATION_URL`). Migration `0002` safely creates `velvet_runtime NOLOGIN NOBYPASSRLS` if not exists.
+  2. `scripts/render-db-bootstrap.sql` executes via external connection, altering `velvet_runtime` to `WITH LOGIN PASSWORD ...` and applying `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO velvet_runtime;` and `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO velvet_runtime;`.
+  3. Restricted `DATABASE_URL` is set in Render Dashboard.
+  4. Services are redeployed.
+- **Future Migrations (0006–0010)**:
+  Because `ALTER DEFAULT PRIVILEGES` was executed by the database owner, any new tables, sequences, or functions created by the owner in future migrations automatically inherit full read/write permissions for `velvet_runtime`. No manual grant scripts or role changes are required for future deployments.
 
 ---
 
-### Phase 3: Configure Runtime Connection Strings & Migration Pre-Deploy
+### Phase 3: Hostname Resolution & Service Configuration
 
-Render's `preDeployCommand: pnpm --filter @velvetai/db db:migrate` runs automatically on the API service using `DATABASE_MIGRATION_URL` (the database owner credentials wired via Render Blueprint). Migrations on hosted run **ONLY** via this preDeployCommand and never manually from local machines.
+Render URLs are assigned when services are created and may include a 4-character suffix if the base name is already taken globally on Render (e.g., `velvetai-api-a1b2.onrender.com`).
+
+#### Step 1: Read Real Service URLs
+
+1. In Render Dashboard, open **`velvetai-api`** and note the URL at the top left: `https://<real-api-host>`.
+2. Open **`velvetai-web`** and note the URL at the top left: `https://<real-web-host>`.
+
+#### Step 2: Configure Runtime Connection Strings
 
 1. Under `velvetai-db` → **Connect** → **Internal Connection**, copy the internal connection URL:
    `postgresql://velvetai_owner:<owner_pass>@dpg-...-a:5432/velvetai`
-2. Form the restricted `velvet_runtime` internal URL by replacing the owner username and password with `velvet_runtime` and its password:
-   `postgresql://velvet_runtime:<runtime_password>@dpg-...-a:5432/velvetai`
-3. In Render Dashboard, set environment variable `DATABASE_URL` to this runtime string on:
+2. Form the restricted `velvet_runtime` internal URL by replacing the owner username and password with `velvet_runtime` and its password, appending `?sslmode=require`:
+   `postgresql://velvet_runtime:<runtime_password>@dpg-...-a:5432/velvetai?sslmode=require`
+3. Set environment variable `DATABASE_URL` to this runtime string on:
    - **`velvetai-api`** → Environment → `DATABASE_URL`
    - **`velvetai-worker`** → Environment → `DATABASE_URL`
-4. Trigger a manual deploy of `velvetai-api` and `velvetai-worker`.
+
+#### Step 3: Correct Hostname & CORS Variables (If Suffix Assigned)
+
+If the assigned hostnames differ from `velvetai-api.onrender.com` / `velvetai-web.onrender.com`:
+
+1. On **`velvetai-api`** (Environment tab):
+   - `ALLOWED_HOSTS`: `<real-api-host>` (host only, e.g. `velvetai-api-a1b2.onrender.com`)
+   - `ALLOWED_ORIGINS`: `https://<real-web-host>`
+   - `PUBLIC_WEB_ORIGIN`: `https://<real-web-host>`
+   - `MCP_RESOURCE_URL`: `https://<real-api-host>/mcp`
+2. On **`velvetai-web`** (Environment tab):
+   - `VITE_API_BASE_URL`: `https://<real-api-host>`
+
+#### Step 4: Trigger Redeployments
+
+1. **`velvetai-api`**: Click **Manual Deploy** → **Deploy latest commit**.
+2. **`velvetai-worker`**: Click **Manual Deploy** → **Deploy latest commit**.
+3. **`velvetai-web`**: Click **Manual Deploy** → **Clear build cache & deploy** (CRITICAL: Static sites bake `VITE_*` variables into the JavaScript bundle at build time; clearing cache forces a fresh Vite build).
+
+**What "Good" Looks Like in Logs After Redeploy:**
+
+- `velvetai-api`:
+  ```text
+  Target database: velvetai
+  {"level":"info","time":"...","msg":"Server listening at http://0.0.0.0:3000"}
+  ```
+- `velvetai-worker`:
+  ```text
+  Target database: velvetai
+  [worker] Outbox processor started with polling interval 1000ms
+  ```
 
 ---
 
@@ -209,9 +301,9 @@ unset DB_URL
 1. **SPA Application (`velvetAI Web`)**:
    - In Auth0 Dashboard, navigate to **Applications** → **Applications** → **velvetAI Web** (Client ID: `UDUndVMtt7rVZS874ztyNbcrRBSKNhMc`).
    - In **Settings** tab, add your Render static site URL to the following fields:
-     - **Allowed Callback URLs**: `https://<web-service>.onrender.com, https://<web-service>.onrender.com/callback, http://localhost:5173, http://localhost:5173/callback`
-     - **Allowed Logout URLs**: `https://<web-service>.onrender.com, http://localhost:5173`
-     - **Allowed Web Origins**: `https://<web-service>.onrender.com, http://localhost:5173`
+     - **Allowed Callback URLs**: `https://velvetai-five.vercel.app, https://velvetai-five.vercel.app/callback, https://<web-service>.onrender.com, http://localhost:5173, http://localhost:5173/callback`
+     - **Allowed Logout URLs**: `https://velvetai-five.vercel.app, https://<web-service>.onrender.com, http://localhost:5173`
+     - **Allowed Web Origins**: `https://velvetai-five.vercel.app, https://<web-service>.onrender.com, http://localhost:5173`
    - Click **Save Changes**.
 
 2. **Create Hosted MCP API (`velvetAI MCP (Render)`)**:
@@ -272,8 +364,8 @@ curl -fsS https://<api-service>.onrender.com/.well-known/oauth-protected-resourc
 # 3. Cross-Tenant Isolation Verification
 DATABASE_URL="<EXTERNAL_RUNTIME_ROLE_URL>" pnpm tsx scripts/hosted-rls-check.ts
 
-# 4. MCP External Client Smoke Test
-MCP_URL=https://<api-service>.onrender.com/mcp pnpm mcp:smoke
+# 4. MCP External Client Smoke Test (executes full tool suite and prompts human buyer approval)
+API_BASE_URL="https://<api-service>.onrender.com" PUBLIC_WEB_ORIGIN="https://<web-service>.onrender.com" pnpm mcp:smoke
 ```
 
 ---
