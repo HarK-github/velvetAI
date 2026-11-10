@@ -231,7 +231,9 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const confirmation = await bookingService.confirmApproval(tenantId, locator, principal.userId);
+    const confirmation = await bookingService.confirmApproval(tenantId, locator, principal.userId, {
+      actorSubject: principal.subject,
+    });
     return reply.status(200).send(confirmation);
   });
 

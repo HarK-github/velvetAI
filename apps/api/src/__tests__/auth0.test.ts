@@ -818,5 +818,67 @@ describe("W1: Auth0 Identity and Local Membership Authority", () => {
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ ok: true });
     });
+
+    it("unions local judge:* scopes when a human JUDGE authenticates with Auth0 JWT lacking judge:* claims", async () => {
+      const judgeSub = `auth0|judge-union-${Date.now()}`;
+      const judgeUserId = crypto.randomUUID();
+      const judgeTenantId = "01932b10-0000-7000-8000-000000000a01";
+
+      await testDb
+        .insertInto("app_users")
+        .values({
+          id: judgeUserId,
+          oidc_subject: judgeSub,
+          email_ciphertext: "judge-union@example.com",
+        })
+        .execute();
+
+      await withTenantTransaction(testDb, judgeTenantId, async (trx) => {
+        await trx
+          .insertInto("memberships")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: judgeTenantId,
+            user_id: judgeUserId,
+            role: "JUDGE",
+            role_version: 1,
+            revoked_at: null,
+          })
+          .execute();
+      });
+
+      try {
+        const jwt = await new jose.SignJWT({
+          sub: judgeSub,
+          scope: "openid profile email booking:read",
+        })
+          .setProtectedHeader({ alg: "RS256" })
+          .setIssuer(testIssuer)
+          .setAudience(testAudience)
+          .setIssuedAt()
+          .setExpirationTime("2h")
+          .sign(keyPair.privateKey);
+
+        const res = await app.inject({
+          method: "GET",
+          url: "/v1/test/principal",
+          headers: {
+            authorization: `Bearer ${jwt}`,
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const data = JSON.parse(res.body);
+        expect(data.principal.roles).toContain("JUDGE");
+        expect(data.principal.scopes).toEqual(
+          expect.arrayContaining(["booking:read", "judge:reset", "judge:abuse_lab"]),
+        );
+      } finally {
+        await withTenantTransaction(testDb, judgeTenantId, async (trx) => {
+          await trx.deleteFrom("memberships").where("user_id", "=", judgeUserId).execute();
+        });
+        await testDb.deleteFrom("app_users").where("id", "=", judgeUserId).execute();
+      }
+    });
   });
 });

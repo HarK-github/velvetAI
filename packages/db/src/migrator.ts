@@ -6,6 +6,7 @@ import * as paymentCoreLedger from "./migrations/0003_payment_core_ledger.js";
 import * as outboxLeaseHardening from "./migrations/0004_outbox_lease_hardening.js";
 import * as selfMembershipRls from "./migrations/0005_self_membership_rls.js";
 import * as judgeTenantSeedAndReset from "./migrations/0007_judge_tenant_seed_and_reset.js";
+import * as judgeAbuseRuns from "./migrations/0009_judge_abuse_runs.js";
 
 class StaticMigrationProvider implements MigrationProvider {
   async getMigrations(): Promise<Record<string, Migration>> {
@@ -33,6 +34,10 @@ class StaticMigrationProvider implements MigrationProvider {
       "0007_judge_tenant_seed_and_reset": {
         up: judgeTenantSeedAndReset.up,
         down: judgeTenantSeedAndReset.down,
+      },
+      "0009_judge_abuse_runs": {
+        up: judgeAbuseRuns.up,
+        down: judgeAbuseRuns.down,
       },
     };
   }
