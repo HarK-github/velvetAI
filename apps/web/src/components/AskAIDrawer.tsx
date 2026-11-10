@@ -1346,7 +1346,8 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
         quoteArgs?.timeZone ||
         "America/New_York";
 
-      const idempotencyKey = `askai-prep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const actionScope = `askai-prep:${quoteData.quoteId || `${serviceId}:${startsAt}`}`;
+      const idempotencyKey = apiClient.getOrCreateActionKey(actionScope, "askai-prep");
       const prepareRes = await apiClient.prepareBooking(
         {
           serviceId,

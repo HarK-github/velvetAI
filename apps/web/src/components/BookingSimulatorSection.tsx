@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { FC } from "react";
 import { PayPalButton, PayPalPaymentSuccess } from "./PayPalButton.js";
-import { API_BASE_URL } from "../api-client.js";
+import { API_BASE_URL, apiClient } from "../api-client.js";
 
 interface ServiceItem {
   id: string;
@@ -242,25 +242,14 @@ export const BookingSimulatorSection: FC = () => {
       setIsLoadingQuote(true);
       setQuoteError(null);
       try {
-        const res = await fetch(`${API_BASE_URL}/v1/booking-quotes`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Idempotency-Key": `quote-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          },
-          body: JSON.stringify({
-            serviceId: service.id,
-            locationId: "01932b10-0000-7000-8000-000000000001",
-            startsAt: slot.startsAt,
-            timeZone: "UTC",
-          }),
+        const data = await apiClient.createBookingQuote({
+          serviceId: service.id,
+          locationId: "01932b10-0000-7000-8000-000000000001",
+          startsAt: slot.startsAt,
+          timeZone: "UTC",
         });
-        if (!res.ok) {
-          throw new Error(`Quote API responded with HTTP ${res.status}`);
-        }
-        const data = await res.json();
         if (!isMountedRef.current) return;
-        setQuote(data);
+        setQuote(data as unknown as QuoteData);
       } catch (err: unknown) {
         if (!isMountedRef.current) return;
         if (isDemoMode) {
@@ -322,30 +311,13 @@ export const BookingSimulatorSection: FC = () => {
     setPaymentOutcome(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/v1/booking-holds`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": `hold-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        },
-        body: JSON.stringify({
-          quoteId: quote.quoteId,
-          customer: { email: customerEmail, displayName: "Autonomous Agent Demo" },
-          note: "Reserved via velvetAI interactive frontend console",
-        }),
+      const data = await apiClient.createBookingHold({
+        quoteId: quote.quoteId,
+        customer: { email: customerEmail, displayName: "Autonomous Agent Demo" },
+        note: "Reserved via velvetAI interactive frontend console",
       });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => null);
-        throw new Error(
-          errData?.error?.message ||
-            errData?.message ||
-            `HTTP ${res.status}: Failed to lock slot hold`,
-        );
-      }
-      const data = await res.json();
       if (!isMountedRef.current) return;
-      setHold(data);
+      setHold(data as unknown as HoldData);
     } catch (err: unknown) {
       if (!isMountedRef.current) return;
       setHoldError(err instanceof Error ? err.message : "Failed to secure slot hold on server");

@@ -227,8 +227,81 @@ export async function runAiGoldenPath(targetUrl?: string) {
       }
     }
 
+    // --------------------------------------------------------------------------------
+    // Step 5: POST Approve & Commit (Transition HELD -> COMMITTING)
+    // --------------------------------------------------------------------------------
+    const approveRes = await fetch(`${defaultUrl}${prepData.approvalLocator}/approve-and-commit`, {
+      method: "POST",
+      headers: {
+        authorization: authHeader,
+        "content-type": "application/json",
+        "idempotency-key": `approve-golden-${Date.now()}`,
+      },
+      body: JSON.stringify({}),
+    });
+    const approveData = (await approveRes.json()) as any;
+
+    if (
+      !approveRes.ok ||
+      approveData.status !== "COMMITTING" ||
+      approveData.next?.type !== "PAY_DEPOSIT"
+    ) {
+      logStep(
+        "5",
+        "Approve & Commit Booking",
+        false,
+        `HTTP ${approveRes.status}: ${JSON.stringify(approveData)}`,
+      );
+    } else {
+      logStep(
+        "5",
+        "Approve & Commit Booking",
+        true,
+        `Booking ${approveData.bookingId} transitioned to ${approveData.status} (next: ${approveData.next.type})`,
+      );
+    }
+
+    // --------------------------------------------------------------------------------
+    // Step 6: POST Payment Order (Expect HTTP 201 + PayPal Order ID; No Capture)
+    // --------------------------------------------------------------------------------
+    const paymentOrderIdempotencyKey = `pay-order-golden-${Date.now()}`;
+    const orderRes = await fetch(
+      `${defaultUrl}/v1/bookings/${approveData.bookingId}/payment-order`,
+      {
+        method: "POST",
+        headers: {
+          authorization: authHeader,
+          "content-type": "application/json",
+          "idempotency-key": paymentOrderIdempotencyKey,
+        },
+        body: JSON.stringify({}),
+      },
+    );
+    const orderData = (await orderRes.json()) as any;
+
+    if (
+      orderRes.status !== 201 ||
+      typeof orderData.paypalOrderId !== "string" ||
+      orderData.paypalOrderId.trim().length === 0 ||
+      !orderData.paymentIntentId
+    ) {
+      logStep(
+        "6",
+        "Create PayPal Payment Order",
+        false,
+        `Expected HTTP 201 with paypalOrderId, got HTTP ${orderRes.status}: ${JSON.stringify(orderData)}`,
+      );
+    } else {
+      logStep(
+        "6",
+        "Create PayPal Payment Order",
+        true,
+        `HTTP ${orderRes.status} · PayPal Order ID: ${orderData.paypalOrderId} · Payment Intent: ${orderData.paymentIntentId} · Status: ${orderData.status} (no capture invoked)`,
+      );
+    }
+
     console.log("\n================================================================================");
-    console.log("ALL 4 AI GOLDEN PATH STEPS PASSED OVER REAL HTTP!");
+    console.log("ALL 6 AI GOLDEN PATH STEPS PASSED OVER REAL HTTP!");
     console.log("================================================================================\n");
   } finally {
     if (standaloneServer) {

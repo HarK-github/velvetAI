@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, type FC } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, type FC } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { Link } from "../router.js";
 import type { BookingApprovalDetails, ApproveAndCommitResponse } from "@velvetai/contracts";
@@ -7,6 +7,7 @@ import {
   postApproveAndCommit,
   postConfirmApproval,
 } from "../lib/approval-api.js";
+import { apiClient, generateIdempotencyKey } from "../api-client.js";
 import { PayPalButton, type PayPalPaymentSuccess } from "../components/PayPalButton.js";
 
 export type ApprovalPageState =
@@ -44,7 +45,23 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
   // Form & action state
   const [agreedToTerms, setAgreedToTerms] = useState<boolean>(false);
   const [confirmedBookingId, setConfirmedBookingId] = useState<string | null>(null);
+  const [paymentOrderKeys, setPaymentOrderKeys] = useState<{
+    bookingId: string;
+    key: string;
+  } | null>(null);
   const [now, setNow] = useState<number>(Date.now());
+  const approveCommitKeyRef = useRef<{ locator: string; key: string } | null>(null);
+  const captureKeysRef = useRef<Map<string, string>>(new Map());
+
+  const getCaptureIdempotencyKey = useCallback((intentId: string) => {
+    const existing = captureKeysRef.current.get(intentId);
+    if (existing) {
+      return existing;
+    }
+    const generated = generateIdempotencyKey("capture");
+    captureKeysRef.current.set(intentId, generated);
+    return generated;
+  }, []);
 
   // Ticking timer for countdown
   useEffect(() => {
@@ -164,10 +181,30 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
 
     try {
       const token = await getAuthToken();
-      const res: ApproveAndCommitResponse = await postApproveAndCommit(locator, token);
+      if (token && token !== "test-token") {
+        apiClient.setAuthToken(token);
+      } else if (!apiClient.getAuthToken() && token) {
+        apiClient.setAuthToken(token);
+      }
+      if (!approveCommitKeyRef.current || approveCommitKeyRef.current.locator !== locator) {
+        approveCommitKeyRef.current = {
+          locator,
+          key: generateIdempotencyKey("approve"),
+        };
+      }
+      const res: ApproveAndCommitResponse = await postApproveAndCommit(
+        locator,
+        token,
+        approveCommitKeyRef.current.key,
+      );
       setConfirmedBookingId(res.bookingId);
 
       if (res.status === "COMMITTING" && res.next?.type === "PAY_DEPOSIT") {
+        setPaymentOrderKeys((prev) =>
+          prev?.bookingId === res.bookingId
+            ? prev
+            : { bookingId: res.bookingId, key: generateIdempotencyKey("pay-order") },
+        );
         setPageState("pay_deposit");
       } else if (res.status === "CONFIRMED") {
         setPageState("confirmed");
@@ -771,6 +808,12 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
 
               <PayPalButton
                 bookingId={confirmedBookingId || details.bookingId}
+                orderIdempotencyKey={
+                  paymentOrderKeys?.bookingId === (confirmedBookingId || details.bookingId)
+                    ? paymentOrderKeys.key
+                    : undefined
+                }
+                getCaptureIdempotencyKey={getCaptureIdempotencyKey}
                 onPaymentOutcome={handlePaymentOutcome}
               />
             </div>
