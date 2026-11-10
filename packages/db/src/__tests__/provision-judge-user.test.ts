@@ -5,12 +5,14 @@ import type { Kysely } from "kysely";
 import {
   provisionJudgeUser,
   ALLOWED_JUDGE_ROLE,
+  validateJudgeSubject,
+  JUDGE_TENANT_ID,
+  DEV_TENANT_ID,
 } from "../../../../scripts/provision-judge-user.js";
-import { JUDGE_TENANT_ID, DEV_TENANT_ID } from "../../../../scripts/provision-judge-user.js";
 
 describe("Judge User Provisioning Script", () => {
   let db: Kysely<Database>;
-  const testSubject = `auth0|judge_user_${Date.now()}`;
+  const testSubject = `auth0|672e811f582e2df5${Date.now()}`;
   let createdUserId: string | null = null;
 
   beforeAll(async () => {
@@ -43,7 +45,7 @@ describe("Judge User Provisioning Script", () => {
 
   it("1. Refuses execution in production environment (NODE_ENV=production) without ALLOW_HOSTED_SEED", async () => {
     await expect(
-      provisionJudgeUser("auth0|prod_judge_attempt", {
+      provisionJudgeUser("auth0|672e811f582e2df5prod01", {
         db,
         nodeEnv: "production",
       }),
@@ -57,18 +59,69 @@ describe("Judge User Provisioning Script", () => {
         nodeEnv: "development",
       }),
     ).rejects.toThrow(/Auth0 OIDC subject cannot be empty/);
+
+    expect(() => validateJudgeSubject("")).toThrow(/Auth0 OIDC subject cannot be empty/);
   });
 
-  it("3. Refuses invalid subject format", async () => {
-    await expect(
-      provisionJudgeUser("invalid-plain-username", {
-        db,
-        nodeEnv: "development",
-      }),
-    ).rejects.toThrow(/Invalid subject format: Expected Auth0 OIDC subject/);
+  it("3. Refuses obvious placeholders (PASTE, YOUR_, <, >, example)", async () => {
+    const placeholders = [
+      "auth0|PASTE_JUDGE_USER_ID",
+      "auth0|YOUR_USER_ID",
+      "auth0|<user_id>",
+      "auth0|>user_id<",
+      "auth0|example1234567890",
+      "google-oauth2|PASTE_HERE_12345",
+      "auth0|paste_anything_here",
+      "auth0|your_auth0_id_1234",
+    ];
+
+    for (const ph of placeholders) {
+      expect(() => validateJudgeSubject(ph)).toThrow(/contains a placeholder pattern/);
+      await expect(
+        provisionJudgeUser(ph, {
+          db,
+          nodeEnv: "development",
+        }),
+      ).rejects.toThrow(/contains a placeholder pattern/);
+    }
   });
 
-  it("4. Provisions new judge user into judge tenant with strictly JUDGE role", async () => {
+  it("4. Refuses invalid subject formats (too short, underscores/non-alphanumeric, non-digit google-oauth2, other providers)", async () => {
+    const invalidFormats = [
+      "invalid-plain-username",
+      "auth0|short",
+      "auth0|with_underscore_here",
+      "google-oauth2|notdigits",
+      "google-oauth2|12345abc",
+      "facebook|1234567890123456",
+      "oauth2|1234567890123456",
+      "github|1234567890123456",
+    ];
+
+    for (const inv of invalidFormats) {
+      expect(() => validateJudgeSubject(inv)).toThrow(/Invalid subject format/);
+      await expect(
+        provisionJudgeUser(inv, {
+          db,
+          nodeEnv: "development",
+        }),
+      ).rejects.toThrow(/Invalid subject format/);
+    }
+  });
+
+  it("5. Accepts valid auth0 (alphanumeric 16+) and google-oauth2 (digits) formats", () => {
+    expect(validateJudgeSubject("auth0|672e811f582e2df5c328db14")).toBe(
+      "auth0|672e811f582e2df5c328db14",
+    );
+    expect(validateJudgeSubject("google-oauth2|1092837465192837465")).toBe(
+      "google-oauth2|1092837465192837465",
+    );
+    expect(validateJudgeSubject("  auth0|1234567890abcdef12345678  ")).toBe(
+      "auth0|1234567890abcdef12345678",
+    );
+  });
+
+  it("6. Provisions new judge user into judge tenant with strictly JUDGE role", async () => {
     const res = await provisionJudgeUser(testSubject, {
       db,
       nodeEnv: "development",
@@ -113,7 +166,7 @@ describe("Judge User Provisioning Script", () => {
     expect(membershipInDb?.revoked_at).toBeNull();
   });
 
-  it("5. Updates existing judge user idempotently without duplicating records", async () => {
+  it("7. Updates existing judge user idempotently without duplicating records", async () => {
     const res2 = await provisionJudgeUser(testSubject, {
       db,
       nodeEnv: "development",
@@ -126,7 +179,7 @@ describe("Judge User Provisioning Script", () => {
     expect(res2.role).toBe("JUDGE");
   });
 
-  it("6. Strictly NEVER retains development tenant membership", async () => {
+  it("8. Strictly NEVER retains development tenant membership", async () => {
     // If an accidental dev tenant membership existed, provisionJudgeUser strips it
     const { sql } = await import("kysely");
     await db.transaction().execute(async (trx) => {

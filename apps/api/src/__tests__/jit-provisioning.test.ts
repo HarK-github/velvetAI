@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { FastifyInstance } from "fastify";
 import * as jose from "jose";
 import crypto from "node:crypto";
@@ -78,6 +78,8 @@ describe("WP 04A: JIT Buyer Self-Provisioning", () => {
   });
 
   afterAll(async () => {
+    delete process.env.SELF_SIGNUP_ENABLED;
+    delete process.env.SELF_SIGNUP_TENANT_ID;
     await app.close();
     await testDb.destroy();
   });
@@ -86,6 +88,11 @@ describe("WP 04A: JIT Buyer Self-Provisioning", () => {
     resetJitRateLimits();
     process.env.SELF_SIGNUP_ENABLED = "true";
     process.env.SELF_SIGNUP_TENANT_ID = JUDGE_TENANT_ID;
+  });
+
+  afterEach(() => {
+    delete process.env.SELF_SIGNUP_ENABLED;
+    delete process.env.SELF_SIGNUP_TENANT_ID;
   });
 
   async function createSignedToken(sub: string, extraClaims: Record<string, unknown> = {}) {

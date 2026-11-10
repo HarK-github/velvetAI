@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import * as jose from "jose";
 import { FastifyInstance } from "fastify";
 import { buildApp } from "../app.js";
@@ -22,6 +22,9 @@ describe("W1: Auth0 Identity and Local Membership Authority", () => {
   let scopeOidcSubject: string;
 
   beforeAll(async () => {
+    delete process.env.SELF_SIGNUP_ENABLED;
+    delete process.env.SELF_SIGNUP_TENANT_ID;
+
     // Generate an in-memory RS256 key pair for offline cryptographic token tests
     keyPair = await jose.generateKeyPair("RS256");
 
@@ -88,7 +91,14 @@ describe("W1: Auth0 Identity and Local Membership Authority", () => {
   });
 
   afterAll(async () => {
+    delete process.env.SELF_SIGNUP_ENABLED;
+    delete process.env.SELF_SIGNUP_TENANT_ID;
     await app.close();
+  });
+
+  beforeEach(() => {
+    delete process.env.SELF_SIGNUP_ENABLED;
+    delete process.env.SELF_SIGNUP_TENANT_ID;
   });
 
   describe("RFC 9728 OAuth Protected Resource Metadata", () => {

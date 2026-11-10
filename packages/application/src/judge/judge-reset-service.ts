@@ -388,26 +388,31 @@ export class JudgeResetService {
         return { count: plan.services.length };
       });
 
-      // Step 7: Seed synthetic history
+      // Step 7: Seed synthetic history (chunked batch insert for optimal execution speed)
       await recordStep("seed_history", async () => {
-        for (const item of plan.history) {
-          await trx
-            .insertInto("synthetic_history")
-            .values({
-              id: item.id,
-              tenant_id: JUDGE_TENANT_ID,
-              judge_run_id: runId,
-              resource_id: item.resourceId,
-              service_id: item.serviceId,
-              starts_at: item.startsAt,
-              ends_at: item.endsAt,
-              outcome: item.outcome,
-              lead_time_hours: item.leadTimeHours,
-              deposit_paid: item.depositPaid,
-              buyer_key: item.buyerKey,
-            })
-            .onConflict((oc) => oc.column("id").doNothing())
-            .execute();
+        if (plan.history.length > 0) {
+          const rows = plan.history.map((item) => ({
+            id: item.id,
+            tenant_id: JUDGE_TENANT_ID,
+            judge_run_id: runId,
+            resource_id: item.resourceId,
+            service_id: item.serviceId,
+            starts_at: item.startsAt,
+            ends_at: item.endsAt,
+            outcome: item.outcome,
+            lead_time_hours: item.leadTimeHours,
+            deposit_paid: item.depositPaid,
+            buyer_key: item.buyerKey,
+          }));
+
+          const chunkSize = 100;
+          for (let i = 0; i < rows.length; i += chunkSize) {
+            await trx
+              .insertInto("synthetic_history")
+              .values(rows.slice(i, i + chunkSize))
+              .onConflict((oc) => oc.column("id").doNothing())
+              .execute();
+          }
         }
 
         return { count: plan.history.length };
@@ -418,6 +423,20 @@ export class JudgeResetService {
       let skippedConflictsCount = 0;
 
       await recordStep("seed_fixtures", async () => {
+        const fixturesToInsert: Array<{
+          id: string;
+          tenant_id: string;
+          judge_run_id: string;
+          resource_id: string;
+          service_id: string;
+          starts_at: Date;
+          ends_at: Date;
+          display_status: any;
+          buyer_key: string;
+          deposit_paid: boolean;
+          claim_id: string | null;
+        }> = [];
+
         for (const fixture of plan.fixtures) {
           const occupiesTime =
             fixture.displayStatus === "CONFIRMED" ||
@@ -462,25 +481,29 @@ export class JudgeResetService {
             }
           }
 
-          await trx
-            .insertInto("demo_schedule_fixtures")
-            .values({
-              id: fixture.id,
-              tenant_id: JUDGE_TENANT_ID,
-              judge_run_id: runId,
-              resource_id: fixture.resourceId,
-              service_id: fixture.serviceId,
-              starts_at: fixture.startsAt,
-              ends_at: fixture.endsAt,
-              display_status: fixture.displayStatus,
-              buyer_key: fixture.buyerKey,
-              deposit_paid: fixture.depositPaid,
-              claim_id: claimId,
-            })
-            .onConflict((oc) => oc.column("id").doNothing())
-            .execute();
+          fixturesToInsert.push({
+            id: fixture.id,
+            tenant_id: JUDGE_TENANT_ID,
+            judge_run_id: runId,
+            resource_id: fixture.resourceId,
+            service_id: fixture.serviceId,
+            starts_at: fixture.startsAt,
+            ends_at: fixture.endsAt,
+            display_status: fixture.displayStatus,
+            buyer_key: fixture.buyerKey,
+            deposit_paid: fixture.depositPaid,
+            claim_id: claimId,
+          });
 
           seededFixturesCount++;
+        }
+
+        if (fixturesToInsert.length > 0) {
+          await trx
+            .insertInto("demo_schedule_fixtures")
+            .values(fixturesToInsert)
+            .onConflict((oc) => oc.column("id").doNothing())
+            .execute();
         }
 
         return { count: seededFixturesCount };

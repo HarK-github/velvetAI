@@ -7,7 +7,7 @@
 - Current track: Sprint S0: Hygiene and Baseline
 - Epic 4 code status: IMPLEMENTED & POLISHED (ACCEPTED)
 - Epic 5 code status: IN_PROGRESS (Sprint S0: Hygiene and Baseline)
-- Automated verification: VERIFIED (19/19 tasks, 389 tests passing across 12 packages and apps)
+- Automated verification: VERIFIED (20/20 tasks across 12 packages; 54 test files, 450 tests passing; verified across consecutive parallel turbo runs)
 - Real runtime & external verification:
   - Auth0 real-E2E: VERIFIED (Auth0 tenant changed on 2026-11-08: old dev-o55m2ek822mgtiim → new dev-ru8k002bt7vgmtj5 at dev-ru8k002bt7vgmtj5.us.auth0.com; real Auth0 Universal Login + `pnpm auth:provision-test-user` mapped to PostgreSQL `app_users`/`memberships`; protected `GET /v1/services` returns HTTP 200 under strict RLS; evidence: `apps/api/src/__tests__/auth0.test.ts`, runbook `docs/setup/auth0.md`)
   - Ask AI Fake-Provider real-E2E: VERIFIED (UI drawer, dynamic `Deterministic Demo Model` honesty badge, authenticated chat transport, multi-step tool calls `list_services_v1`/`find_available_slots_v1`/`prepare_booking_v1`, approval card locator with zero confirmation token exposure, prompt injection refused; evidence: `apps/web/src/__tests__/ask-ai-drawer.test.tsx`, `apps/api/src/__tests__/ai-chat.test.ts`)
@@ -68,7 +68,7 @@
    - WP 02: Approval Page and Golden Path — `NOT_STARTED`
    - WP 03: Render Deployment — `IMPLEMENTED`
    - WP 04: Judge Tenant Seed and Reset — `IMPLEMENTED` (Commit 1 merged to main @ `ec732a1`)
-   - WP 04A: Judge Onboarding and First-Run Access — `IMPLEMENTED` (JIT buyer self-provisioning, public read-only catalog/availability, judge user provisioning CLI; verified 54 test files, 444 tests across 12 packages)
+   - WP 04A: Judge Onboarding and First-Run Access — `IMPLEMENTED` (JIT buyer self-provisioning, public read-only catalog/availability, strict judge user provisioning CLI with placeholder rejection, production hold advisory lock + 40P01/23P01 -> 409 mapping; verified 54 test files, 450 tests across 12 packages)
    - WP 05: Bryntum Scheduler — `NOT_STARTED`
    - WP 06: Forecasting and Deposits — `NOT_STARTED`
    - WP 07: Abuse Lab Dashboard — `NOT_STARTED`
