@@ -20,6 +20,7 @@ import { mcpRoutes, setMcpDb } from "./routes/mcp.js";
 import { aiRoutes } from "./routes/ai.js";
 import { judgeRoutes, setJudgeDb } from "./routes/judge.js";
 import { judgeAbuseLabRoutes, setJudgeAbuseLabDb } from "./routes/judge-abuse-lab.js";
+import { judgeProofRoutes, setJudgeProofDb } from "./routes/judge-proof.js";
 import type { JudgeAbuseLabService } from "./judge/abuse-lab-runner.js";
 import { registerAuth } from "./plugins/auth.js";
 import { registerIdempotency } from "./plugins/idempotency.js";
@@ -158,6 +159,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     setMcpDb(options.db);
     setJudgeDb(options.db);
     setJudgeAbuseLabDb(options.db);
+    setJudgeProofDb(options.db);
   }
 
   // Business & frontend endpoints
@@ -172,6 +174,9 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   app.register(judgeAbuseLabRoutes, {
     db: options.db,
     abuseLabService: options.abuseLabService,
+  });
+  app.register(judgeProofRoutes, {
+    db: options.db,
   });
   app.register(aiRoutes, options);
 
