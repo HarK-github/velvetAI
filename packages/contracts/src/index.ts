@@ -9,3 +9,4 @@ export * from "./outbox.js";
 export * from "./audit.js";
 export * from "./errors.js";
 export * from "./money.js";
+export * from "./abuse-lab.js";
