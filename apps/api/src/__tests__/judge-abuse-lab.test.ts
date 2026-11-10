@@ -332,7 +332,9 @@ describe("WP 07: Live Abuse Lab Runner & /v1/judge/abuse-lab API", () => {
       finishedAt: string | null;
       scenarios: Array<{
         id: string;
+        ciScenarioId: string;
         status: string;
+        observed: string;
         stateUnchanged: boolean | null;
         beforeCounts?: Record<string, number>;
         afterCounts?: Record<string, number>;
@@ -380,6 +382,9 @@ describe("WP 07: Live Abuse Lab Runner & /v1/judge/abuse-lab API", () => {
       expect(s.stateUnchanged).toBe(true);
       expect(s.afterCounts).toEqual(s.beforeCounts);
     }
+    const l11 = finalRun!.scenarios.find((s) => s.id === "L11");
+    expect(l11?.ciScenarioId).toBe("No direct CI equivalent");
+    expect(l11?.observed).toContain("idempotency_key_required");
 
     // Invalid/missing run ID error handling
     const badIdRes = await app.inject({

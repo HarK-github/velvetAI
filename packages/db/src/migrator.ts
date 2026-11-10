@@ -1,4 +1,5 @@
 import { Kysely, Migration, MigrationProvider, Migrator } from "kysely";
+import { createDatabaseClient, createRawPgClient } from "./client.js";
 import { Database } from "./schema.js";
 import * as initialSchema from "./migrations/0001_initial_schema.js";
 import * as slotClaimRlsHardening from "./migrations/0002_slot_claim_rls_hardening.js";
@@ -67,4 +68,38 @@ export async function migrateDown(db: Kysely<Database>) {
     throw error;
   }
   return results;
+}
+
+export const MIGRATION_ADVISORY_LOCK_ID = "873421901234567";
+
+/**
+ * Executes a migration callback under a PostgreSQL session-level advisory lock
+ * using a direct (non-pooled) connection so concurrent instance startups serialize safely.
+ */
+export async function withMigrationAdvisoryLock<T>(
+  connectionString: string,
+  fn: (db: Kysely<Database>) => Promise<T>,
+): Promise<T> {
+  const lockClient = createRawPgClient(connectionString);
+  await lockClient.connect();
+  try {
+    await lockClient.query("SELECT pg_advisory_lock($1::bigint)", [MIGRATION_ADVISORY_LOCK_ID]);
+    const db = createDatabaseClient(connectionString, { min: 1, max: 2 });
+    try {
+      return await fn(db);
+    } finally {
+      await db.destroy();
+    }
+  } finally {
+    try {
+      await lockClient.query("SELECT pg_advisory_unlock($1::bigint)", [MIGRATION_ADVISORY_LOCK_ID]);
+    } catch {
+      // Connection teardown below also releases any session-scoped advisory lock.
+    }
+    await lockClient.end().catch(() => undefined);
+  }
+}
+
+export async function migrateToLatestWithAdvisoryLock(connectionString: string) {
+  return withMigrationAdvisoryLock(connectionString, async (db) => migrateToLatest(db));
 }

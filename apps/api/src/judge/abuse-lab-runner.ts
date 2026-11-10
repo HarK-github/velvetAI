@@ -473,7 +473,8 @@ export const DEFAULT_LIVE_SCENARIOS: readonly LiveScenarioDefinition[] = [
     id: "L11",
     name: "Missing Idempotency-Key on mutating POST rejected",
     level: "HTTP",
-    ciScenarioId: "SEC-002",
+    // Directly exercises apps/api/src/plugins/idempotency.ts:118 ("idempotency_key_required")
+    ciScenarioId: "No direct CI equivalent",
     expected: "400 idempotency_key_required",
     execute: async (ctx) => {
       if (!ctx.app) {

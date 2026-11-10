@@ -169,6 +169,17 @@ describe("SecurityPage (/security Abuse Lab Dashboard)", () => {
           stateUnchanged: true,
         },
         {
+          id: "L11",
+          name: "Missing Idempotency-Key on mutating POST rejected",
+          level: "HTTP",
+          ciScenarioId: "No direct CI equivalent",
+          status: "PASS",
+          durationMs: 9,
+          expected: "400 idempotency_key_required",
+          observed: "HTTP 400 (idempotency_key_required)",
+          stateUnchanged: true,
+        },
+        {
           id: "L4",
           name: "Agent approves its own hold with M2M token",
           level: "Service",
@@ -189,8 +200,9 @@ describe("SecurityPage (/security Abuse Lab Dashboard)", () => {
       finishedAt: "2026-11-10T18:00:01.000Z",
       scenarios: [
         runningRun.scenarios[0]!,
+        runningRun.scenarios[1]!,
         {
-          ...runningRun.scenarios[1]!,
+          ...runningRun.scenarios[2]!,
           status: "PASS",
           durationMs: 19,
           observed: "Rejected with HUMAN_APPROVAL_REQUIRED (403)",
@@ -198,8 +210,8 @@ describe("SecurityPage (/security Abuse Lab Dashboard)", () => {
         },
       ],
       summary: {
-        total: 2,
-        passed: 2,
+        total: 3,
+        passed: 3,
         failed: 0,
         errored: 0,
         allStateUnchanged: true,
@@ -250,11 +262,12 @@ describe("SecurityPage (/security Abuse Lab Dashboard)", () => {
     fireEvent.click(runButton);
 
     await waitFor(() => {
-      expect(screen.getByText("2 of 2 blocked as expected")).toBeTruthy();
+      expect(screen.getByText("3 of 3 blocked as expected")).toBeTruthy();
     });
 
-    expect(screen.getAllByText("State changed: none").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("State changed: none").length).toBeGreaterThanOrEqual(3);
     expect(screen.getByText("Also covered in CI: SEC-003")).toBeTruthy();
+    expect(screen.getByText("No direct CI equivalent")).toBeTruthy();
     expect(screen.getByText("Also covered in CI: TRANS-021")).toBeTruthy();
   });
 

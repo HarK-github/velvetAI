@@ -32,9 +32,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     threat:
       "An attacker swaps a confirmation from one booking onto another to hijack terms or price.",
     protects: "Every approval confirmation is cryptographically bound to its exact hold ID.",
-    threat:
-      "An attacker swaps a confirmation from one booking onto another to hijack terms or price.",
-    protects: "Every approval confirmation is cryptographically bound to its exact hold ID.",
     run: async () => {
       const intentBookingId = crypto.randomUUID();
       const confBookingId = crypto.randomUUID();
@@ -116,10 +113,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "TENANCY",
     description:
       "Verifies that signed intent claims for tenant, client, and actor sub are verified against active execution context",
-    threat:
-      "A caller takes a valid booking intent and submits it under a different tenant, app, or user.",
-    protects:
-      "Commit verifies signed tenant, client, and user claims against the authenticated session.",
     threat:
       "A caller takes a valid booking intent and submits it under a different tenant, app, or user.",
     protects:
@@ -213,10 +206,6 @@ export const deterministicScenarios: AbuseScenario[] = [
       "An attacker sends duplicate JSON keys hoping the validator and handler disagree on price.",
     protects:
       "The Fastify parser inspects raw JSON bytes and rejects duplicate keys with HTTP 400.",
-    threat:
-      "An attacker sends duplicate JSON keys hoping the validator and handler disagree on price.",
-    protects:
-      "The Fastify parser inspects raw JSON bytes and rejects duplicate keys with HTTP 400.",
     run: async () => {
       const duplicateKeyJson = '{"amount":"100","service":"haircut","amount":"200"}';
       let errorThrown = false;
@@ -247,9 +236,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     threat: "Crafted decomposed Unicode strings attempt to bypass signature or idempotency checks.",
     protects:
       "Strings undergo deterministic NFC normalization and RFC 8785 canonicalization before hashing.",
-    threat: "Crafted decomposed Unicode strings attempt to bypass signature or idempotency checks.",
-    protects:
-      "Strings undergo deterministic NFC normalization and RFC 8785 canonicalization before hashing.",
     run: async () => {
       const nfc: string = "caf\u00E9";
       const nfd: string = "cafe\u0301";
@@ -276,9 +262,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "PAYMENT",
     description:
       "Verifies that moneyMinorSchema and isSafeMoneyMinor reject invalid wire formats and out-of-range integers",
-    threat: "Malformed numbers like 1e5 or oversized integers try to corrupt payment math.",
-    protects:
-      "All money values use validated integer minor-unit strings with 64-bit bounds checks.",
     threat: "Malformed numbers like 1e5 or oversized integers try to corrupt payment math.",
     protects:
       "All money values use validated integer minor-unit strings with 64-bit bounds checks.",
@@ -314,10 +297,6 @@ export const deterministicScenarios: AbuseScenario[] = [
       "Assumed 2-decimal math overcharges or undercharges zero-decimal and 3-decimal currencies.",
     protects:
       "Currency scaling uses an explicit ISO-4217 table matched against the service snapshot.",
-    threat:
-      "Assumed 2-decimal math overcharges or undercharges zero-decimal and 3-decimal currencies.",
-    protects:
-      "Currency scaling uses an explicit ISO-4217 table matched against the service snapshot.",
     run: async () => {
       const jpyScale = getCurrencyScale("JPY");
       const usdScale = getCurrencyScale("USD");
@@ -341,9 +320,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     severity: "CRITICAL",
     category: "AUTH",
     description: "Verifies that tokens are accepted at exp - 1 and rejected at exp and after exp",
-    threat: "Stale signed intents or holds are submitted at or past their expiration boundary.",
-    protects:
-      "Expiry checks enforce strict less-than inequalities on signed tokens and DB clock time.",
     threat: "Stale signed intents or holds are submitted at or past their expiration boundary.",
     protects:
       "Expiry checks enforce strict less-than inequalities on signed tokens and DB clock time.",
@@ -371,10 +347,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "CRYPTO",
     description:
       "Ensures verifyBookingIntent rejects unpermitted algorithms, remote key urls, unknown kids, and incorrect typ headers",
-    threat:
-      "Attackers forge booking intents using alg:none, foreign keys (jku), unknown key IDs, or wrong token types.",
-    protects:
-      "JWS verification requires ES256, velvetai-intent+jwt type, local trusted keys, and no remote URLs.",
     threat:
       "Attackers forge booking intents using alg:none, foreign keys (jku), unknown key IDs, or wrong token types.",
     protects:
@@ -460,10 +432,6 @@ export const deterministicScenarios: AbuseScenario[] = [
       "Knowing someone else's approval URL lets another signed-in user approve their booking.",
     protects:
       "Approval rejects any authenticated user whose ID and email do not match the hold owner.",
-    threat:
-      "Knowing someone else's approval URL lets another signed-in user approve their booking.",
-    protects:
-      "Approval rejects any authenticated user whose ID and email do not match the hold owner.",
     run: async () => {
       const confirmationBuyer: string = "01932b10-0002-7000-8000-000000000001";
       const sessionUser: string = "01932b10-0002-7000-8000-000000000002";
@@ -485,9 +453,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "AUTH",
     description:
       "Asserts that revoking user membership prevents booking commit even if previously approved",
-    threat: "An attacker keeps acting with an old token after their tenant access was revoked.",
-    protects:
-      "Local PostgreSQL memberships and role versions are checked on every protected request.",
     threat: "An attacker keeps acting with an old token after their tenant access was revoked.",
     protects:
       "Local PostgreSQL memberships and role versions are checked on every protected request.",
@@ -515,10 +480,6 @@ export const deterministicScenarios: AbuseScenario[] = [
       "An MCP client sends accepted flags claiming the human approved without completing browser approval.",
     protects:
       "Server commits require an opaque hashed confirmation minted exclusively on the approval endpoint.",
-    threat:
-      "An MCP client sends accepted flags claiming the human approved without completing browser approval.",
-    protects:
-      "Server commits require an opaque hashed confirmation minted exclusively on the approval endpoint.",
     run: async () => {
       const mcpPayload: Record<string, unknown> = { action: "accept", confirmed: true };
       const hasCryptographicConfirmation = "buyerConfirmationToken" in mcpPayload;
@@ -538,10 +499,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "IDEMPOTENCY",
     description:
       "Asserts that confirmation consumption and intent recording occur in a single atomic transaction; crash rolls back cleanly",
-    threat:
-      "A process crash mid-commit leaves the buyer confirmation spent while the booking stays uncommitted.",
-    protects:
-      "Confirmation consumption, booking state change, and outbox insert share one atomic DB transaction.",
     threat:
       "A process crash mid-commit leaves the buyer confirmation spent while the booking stays uncommitted.",
     protects:
@@ -569,9 +526,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     threat: "A crash right after saving a booking leaves side effects stuck or lost.",
     protects:
       "Outbox events commit in the same DB transaction and recover cleanly via leased worker polling.",
-    threat: "A crash right after saving a booking leaves side effects stuck or lost.",
-    protects:
-      "Outbox events commit in the same DB transaction and recover cleanly via leased worker polling.",
     run: async () => {
       // Outbox insertion occurs in the same transaction as state transition.
       // Outbox relay recovers unpublished events using leased polling:
@@ -592,10 +546,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "PAYMENT",
     description:
       "Asserts that reconciliation uses PayPal custom_id / invoice_id to link orphaned captures to local bookings",
-    threat:
-      "Network loss right after PayPal captures funds leaves the booking status unknown locally.",
-    protects:
-      "PayPal orders embed tenant and booking references so reconciliation and webhooks heal state safely.",
     threat:
       "Network loss right after PayPal captures funds leaves the booking status unknown locally.",
     protects:
@@ -624,10 +574,6 @@ export const deterministicScenarios: AbuseScenario[] = [
       "Simultaneous expiry, cancellation, or commit corrupts claim blocking state or double-books a slot.",
     protects:
       "Row-level locks, optimistic booking versioning, and DB check constraints forbid invalid claim drift.",
-    threat:
-      "Simultaneous expiry, cancellation, or commit corrupts claim blocking state or double-books a slot.",
-    protects:
-      "Row-level locks, optimistic booking versioning, and DB check constraints forbid invalid claim drift.",
     run: async () => {
       // Verified by packages/db/src/__tests__/concurrency-booking.test.ts and chk_resource_claim_blocking_state
       return {
@@ -646,9 +592,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "CONCURRENCY",
     description:
       "Asserts that hold expiration decisions rely on clock_timestamp() rather than transaction start now()",
-    threat:
-      "A long-running database transaction exploits snapshot start time to commit an expired hold.",
-    protects: "Hold expiry checks evaluate PostgreSQL clock_timestamp() in real wall-clock time.",
     threat:
       "A long-running database transaction exploits snapshot start time to commit an expired hold.",
     protects: "Hold expiry checks evaluate PostgreSQL clock_timestamp() in real wall-clock time.",
@@ -671,9 +614,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     threat: "Pooled database connections leak Tenant A's tenant setting into Tenant B's query.",
     protects:
       "FORCE RLS binds queries to transaction-local app.tenant_id under non-bypass runtime role.",
-    threat: "Pooled database connections leak Tenant A's tenant setting into Tenant B's query.",
-    protects:
-      "FORCE RLS binds queries to transaction-local app.tenant_id under non-bypass runtime role.",
     run: async () => {
       // Verified in packages/db/src/__tests__/rls-isolation.test.ts with createRestrictedSingleConnectionDb()
       return {
@@ -692,9 +632,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "CONCURRENCY",
     description:
       "Asserts that stale outbox workers cannot publish events if their lease expired and was reassigned",
-    threat:
-      "A paused worker wakes up late and acknowledges an outbox job already claimed by another worker.",
-    protects: "Outbox acknowledgments fence updates on the exact UUID lease token.",
     threat:
       "A paused worker wakes up late and acknowledges an outbox job already claimed by another worker.",
     protects: "Outbox acknowledgments fence updates on the exact UUID lease token.",
@@ -722,10 +659,6 @@ export const deterministicScenarios: AbuseScenario[] = [
       "At-least-once background job redelivery triggers duplicate captures or duplicate notifications.",
     protects:
       "Workers verify terminal DB states and deterministic request keys before executing side effects.",
-    threat:
-      "At-least-once background job redelivery triggers duplicate captures or duplicate notifications.",
-    protects:
-      "Workers verify terminal DB states and deterministic request keys before executing side effects.",
     run: async () => {
       const bookingStatus = "CONFIRMED";
       // If already CONFIRMED, worker skips duplicate capture / notification
@@ -744,10 +677,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     severity: "HIGH",
     category: "PAYMENT",
     description: "Asserts that simulator webhook events received on production routes are rejected",
-    threat:
-      "Unverified or mismatched environment webhooks try to mark unpaid bookings as confirmed.",
-    protects:
-      "Webhook verification requires cryptographic PayPal signature check and matching environment/connection.",
     threat:
       "Unverified or mismatched environment webhooks try to mark unpaid bookings as confirmed.",
     protects:
@@ -775,10 +704,6 @@ export const deterministicScenarios: AbuseScenario[] = [
       "A refund issued outside velvetAI leaves the local ledger and booking state out of sync.",
     protects:
       "Verified PAYMENT.CAPTURE.REFUNDED webhooks reconcile captures and post reversal entries.",
-    threat:
-      "A refund issued outside velvetAI leaves the local ledger and booking state out of sync.",
-    protects:
-      "Verified PAYMENT.CAPTURE.REFUNDED webhooks reconcile captures and post reversal entries.",
     run: async () => {
       const webhookEventType = "PAYMENT.CAPTURE.REFUNDED";
       const willReconcile = webhookEventType === "PAYMENT.CAPTURE.REFUNDED";
@@ -798,10 +723,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "CRYPTO",
     description:
       "Asserts that PayPal webhook cert_url must match trusted PayPal domain and reject private IP ranges",
-    threat:
-      "Forged webhook headers point cert_url at internal cloud metadata IPs or attacker servers.",
-    protects:
-      "Certificate URLs must strictly use HTTPS on official api[.sandbox].paypal.com hosts.",
     threat:
       "Forged webhook headers point cert_url at internal cloud metadata IPs or attacker servers.",
     protects:
@@ -841,10 +762,6 @@ export const deterministicScenarios: AbuseScenario[] = [
       "Trusting an order status alone confirms an appointment before PayPal capture finishes settling.",
     protects:
       "Bookings transition to CONFIRMED strictly when the underlying capture status equals COMPLETED.",
-    threat:
-      "Trusting an order status alone confirms an appointment before PayPal capture finishes settling.",
-    protects:
-      "Bookings transition to CONFIRMED strictly when the underlying capture status equals COMPLETED.",
     run: async () => {
       // In accordance with Epic 3 state progression:
       // COMMITTING -> ... -> CAPTURE_IN_FLIGHT -> CAPTURE_UNCERTAIN
@@ -873,10 +790,6 @@ export const deterministicScenarios: AbuseScenario[] = [
     category: "PAYMENT",
     description:
       "Asserts that incoming webhooks with mismatched webhook_id or app credentials fail verification with 401",
-    threat:
-      "Webhooks from another sandbox app or environment try to forge payment events for this tenant.",
-    protects:
-      "Every webhook validates against the tenant connection's configured PayPal webhook ID.",
     threat:
       "Webhooks from another sandbox app or environment try to forge payment events for this tenant.",
     protects:

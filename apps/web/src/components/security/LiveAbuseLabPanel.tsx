@@ -512,7 +512,9 @@ export const LiveAbuseLabPanel: FC = () => {
                               border: "1px solid var(--hairline)",
                             }}
                           >
-                            Also covered in CI: {scenario.ciScenarioId}
+                            {scenario.ciScenarioId === "No direct CI equivalent"
+                              ? "No direct CI equivalent"
+                              : `Also covered in CI: ${scenario.ciScenarioId}`}
                           </span>
                         </div>
 
