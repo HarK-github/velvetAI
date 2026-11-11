@@ -138,6 +138,7 @@ describe("Idempotency-Key Enforcement & Retry Reuse Across Web App", () => {
     await client.evaluateRisk({ tier: "low" });
     await client.prepareCancellation("bk_1", { reason: "reschedule" });
     await client.cancelBooking("bk_1", { cancellationConfirmationToken: "cancel_tok_1" });
+    await client.triggerLiveAbuseRun("eyJ.test.jwt");
 
     // Also verify raw mutating methods via internal request guard (POST/PUT/PATCH/DELETE)
     await (client as any).request("/v1/custom-post", { method: "POST", body: "{}" });
@@ -145,7 +146,7 @@ describe("Idempotency-Key Enforcement & Retry Reuse Across Web App", () => {
     await (client as any).request("/v1/custom-patch", { method: "PATCH", body: "{}" });
     await (client as any).request("/v1/custom-delete", { method: "DELETE" });
 
-    expect(recordedCalls.length).toBe(15);
+    expect(recordedCalls.length).toBe(16);
     for (const call of recordedCalls) {
       expect(call.idempotencyKey).toBeTruthy();
     }

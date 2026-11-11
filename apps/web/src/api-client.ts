@@ -10,6 +10,7 @@ import {
   PrepareCancellationResponse,
   CommitCancellationInput,
   CommitCancellationResponse,
+  TriggerLiveAbuseRunResponse,
   ProblemDetails,
 } from "@velvetai/contracts";
 import { isAuth0Configured, isMockAuthEnabled, computeAuthDiagnostic } from "./lib/auth-config.js";
@@ -222,11 +223,7 @@ export class VelvetApiClient {
     return result;
   }
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {},
-    authTokenOverride?: string,
-  ): Promise<T> {
+  private ensureBaseUrl(): void {
     if (!this.baseUrl) {
       console.error("API request blocked: API_BASE_URL is not configured.");
       throw new ApiError(500, {
@@ -237,7 +234,9 @@ export class VelvetApiClient {
         detail: "API not configured: VITE_API_BASE_URL must be set in production.",
       });
     }
+  }
 
+  private async resolveAuthToken(authTokenOverride?: string): Promise<string | undefined> {
     let token = authTokenOverride?.trim() ? authTokenOverride.trim() : this.authToken;
 
     if (!authTokenOverride?.trim() && this.tokenProvider) {
@@ -261,6 +260,40 @@ export class VelvetApiClient {
       }
     }
 
+    return token;
+  }
+
+  private resolveAuthorizationHeader(token: string | undefined): string | undefined {
+    if (token) {
+      return `Bearer ${token}`;
+    }
+    if (isAuth0Configured()) {
+      // Never fall back to dev token when Auth0 is configured
+      throw new ApiError(401, {
+        type: "https://api.velvetai.example/problems/unauthorized",
+        title: "Unauthorized",
+        status: 401,
+        code: "unauthorized",
+        detail: "Authentication required. Please sign in with Auth0.",
+      });
+    }
+    if (isMockAuthEnabled()) {
+      // Explicit offline test mode only
+      return "Bearer test-token:01932b10-0000-7000-8000-000000000002:01932b10-0000-7000-8000-000000000001:BUYER:1";
+    }
+    return undefined;
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    authTokenOverride?: string,
+  ): Promise<T> {
+    this.ensureBaseUrl();
+
+    const token = await this.resolveAuthToken(authTokenOverride);
+    const authorization = this.resolveAuthorizationHeader(token);
+
     const method = (options.method || "GET").toUpperCase();
     const headers = new Headers(options.headers);
     headers.set("content-type", "application/json");
@@ -273,23 +306,8 @@ export class VelvetApiClient {
       }
     }
 
-    if (token) {
-      headers.set("authorization", `Bearer ${token}`);
-    } else if (isAuth0Configured()) {
-      // Never fall back to dev token when Auth0 is configured
-      throw new ApiError(401, {
-        type: "https://api.velvetai.example/problems/unauthorized",
-        title: "Unauthorized",
-        status: 401,
-        code: "unauthorized",
-        detail: "Authentication required. Please sign in with Auth0.",
-      });
-    } else if (isMockAuthEnabled()) {
-      // Explicit offline test mode only
-      headers.set(
-        "authorization",
-        "Bearer test-token:01932b10-0000-7000-8000-000000000002:01932b10-0000-7000-8000-000000000001:BUYER:1",
-      );
+    if (authorization) {
+      headers.set("authorization", authorization);
     }
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
@@ -645,6 +663,77 @@ export class VelvetApiClient {
 
   async getBooking(bookingId: string): Promise<any> {
     return this.request(`/v1/bookings/${bookingId}`);
+  }
+
+  /**
+   * Triggers a live Judge Abuse Lab verification run using a reusable per-action Idempotency-Key.
+   */
+  async triggerLiveAbuseRun(
+    authTokenOverride?: string,
+    idempotencyKey?: string,
+  ): Promise<
+    | { kind: "started"; data: TriggerLiveAbuseRunResponse }
+    | { kind: "rate_limited"; detail: string }
+    | { kind: "unauthorized" }
+  > {
+    this.ensureBaseUrl();
+    const token = await this.resolveAuthToken(authTokenOverride);
+    const authorization = this.resolveAuthorizationHeader(token);
+
+    return this.withRetryIdempotencyKey(
+      "live-abuse:run",
+      "live-abuse",
+      idempotencyKey,
+      async (key) => {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        };
+        if (authorization) {
+          headers.Authorization = authorization;
+        }
+
+        const res = await fetch(`${this.baseUrl}/v1/judge/abuse-lab/runs`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({}),
+        });
+
+        if (res.status === 429) {
+          const retryAfter = res.headers?.get?.("retry-after") || "30";
+          const body = await res.json().catch(() => null);
+          return {
+            kind: "rate_limited" as const,
+            detail:
+              body?.detail ||
+              `Live checks are rate-limited to 1 run per 30 seconds. Retry after ${retryAfter}s.`,
+          };
+        }
+
+        if (res.status === 401 || res.status === 403) {
+          return { kind: "unauthorized" as const };
+        }
+
+        if (!res.ok) {
+          let problem: ProblemDetails;
+          try {
+            problem = await res.json();
+          } catch {
+            problem = {
+              type: "https://api.velvetai.example/problems/unknown",
+              title: res.statusText || `Failed with HTTP ${res.status}`,
+              status: res.status,
+              code: "unknown_error",
+            };
+          }
+          throw new ApiError(res.status, problem);
+        }
+
+        const data = (await res.json()) as TriggerLiveAbuseRunResponse;
+        return { kind: "started" as const, data };
+      },
+      { keepKeyOnSuccess: false },
+    );
   }
 }
 
