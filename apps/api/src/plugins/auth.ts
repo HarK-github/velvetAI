@@ -625,8 +625,17 @@ export function registerAuth(app: FastifyInstance): void {
       }
 
       if (request.url.startsWith("/v1/booking-approvals/")) {
-        // Let booking approvals endpoints enforce their own specific HUMAN_APPROVAL_REQUIRED error semantics
-        return;
+        // Non-GET approval mutations MUST reject missing credentials BEFORE idempotency checks
+        // and even when dev tokens are enabled, preserving 401 HUMAN_APPROVAL_REQUIRED.
+        const problem = createProblemDetails({
+          title: "Unauthorized",
+          status: 401,
+          code: "HUMAN_APPROVAL_REQUIRED",
+          requestId: request.id,
+          detail:
+            "Authentication credentials missing. Human buyer session required to approve booking.",
+        });
+        return reply.status(401).header("content-type", "application/problem+json").send(problem);
       }
       // In explicit test/mock environment, allow tests without headers to use default dev token
       if (authAdapter.isDevTokensAllowed()) {
