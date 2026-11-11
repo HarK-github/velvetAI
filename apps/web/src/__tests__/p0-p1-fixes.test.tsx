@@ -487,6 +487,32 @@ describe("P0 & P1 Comprehensive Fixes (TZ=Asia/Kolkata)", () => {
       });
       expect(prepSpy).toHaveBeenCalledTimes(2);
     });
+
+    // P2-2: Ordering must be new QuoteCard -> "Previous hold released" -> new ApprovalCard, and boilerplate emitted once
+    await waitFor(() => {
+      expect(screen.getByText("Previous hold released")).toBeDefined();
+      expect(screen.getByText("Ready for your approval")).toBeDefined();
+    });
+
+    const newQuoteCard = screen.getByTestId("quote-card");
+    const releasedLabel = screen.getByText("Previous hold released");
+    const activeApprovalLabel = screen.getByText("Ready for your approval");
+    expect(
+      Boolean(
+        newQuoteCard.compareDocumentPosition(releasedLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+    expect(
+      Boolean(
+        releasedLabel.compareDocumentPosition(activeApprovalLabel) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+
+    const drawerText = document.body.textContent || "";
+    const holdBoilerplateMatches =
+      drawerText.match(/I have prepared your booking hold\. Please review and approve/g) || [];
+    expect(holdBoilerplateMatches).toHaveLength(1);
   });
 
   it("P0-3: index.css defines all missing UI tokens/classes & ApprovalPage uses light shadow", () => {
@@ -994,5 +1020,216 @@ describe("P0 & P1 Comprehensive Fixes (TZ=Asia/Kolkata)", () => {
     expect(quoteSpy).not.toHaveBeenCalled();
     expect(document.body.innerHTML).not.toContain("agent.alex@velvetai.internal");
     vi.unstubAllEnvs();
+  });
+
+  it("P0 bug fix: leaving and returning mid-payment resumes pay_deposit and reuses exact payment-order Idempotency-Key", async () => {
+    const paymentExpiresAt = new Date(Date.now() + 540_000).toISOString();
+    const orderKeysSeen: string[] = [];
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/payment-order")) {
+        const key = new Headers(init?.headers).get("idempotency-key") || "";
+        orderKeysSeen.push(key);
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: () =>
+            Promise.resolve({
+              paymentIntentId: "pi_resume_1",
+              paypalOrderId: "PAYPAL_RESUME_1",
+              amount: { currency: "USD", valueMinor: "2000" },
+              status: "REQUIRES_PAYER_ACTION",
+              paymentExpiresAt,
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+    }) as any;
+
+    vi.spyOn(approvalApi, "fetchApprovalDetails").mockResolvedValueOnce({
+      details: baseApprovalDetails as any,
+      serverTime: Date.now(),
+    });
+    vi.spyOn(approvalApi, "postApproveAndCommit").mockResolvedValueOnce({
+      bookingId: "bk_p0_test",
+      status: "COMMITTING",
+      next: { type: "PAY_DEPOSIT", paymentOrderUrl: "/v1/bookings/bk_p0_test/payment-order" },
+    } as any);
+
+    const { unmount } = render(
+      <AskAIProvider>
+        <RouterProvider>
+          <ApprovalPage locator="loc_mid_payment" />
+        </RouterProvider>
+      </AskAIProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("state-ready")).toBeDefined());
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByTestId("approve-button"));
+
+    await waitFor(() => expect(screen.getByTestId("state-pay-deposit")).toBeDefined());
+    await waitFor(() => expect(orderKeysSeen).toHaveLength(1));
+    expect(orderKeysSeen[0]).toMatch(/^pay-order-/);
+
+    // User leaves /approve/<locator>
+    unmount();
+
+    // User returns -> confirmation was CONSUMED, booking is COMMITTING / REQUIRES_PAYER_ACTION
+    vi.spyOn(approvalApi, "fetchApprovalDetails").mockResolvedValueOnce({
+      details: {
+        ...baseApprovalDetails,
+        status: "CONSUMED",
+        bookingStatus: "COMMITTING",
+        paymentStatus: "REQUIRES_PAYER_ACTION",
+        paymentExpiresAt,
+      } as any,
+      serverTime: Date.now(),
+    });
+
+    render(
+      <AskAIProvider>
+        <RouterProvider>
+          <ApprovalPage locator="loc_mid_payment" />
+        </RouterProvider>
+      </AskAIProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("state-pay-deposit")).toBeDefined());
+    expect(screen.queryByTestId("state-already-done")).toBeNull();
+    expect(screen.queryByText(/has already been confirmed/i)).toBeNull();
+    expect(screen.getByText(/Approved — pay the \$20\.00 deposit to confirm/i)).toBeDefined();
+    expect(screen.getByText(/PAYPAL PAYMENT WINDOW ACTIVE/i)).toBeDefined();
+
+    await waitFor(() => expect(orderKeysSeen).toHaveLength(2));
+    expect(orderKeysSeen[1]).toBe(orderKeysSeen[0]);
+  });
+
+  it("P0 & P2-1: derives approval page state for every booking/payment status and shows readable 'IST' timezone label", async () => {
+    const openWindow = new Date(Date.now() + 480_000).toISOString();
+
+    const cases: Array<{
+      name: string;
+      patch: Record<string, unknown>;
+      expectedTestId: string;
+      expectedText?: RegExp;
+    }> = [
+      {
+        name: "ORDER_CREATE_PENDING -> pay_deposit",
+        patch: {
+          status: "CONSUMED",
+          bookingStatus: "COMMITTING",
+          paymentStatus: "ORDER_CREATE_PENDING",
+          paymentExpiresAt: openWindow,
+        },
+        expectedTestId: "state-pay-deposit",
+        expectedText: /Approved — pay the \$20\.00 deposit to confirm/i,
+      },
+      {
+        name: "CAPTURE_IN_FLIGHT -> verifying_payment",
+        patch: {
+          status: "CONSUMED",
+          bookingStatus: "COMMITTING",
+          paymentStatus: "CAPTURE_IN_FLIGHT",
+          operationId: "op_inflight_1",
+        },
+        expectedTestId: "state-verifying-payment",
+      },
+      {
+        name: "CAPTURE_UNCERTAIN -> verifying_payment",
+        patch: {
+          status: "CONSUMED",
+          bookingStatus: "CAPTURE_UNCERTAIN",
+          operationId: "op_unc_resume_1",
+        },
+        expectedTestId: "state-verifying-payment",
+      },
+      {
+        name: "CONFIRMED -> already_done",
+        patch: {
+          status: "CONSUMED",
+          bookingStatus: "CONFIRMED",
+          paymentStatus: "CAPTURED",
+        },
+        expectedTestId: "state-already-done",
+        expectedText: /This booking has already been confirmed/i,
+      },
+      {
+        name: "PAYMENT_FAILED -> payment_failed",
+        patch: {
+          status: "CONSUMED",
+          bookingStatus: "PAYMENT_FAILED",
+          paymentStatus: "FAILED",
+          paymentExpiresAt: openWindow,
+        },
+        expectedTestId: "state-payment-failed",
+      },
+      {
+        name: "PAYMENT_WINDOW_EXPIRED -> expired (Time released)",
+        patch: {
+          status: "CONSUMED",
+          bookingStatus: "PAYMENT_WINDOW_EXPIRED",
+          paymentStatus: "EXPIRED",
+        },
+        expectedTestId: "state-expired",
+        expectedText: /Time released/i,
+      },
+      {
+        name: "EXPIRED -> expired",
+        patch: {
+          status: "PENDING",
+          bookingStatus: "EXPIRED",
+        },
+        expectedTestId: "state-expired",
+      },
+    ];
+
+    for (const tc of cases) {
+      cleanup();
+      vi.spyOn(approvalApi, "fetchApprovalDetails").mockResolvedValueOnce({
+        details: {
+          ...baseApprovalDetails,
+          ...tc.patch,
+        } as any,
+        serverTime: Date.now(),
+      });
+
+      render(
+        <AskAIProvider>
+          <RouterProvider>
+            <ApprovalPage locator="loc_status_matrix" />
+          </RouterProvider>
+        </AskAIProvider>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId(tc.expectedTestId), `Case ${tc.name} failed`).toBeDefined(),
+      );
+      if (tc.expectedText) {
+        expect(screen.getAllByText(tc.expectedText).length).toBeGreaterThanOrEqual(1);
+      }
+      if (tc.expectedTestId !== "state-already-done") {
+        expect(screen.queryByText(/This booking has already been confirmed/i)).toBeNull();
+      }
+    }
+
+    // P2-1: Ready state displays readable "IST" instead of "GMT+5:30" under TZ=Asia/Kolkata
+    cleanup();
+    vi.spyOn(approvalApi, "fetchApprovalDetails").mockResolvedValueOnce({
+      details: baseApprovalDetails as any,
+      serverTime: Date.now(),
+    });
+    render(
+      <AskAIProvider>
+        <RouterProvider>
+          <ApprovalPage locator="loc_tz_ist" />
+        </RouterProvider>
+      </AskAIProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("state-ready")).toBeDefined());
+    const secondary = screen.getByTestId("secondary-time");
+    expect(secondary.textContent).toContain("Your time:");
+    expect(secondary.textContent).toContain("IST");
+    expect(secondary.textContent).not.toContain("GMT+5:30");
   });
 });

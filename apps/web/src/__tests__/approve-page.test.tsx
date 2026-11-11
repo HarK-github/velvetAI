@@ -413,10 +413,10 @@ describe("ApprovalPage Frontend Unit Tests (12 Page States & Invariants)", () =>
     expect(screen.getByTestId("state-pay-deposit")).toBeDefined();
   });
 
-  // State 11: ALREADY_DONE
-  it("State 11: 'already_done' renders 'This booking has already been confirmed.' when status is CONSUMED", async () => {
+  // State 11: ALREADY_DONE (only when booking is actually CONFIRMED)
+  it("State 11: 'already_done' renders 'This booking has already been confirmed.' when status is CONSUMED and bookingStatus is CONFIRMED", async () => {
     vi.spyOn(approvalApi, "fetchApprovalDetails").mockResolvedValue({
-      details: { ...sampleDetails, status: "CONSUMED" },
+      details: { ...sampleDetails, status: "CONSUMED", bookingStatus: "CONFIRMED" },
       serverTime: Date.now(),
     });
 

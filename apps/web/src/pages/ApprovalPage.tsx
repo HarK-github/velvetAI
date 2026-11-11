@@ -8,8 +8,166 @@ import {
   postConfirmApproval,
 } from "../lib/approval-api.js";
 import { apiClient, generateIdempotencyKey } from "../api-client.js";
+import { formatUserLocalWindow } from "../lib/timezone.js";
 import { useAskAI } from "../context/AskAIContext.js";
 import { PayPalButton, type PayPalPaymentSuccess } from "../components/PayPalButton.js";
+
+export interface DerivedApprovalView {
+  state:
+    | "already_done"
+    | "verifying_payment"
+    | "payment_failed"
+    | "expired"
+    | "pay_deposit"
+    | "approved_awaiting_agent"
+    | "ready";
+  paymentWindowExpired: boolean;
+  needsAuth: boolean;
+  operationId: string | null;
+  errorMessage: string | null;
+}
+
+export function deriveApprovalStateFromDetails(
+  fetchedDetails: BookingApprovalDetails,
+  serverNowMs: number,
+): DerivedApprovalView {
+  const bStatus = (fetchedDetails.bookingStatus || "").toUpperCase();
+  const pStatus = (fetchedDetails.paymentStatus || "").toUpperCase();
+
+  // 1. Confirmed ONLY when backend booking/payment actually confirmed
+  if (
+    bStatus === "CONFIRMED" ||
+    bStatus === "CHECKED_IN" ||
+    bStatus === "COMPLETED" ||
+    pStatus === "CAPTURED"
+  ) {
+    return {
+      state: "already_done",
+      paymentWindowExpired: false,
+      needsAuth: false,
+      operationId: null,
+      errorMessage: null,
+    };
+  }
+
+  // 2. Capture in-flight or uncertain -> verifying_payment polling
+  if (
+    bStatus === "CAPTURE_UNCERTAIN" ||
+    pStatus === "CAPTURE_IN_FLIGHT" ||
+    pStatus === "SUBMISSION_UNKNOWN"
+  ) {
+    return {
+      state: "verifying_payment",
+      paymentWindowExpired: false,
+      needsAuth: false,
+      operationId: fetchedDetails.operationId || null,
+      errorMessage: null,
+    };
+  }
+
+  // 3. Payment window expired
+  if (bStatus === "PAYMENT_WINDOW_EXPIRED" || pStatus === "EXPIRED") {
+    return {
+      state: "expired",
+      paymentWindowExpired: true,
+      needsAuth: false,
+      operationId: null,
+      errorMessage: null,
+    };
+  }
+
+  // 4. Hold expired or cancelled
+  if (bStatus === "EXPIRED" || bStatus === "CANCELLED" || bStatus === "CANCEL_REQUESTED") {
+    return {
+      state: "expired",
+      paymentWindowExpired: false,
+      needsAuth: false,
+      operationId: null,
+      errorMessage: null,
+    };
+  }
+
+  // 5. Payment failed
+  if (bStatus === "PAYMENT_FAILED" || pStatus === "FAILED") {
+    if (
+      fetchedDetails.paymentExpiresAt &&
+      new Date(fetchedDetails.paymentExpiresAt).getTime() <= serverNowMs
+    ) {
+      return {
+        state: "expired",
+        paymentWindowExpired: true,
+        needsAuth: false,
+        operationId: null,
+        errorMessage: null,
+      };
+    }
+    return {
+      state: "payment_failed",
+      paymentWindowExpired: false,
+      needsAuth: true,
+      operationId: null,
+      errorMessage: "Payment capture was unsuccessful. Please try again if your hold is active.",
+    };
+  }
+
+  // 6. Approved and awaiting deposit (COMMITTING / ORDER_CREATE_PENDING / REQUIRES_PAYER_ACTION)
+  if (
+    bStatus === "COMMITTING" ||
+    bStatus === "PAYMENT_PENDING" ||
+    bStatus === "REQUIRES_PAYER_ACTION" ||
+    pStatus === "ORDER_CREATE_PENDING" ||
+    pStatus === "REQUIRES_PAYER_ACTION" ||
+    pStatus === "PAYER_APPROVED"
+  ) {
+    const windowIso = fetchedDetails.paymentExpiresAt || fetchedDetails.expiresAt;
+    if (new Date(windowIso).getTime() <= serverNowMs) {
+      return {
+        state: "expired",
+        paymentWindowExpired: true,
+        needsAuth: false,
+        operationId: null,
+        errorMessage: null,
+      };
+    }
+    return {
+      state: "pay_deposit",
+      paymentWindowExpired: false,
+      needsAuth: true,
+      operationId: null,
+      errorMessage: null,
+    };
+  }
+
+  // 7. Initial HELD state (PENDING approval, or APPROVED awaiting agent)
+  const holdExpiresMs = new Date(fetchedDetails.expiresAt).getTime();
+  if (holdExpiresMs <= serverNowMs) {
+    return {
+      state: "expired",
+      paymentWindowExpired: false,
+      needsAuth: false,
+      operationId: null,
+      errorMessage: null,
+    };
+  }
+
+  if (fetchedDetails.status === "APPROVED") {
+    return {
+      state: "approved_awaiting_agent",
+      paymentWindowExpired: false,
+      needsAuth: true,
+      operationId: null,
+      errorMessage: null,
+    };
+  }
+
+  return {
+    state: "ready",
+    paymentWindowExpired: false,
+    needsAuth: true,
+    operationId: null,
+    errorMessage: null,
+  };
+}
 
 export type ApprovalPageState =
   | "loading"
@@ -47,6 +205,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
   const [pageState, setPageState] = useState<ApprovalPageState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
+  const [postAuthTargetState, setPostAuthTargetState] = useState<ApprovalPageState>("ready");
   const [pendingOperationId, setPendingOperationId] = useState<string | null>(null);
   const [paymentWindowExpired, setPaymentWindowExpired] = useState<boolean>(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState<boolean>(false);
@@ -93,21 +252,36 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
       setServerTimeOffset(offset);
 
       const serverNow = Date.now() + offset;
-      const expiresAtMs = new Date(fetchedDetails.expiresAt).getTime();
+      const derived = deriveApprovalStateFromDetails(fetchedDetails, serverNow);
 
-      // Check if already completed
-      if (fetchedDetails.status === "CONSUMED" || fetchedDetails.bookingStatus === "CONFIRMED") {
+      if (derived.state === "already_done" || derived.state === "pay_deposit") {
         setConfirmedBookingId(fetchedDetails.bookingId);
-        setPageState("already_done");
+      }
+
+      if (derived.state === "pay_deposit") {
+        const persistedOrderKey = apiClient.getOrCreateActionKey(
+          `payment-order:${fetchedDetails.bookingId}`,
+          "pay-order",
+        );
+        setPaymentOrderKeys({ bookingId: fetchedDetails.bookingId, key: persistedOrderKey });
+      }
+
+      if (derived.operationId) {
+        setPendingOperationId(derived.operationId);
+      }
+      if (derived.paymentWindowExpired) {
+        setPaymentWindowExpired(true);
+      }
+      if (derived.errorMessage) {
+        setErrorMessage(derived.errorMessage);
+      }
+
+      if (!derived.needsAuth) {
+        setPageState(derived.state);
         return;
       }
 
-      // Check if expired
-      if (expiresAtMs <= serverNow) {
-        setPageState("expired");
-        return;
-      }
-
+      setPostAuthTargetState(derived.state);
       setIsLoaded(true);
     } catch (err: unknown) {
       const errorObj = err as Error & { status?: number; code?: string };
@@ -141,23 +315,39 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
   // Derive auth-gated UI state separately from single fetch per locator (P0-4)
   useEffect(() => {
     if (!isLoaded || !details) return;
-    if (pageState !== "loading" && pageState !== "sign_in_required" && pageState !== "ready") {
-      return;
-    }
     if (isAuthLoading) {
-      setPageState("loading");
       return;
     }
-    setPageState(isAuthenticated ? "ready" : "sign_in_required");
-  }, [isLoaded, details, isAuthLoading, isAuthenticated, pageState]);
+    if (!isAuthenticated) {
+      if (pageState === "loading" || pageState === "ready" || pageState === "pay_deposit") {
+        setPageState("sign_in_required");
+      }
+      return;
+    }
+    if (pageState === "loading" || pageState === "sign_in_required") {
+      setPageState(postAuthTargetState);
+    }
+  }, [isLoaded, details, isAuthLoading, isAuthenticated, pageState, postAuthTargetState]);
 
   // Live countdown calculation
   const remainingSeconds = useMemo(() => {
-    if (!details?.expiresAt) return 0;
+    const activeDeadlineIso =
+      (pageState === "pay_deposit" || postAuthTargetState === "pay_deposit") &&
+      details?.paymentExpiresAt
+        ? details.paymentExpiresAt
+        : details?.expiresAt;
+    if (!activeDeadlineIso) return 0;
     const effectiveNow = now + serverTimeOffset;
-    const expiresMs = new Date(details.expiresAt).getTime();
+    const expiresMs = new Date(activeDeadlineIso).getTime();
     return Math.max(0, Math.floor((expiresMs - effectiveNow) / 1000));
-  }, [details?.expiresAt, now, serverTimeOffset]);
+  }, [
+    details?.expiresAt,
+    details?.paymentExpiresAt,
+    now,
+    pageState,
+    postAuthTargetState,
+    serverTimeOffset,
+  ]);
 
   // Expiration transition (covers both ready and sign_in_required states per P1-13)
   useEffect(() => {
@@ -229,11 +419,11 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
       setConfirmedBookingId(res.bookingId);
 
       if (res.status === "COMMITTING" && res.next?.type === "PAY_DEPOSIT") {
-        setPaymentOrderKeys((prev) =>
-          prev?.bookingId === res.bookingId
-            ? prev
-            : { bookingId: res.bookingId, key: generateIdempotencyKey("pay-order") },
+        const persistedOrderKey = apiClient.getOrCreateActionKey(
+          `payment-order:${res.bookingId}`,
+          "pay-order",
         );
+        setPaymentOrderKeys({ bookingId: res.bookingId, key: persistedOrderKey });
         setPageState("pay_deposit");
       } else if (res.status === "CONFIRMED") {
         setPageState("confirmed");
@@ -303,9 +493,12 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     }
   };
 
-  // Poll /v1/operations/:operationId during verifying_payment: 3s for first 2m, then 10s (P0-5)
+  // Poll /v1/operations/:operationId (or approval details fallback) during verifying_payment: 3s for 2m, then 10s
   useEffect(() => {
-    if (pageState !== "verifying_payment" || !pendingOperationId) {
+    if (pageState !== "verifying_payment") {
+      return;
+    }
+    if (!pendingOperationId && !locator) {
       return;
     }
 
@@ -313,24 +506,49 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     let timerId: ReturnType<typeof setTimeout> | null = null;
     const startedAt = Date.now();
 
-    const pollOperation = async () => {
+    const pollStatus = async () => {
       try {
-        const op = await apiClient.getOperation(pendingOperationId);
-        if (cancelled) return;
+        if (pendingOperationId) {
+          const op = await apiClient.getOperation(pendingOperationId);
+          if (cancelled) return;
 
-        if (op.state === "SUCCEEDED") {
-          setConfirmedBookingId((prev) => prev || details?.bookingId || null);
-          setPendingOperationId(null);
-          setPageState("confirmed");
-          return;
-        }
-        if (op.state === "FAILED_TERMINAL") {
-          setPendingOperationId(null);
-          setErrorMessage(
-            "Payment capture could not be completed. Your hold remains active if within the window.",
-          );
-          setPageState("payment_failed");
-          return;
+          if (op.state === "SUCCEEDED") {
+            setConfirmedBookingId((prev) => prev || details?.bookingId || null);
+            setPendingOperationId(null);
+            setPageState("confirmed");
+            return;
+          }
+          if (op.state === "FAILED_TERMINAL") {
+            setPendingOperationId(null);
+            setErrorMessage(
+              "Payment capture could not be completed. Your hold remains active if within the window.",
+            );
+            setPageState("payment_failed");
+            return;
+          }
+        } else {
+          const { details: latest, serverTime } = await fetchApprovalDetails(locator);
+          if (cancelled) return;
+          setDetails(latest);
+          const derived = deriveApprovalStateFromDetails(latest, serverTime);
+          if (derived.state === "already_done") {
+            setConfirmedBookingId(latest.bookingId);
+            setPageState("confirmed");
+            return;
+          }
+          if (derived.operationId) {
+            setPendingOperationId(derived.operationId);
+          }
+          if (derived.state === "payment_failed") {
+            setErrorMessage(derived.errorMessage);
+            setPageState("payment_failed");
+            return;
+          }
+          if (derived.state === "expired") {
+            setPaymentWindowExpired(derived.paymentWindowExpired);
+            setPageState("expired");
+            return;
+          }
         }
       } catch {
         // Keep polling on transient lookup error within window
@@ -348,12 +566,12 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
 
       const nextInterval = elapsedMs < 120_000 ? 3_000 : 10_000;
       timerId = setTimeout(() => {
-        void pollOperation();
+        void pollStatus();
       }, nextInterval);
     };
 
     timerId = setTimeout(() => {
-      void pollOperation();
+      void pollStatus();
     }, 3_000);
 
     return () => {
@@ -362,7 +580,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
         clearTimeout(timerId);
       }
     };
-  }, [pageState, pendingOperationId, details?.bookingId]);
+  }, [pageState, pendingOperationId, locator, details?.bookingId]);
 
   const handleCheckUncertainStatus = async () => {
     if (pendingOperationId) {
@@ -371,14 +589,24 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
     }
     setIsCheckingStatus(true);
     try {
-      const { details: latest } = await fetchApprovalDetails(locator);
+      const { details: latest, serverTime } = await fetchApprovalDetails(locator);
       setDetails(latest);
-      if (latest.status === "CONSUMED" || latest.bookingStatus === "CONFIRMED") {
+      const offset = serverTime - Date.now();
+      setServerTimeOffset(offset);
+
+      const derived = deriveApprovalStateFromDetails(latest, Date.now() + offset);
+      if (derived.state === "already_done") {
         setConfirmedBookingId(latest.bookingId);
         setPageState("confirmed");
         return;
       }
-      if (new Date(latest.expiresAt).getTime() <= Date.now() + serverTimeOffset) {
+      if (derived.state === "verifying_payment") {
+        if (derived.operationId) setPendingOperationId(derived.operationId);
+        setPageState("verifying_payment");
+        return;
+      }
+      if (derived.state === "expired") {
+        setPaymentWindowExpired(derived.paymentWindowExpired);
         setPageState("expired");
         return;
       }
@@ -397,33 +625,11 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
 
     if (details.display) {
       const merchantTime = `${details.display.localDate}, ${details.display.localStart} – ${details.display.localEnd} ${details.display.timeZoneLabel}`;
-      let yourTime: string | null = null;
-
-      try {
-        const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (browserZone && details.display.timeZone && browserZone !== details.display.timeZone) {
-          const bStart = new Intl.DateTimeFormat("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            timeZone: browserZone,
-          }).format(new Date(details.startsAt));
-          const bEnd = new Intl.DateTimeFormat("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            timeZone: browserZone,
-            timeZoneName: "short",
-          }).format(new Date(details.endsAt));
-          const bDate = new Intl.DateTimeFormat("en-US", {
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-            timeZone: browserZone,
-          }).format(new Date(details.startsAt));
-          yourTime = `Your time: ${bDate}, ${bStart} – ${bEnd}`;
-        }
-      } catch {
-        // Fallback: omit yourTime if timezone parsing fails
-      }
+      const yourTime = formatUserLocalWindow(
+        details.startsAt,
+        details.endsAt,
+        details.display.timeZone,
+      );
 
       return { merchantTime, yourTime };
     }
@@ -1066,10 +1272,11 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
                 }}
               >
                 <strong style={{ color: "#f59e0b" }}>
-                  Hold Reserved. Deposit required to confirm.
+                  Approved — pay the {priceDisplay.deposit ? `${priceDisplay.deposit} ` : ""}
+                  deposit to confirm
                 </strong>
                 <div style={{ fontSize: "14px", color: "var(--text-body)", marginTop: "4px" }}>
-                  Please complete the deposit to finalize your reservation.
+                  Deposit required to confirm. Please complete payment before the window closes.
                 </div>
               </div>
 
@@ -1107,6 +1314,7 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
               <PayPalButton
                 bookingId={confirmedBookingId || details.bookingId}
                 serverTimeOffsetMs={serverTimeOffset}
+                initialPaymentExpiresAt={details.paymentExpiresAt ?? null}
                 orderIdempotencyKey={
                   paymentOrderKeys?.bookingId === (confirmedBookingId || details.bookingId)
                     ? paymentOrderKeys.key

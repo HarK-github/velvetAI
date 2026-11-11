@@ -95,6 +95,62 @@ export function resolveApiBaseUrl(): string {
 
 export const API_BASE_URL = resolveApiBaseUrl();
 
+const IDEMPOTENCY_STORAGE_PREFIX = "velvetai_idemp_v1:";
+
+function readStoredActionKey(actionScope: string): string | undefined {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return undefined;
+  }
+  try {
+    const val = window.sessionStorage.getItem(`${IDEMPOTENCY_STORAGE_PREFIX}${actionScope}`);
+    return val && val.trim().length > 0 ? val : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStoredActionKey(actionScope: string, key: string): void {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(`${IDEMPOTENCY_STORAGE_PREFIX}${actionScope}`, key);
+  } catch {
+    // Ignore storage quota or restricted storage errors
+  }
+}
+
+function removeStoredActionKey(actionScope: string): void {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.removeItem(`${IDEMPOTENCY_STORAGE_PREFIX}${actionScope}`);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function clearAllStoredActionKeys(): void {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return;
+  }
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const k = window.sessionStorage.key(i);
+      if (k && k.startsWith(IDEMPOTENCY_STORAGE_PREFIX)) {
+        toRemove.push(k);
+      }
+    }
+    for (const k of toRemove) {
+      window.sessionStorage.removeItem(k);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export class VelvetApiClient {
   private readonly baseUrl: string;
   private authToken?: string;
@@ -129,17 +185,25 @@ export class VelvetApiClient {
     if (existing) {
       return existing;
     }
+    const stored = readStoredActionKey(actionScope);
+    if (stored) {
+      this.actionIdempotencyKeys.set(actionScope, stored);
+      return stored;
+    }
     const created = generateIdempotencyKey(prefix);
     this.actionIdempotencyKeys.set(actionScope, created);
+    writeStoredActionKey(actionScope, created);
     return created;
   }
 
   clearActionKey(actionScope: string): void {
     this.actionIdempotencyKeys.delete(actionScope);
+    removeStoredActionKey(actionScope);
   }
 
   resetActionKeys(): void {
     this.actionIdempotencyKeys.clear();
+    clearAllStoredActionKeys();
   }
 
   private async withRetryIdempotencyKey<T>(
@@ -153,7 +217,7 @@ export class VelvetApiClient {
     const key = hasExplicit ? explicitKey!.trim() : this.getOrCreateActionKey(actionScope, prefix);
     const result = await fn(key);
     if (!hasExplicit && !options?.keepKeyOnSuccess) {
-      this.actionIdempotencyKeys.delete(actionScope);
+      this.clearActionKey(actionScope);
     }
     return result;
   }

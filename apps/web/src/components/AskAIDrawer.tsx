@@ -16,6 +16,7 @@ import { formatMoney } from "@velvetai/contracts";
 import { apiClient, API_BASE_URL } from "../api-client.js";
 import { isAuth0Configured, isMockAuthEnabled, computeAuthDiagnostic } from "../lib/auth-config.js";
 import { useRouter } from "../router.js";
+import { formatUserLocalSlot } from "../lib/timezone.js";
 import { useAskAI, type ActiveHoldState, type ActiveQuoteState } from "../context/AskAIContext.js";
 import { SafeMarkdown } from "./SafeMarkdown.js";
 
@@ -87,50 +88,7 @@ export function getToolActionLabel(toolName: string): string {
  * differs from the merchant time zone. Uses readable zone abbreviation (e.g. "IST").
  */
 export function getUserLocalTime(startsAt?: string, merchantTimeZone?: string): string | null {
-  if (!startsAt) return null;
-  try {
-    const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (merchantTimeZone && browserZone.toLowerCase() === merchantTimeZone.toLowerCase()) {
-      return null;
-    }
-    const date = new Date(startsAt);
-    if (isNaN(date.getTime())) return null;
-
-    const timeFormatter = new Intl.DateTimeFormat("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-    const timeStr = timeFormatter.format(date);
-
-    let zoneStr = "";
-    try {
-      const shortFormatter = new Intl.DateTimeFormat("en-US", {
-        timeZone: browserZone,
-        timeZoneName: "short",
-      });
-      const parts = shortFormatter.formatToParts(date);
-      const shortName = parts.find((p) => p.type === "timeZoneName")?.value || "";
-      if (shortName && !/^GMT[+-]/i.test(shortName) && !/^UTC[+-]/i.test(shortName)) {
-        zoneStr = shortName;
-      } else if (browserZone === "Asia/Kolkata" || browserZone === "Asia/Calcutta") {
-        zoneStr = "IST";
-      } else {
-        const longFormatter = new Intl.DateTimeFormat("en-US", {
-          timeZone: browserZone,
-          timeZoneName: "longGeneric",
-        });
-        const longParts = longFormatter.formatToParts(date);
-        zoneStr = longParts.find((p) => p.type === "timeZoneName")?.value || shortName;
-      }
-    } catch {
-      zoneStr = "";
-    }
-
-    return zoneStr ? `${timeStr} ${zoneStr}` : timeStr;
-  } catch {
-    return null;
-  }
+  return formatUserLocalSlot(startsAt, merchantTimeZone);
 }
 
 /**
@@ -1299,23 +1257,64 @@ function replaceActiveQuoteMessage(prevMessages: any[], newQuoteMsg: any): any[]
   return [...cleaned, newQuoteMsg];
 }
 
-function markHoldReleasedInMessages(prevMessages: any[], releasedBookingId: string): any[] {
-  return prevMessages.map((msg) => {
-    if (!msg || !Array.isArray(msg.parts)) return msg;
-    let changed = false;
-    const nextParts = msg.parts.map((part: any) => {
-      const res = part?.output ?? part?.result;
-      if (res && typeof res === "object" && res.bookingId === releasedBookingId) {
-        changed = true;
-        if (part.output !== undefined) {
-          return { ...part, output: { ...res, status: "CANCELLED" } };
+const HOLD_BOILERPLATE_TEXT =
+  "I have prepared your booking hold. Please review and approve on the approval page.";
+
+function buildHoldConversationMessages(
+  prevMessages: any[],
+  newPrepMsg: any,
+  releasedBookingId?: string,
+): any[] {
+  let extractedReleasedPart: any | null = null;
+
+  const cleaned = prevMessages
+    .map((msg) => {
+      if (!msg || !Array.isArray(msg.parts)) return msg;
+      const keptParts: any[] = [];
+      for (const part of msg.parts) {
+        if (
+          part?.type === "text" &&
+          typeof part.text === "string" &&
+          part.text.trim() === HOLD_BOILERPLATE_TEXT
+        ) {
+          continue;
         }
-        return { ...part, result: { ...res, status: "CANCELLED" } };
+        const res = part?.output ?? part?.result;
+        if (
+          releasedBookingId &&
+          res &&
+          typeof res === "object" &&
+          res.bookingId === releasedBookingId
+        ) {
+          extractedReleasedPart =
+            part.output !== undefined
+              ? { ...part, output: { ...res, status: "CANCELLED" } }
+              : { ...part, result: { ...res, status: "CANCELLED" } };
+          continue;
+        }
+        keptParts.push(part);
       }
-      return part;
-    });
-    return changed ? { ...msg, parts: nextParts } : msg;
-  });
+
+      const hasMeaningfulContent = keptParts.some(
+        (p: any) =>
+          (p?.type === "text" && typeof p.text === "string" && p.text.trim().length > 0) ||
+          (p?.type && p.type !== "text" && p.type !== "step-start"),
+      );
+      if (!hasMeaningfulContent) return null;
+      return { ...msg, parts: keptParts };
+    })
+    .filter(Boolean);
+
+  if (extractedReleasedPart) {
+    const releasedMsg = {
+      id: `msg-released-${Date.now()}`,
+      role: "assistant",
+      parts: [extractedReleasedPart],
+    };
+    return [...cleaned, releasedMsg, newPrepMsg];
+  }
+
+  return [...cleaned, newPrepMsg];
 }
 
 function deriveLatestHoldFromMessages(msgs: any[]): ActiveHoldState | null {
@@ -1848,16 +1847,13 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
           },
           {
             type: "text",
-            text: "I have prepared your booking hold. Please review and approve on the approval page.",
+            text: HOLD_BOILERPLATE_TEXT,
           },
         ],
       };
-      setMessages((prev) => {
-        const base = replaceOldHold
-          ? markHoldReleasedInMessages(prev, replaceOldHold.bookingId)
-          : prev;
-        return [...base, prepMsg];
-      });
+      setMessages((prev) =>
+        buildHoldConversationMessages(prev, prepMsg, replaceOldHold?.bookingId),
+      );
     } catch (err: any) {
       const formatted = formatAskAIErrorMessage(err);
       const errorMsg: any = {

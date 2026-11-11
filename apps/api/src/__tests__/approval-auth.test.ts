@@ -520,4 +520,96 @@ describe("Booking Approval Route Auth0 RS256 Security (P0-8)", () => {
       });
     });
   }
+
+  it("GET /v1/booking-approvals/:locator exposes non-PII bookingStatus, paymentStatus, paymentExpiresAt, and operationId after approve-and-commit", async () => {
+    const buyerJwt = await signJwt({
+      sub: buyerSub,
+      email: "buyer.rs256@example.com",
+      scope: "booking:prepare booking:commit booking:read",
+      "https://velvetai.com/role_version": 1,
+    });
+    const hold = await prepareHold(buyerJwt);
+
+    const commitRes = await app.inject({
+      method: "POST",
+      url: `/v1/booking-approvals/${hold.locator}/approve-and-commit`,
+      headers: {
+        authorization: `Bearer ${buyerJwt}`,
+        "idempotency-key": `commit-status-${crypto.randomUUID()}`,
+      },
+      payload: {},
+    });
+    expect(commitRes.statusCode).toBe(200);
+
+    // 1. After approve-and-commit: GET exposes status=CONSUMED, bookingStatus=COMMITTING, paymentExpiresAt, no PII
+    const midPayGet = await app.inject({
+      method: "GET",
+      url: `/v1/booking-approvals/${hold.locator}`,
+    });
+    expect(midPayGet.statusCode).toBe(200);
+    const midPayBody = midPayGet.json();
+    expect(midPayBody.status).toBe("CONSUMED");
+    expect(midPayBody.bookingStatus).toBe("COMMITTING");
+    expect(typeof midPayBody.paymentExpiresAt).toBe("string");
+    expect(Date.parse(midPayBody.paymentExpiresAt)).toBeGreaterThan(Date.now());
+    expect(midPayGet.body).not.toContain("buyer.rs256@example.com");
+
+    // 2. When payment intent + uncertain capture operation exist, GET exposes paymentStatus & operationId
+    const opId = crypto.randomUUID();
+    await withTenantTransaction(db, DEV_TENANT_ID, async (trx) => {
+      await trx
+        .updateTable("bookings")
+        .set({ status: "CAPTURE_UNCERTAIN" })
+        .where("id", "=", hold.bookingId)
+        .execute();
+
+      await trx
+        .insertInto("payment_intents")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: DEV_TENANT_ID,
+          booking_id: hold.bookingId,
+          provider_connection_id: null,
+          provider_order_id: `PAYPAL_TEST_${crypto.randomUUID()}`,
+          amount_minor: "2000",
+          currency: "USD",
+          state: "CAPTURE_IN_FLIGHT",
+          payment_expires_at: new Date(Date.now() + 300_000),
+          request_id: `req_${crypto.randomUUID()}`,
+        })
+        .execute();
+
+      await trx
+        .insertInto("provider_operations")
+        .values({
+          id: opId,
+          tenant_id: DEV_TENANT_ID,
+          booking_id: hold.bookingId,
+          provider: "PAYPAL",
+          environment: "sandbox",
+          operation_type: "CAPTURE",
+          state: "PENDING",
+          endpoint: "/v2/checkout/orders/capture",
+          paypal_request_id: `pp_${crypto.randomUUID()}`,
+          canonical_payload_hash: "a".repeat(64),
+          provider_order_id: null,
+          provider_capture_id: null,
+          provider_refund_id: null,
+          last_http_status: null,
+          provider_debug_id: null,
+          error_code: null,
+        })
+        .execute();
+    });
+
+    const uncertainGet = await app.inject({
+      method: "GET",
+      url: `/v1/booking-approvals/${hold.locator}`,
+    });
+    expect(uncertainGet.statusCode).toBe(200);
+    const uncertainBody = uncertainGet.json();
+    expect(uncertainBody.bookingStatus).toBe("CAPTURE_UNCERTAIN");
+    expect(uncertainBody.paymentStatus).toBe("CAPTURE_IN_FLIGHT");
+    expect(uncertainBody.operationId).toBe(opId);
+  });
 });

@@ -537,6 +537,7 @@ export class BookingService {
           "booking_hold_snapshots.currency",
           "booking_hold_snapshots.client_id",
           "bookings.status as booking_status",
+          "bookings.payment_expires_at as booking_payment_expires_at",
         ])
         .executeTakeFirst();
 
@@ -549,6 +550,33 @@ export class BookingService {
         .where("tenant_id", "=", tenantId)
         .select(["timezone"])
         .executeTakeFirst();
+
+      const latestIntent = await trx
+        .selectFrom("payment_intents")
+        .where("booking_id", "=", conf.booking_id)
+        .where("tenant_id", "=", tenantId)
+        .orderBy("created_at", "desc")
+        .select(["state", "payment_expires_at"])
+        .executeTakeFirst();
+
+      const isCaptureUncertainOrInFlight =
+        snapshot.booking_status === "CAPTURE_UNCERTAIN" ||
+        latestIntent?.state === "CAPTURE_IN_FLIGHT" ||
+        latestIntent?.state === "SUBMISSION_UNKNOWN";
+
+      const latestCaptureOp = isCaptureUncertainOrInFlight
+        ? await trx
+            .selectFrom("provider_operations")
+            .where("booking_id", "=", conf.booking_id)
+            .where("tenant_id", "=", tenantId)
+            .where("operation_type", "=", "CAPTURE")
+            .orderBy("created_at", "desc")
+            .select(["id", "state"])
+            .executeTakeFirst()
+        : undefined;
+
+      const resolvedPaymentExpiresAt =
+        snapshot.booking_payment_expires_at ?? latestIntent?.payment_expires_at ?? null;
 
       const effectiveTimeZone = (location?.timezone || "America/New_York") as IanaTimeZone;
       const displayInfo = formatSlotDisplay(
@@ -597,6 +625,11 @@ export class BookingService {
         expiresAt: conf.expires_at.toISOString() as Rfc3339Timestamp,
         status: approvalStatus,
         bookingStatus: snapshot.booking_status,
+        ...(latestIntent?.state ? { paymentStatus: latestIntent.state } : {}),
+        ...(resolvedPaymentExpiresAt
+          ? { paymentExpiresAt: resolvedPaymentExpiresAt.toISOString() as Rfc3339Timestamp }
+          : {}),
+        ...(latestCaptureOp?.id ? { operationId: latestCaptureOp.id } : {}),
         display: {
           localDate: displayInfo.localDate,
           localStart: displayInfo.localStart,

@@ -205,6 +205,9 @@ export const bookingApprovalDetailsSchema = z.object({
   expiresAt: rfc3339TimestampSchema,
   status: z.enum(["PENDING", "APPROVED", "CONSUMED"]).optional(),
   bookingStatus: z.string().optional(),
+  paymentStatus: z.string().optional(),
+  paymentExpiresAt: rfc3339TimestampSchema.optional(),
+  operationId: z.string().optional(),
   display: z
     .object({
       localDate: z.string(),

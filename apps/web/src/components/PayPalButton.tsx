@@ -83,10 +83,21 @@ export interface PayPalButtonProps {
   onCancel?: () => void;
   onCaptureNetworkError?: (info: { message: string; paymentIntentId?: string }) => void;
   serverTimeOffsetMs?: number;
+  initialPaymentExpiresAt?: string | null;
   orderIdempotencyKey?: string;
   getCaptureIdempotencyKey?: (paymentIntentId: string) => string;
   clientId?: string;
   environment?: "sandbox" | "production";
+}
+
+function computeRemainingSeconds(
+  expiresAtIso: string | null | undefined,
+  serverTimeOffsetMs: number,
+): number | null {
+  if (!expiresAtIso) return null;
+  const targetTime = new Date(expiresAtIso).getTime();
+  if (Number.isNaN(targetTime)) return null;
+  return Math.max(0, Math.floor((targetTime - (Date.now() + serverTimeOffsetMs)) / 1000));
 }
 
 export const PayPalButton: FC<PayPalButtonProps> = ({
@@ -96,6 +107,7 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
   onCancel,
   onCaptureNetworkError,
   serverTimeOffsetMs = 0,
+  initialPaymentExpiresAt = null,
   orderIdempotencyKey,
   getCaptureIdempotencyKey,
   clientId = (typeof import.meta !== "undefined" &&
@@ -103,16 +115,17 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
     "placeholder_paypal_sandbox_client_id",
   environment = "sandbox",
 }) => {
-  const [paymentExpiresAt, setPaymentExpiresAt] = useState<string | null>(null);
-  const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
+  const [paymentExpiresAt, setPaymentExpiresAt] = useState<string | null>(initialPaymentExpiresAt);
+  const [countdownSeconds, setCountdownSeconds] = useState<number | null>(() =>
+    computeRemainingSeconds(initialPaymentExpiresAt, serverTimeOffsetMs),
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sdkReady, setSdkReady] = useState(false);
   const sessionRef = useRef<PayPalV6PaymentSession | null>(null);
   const paymentIntentIdRef = useRef<string | null>(null);
   const paypalOrderIdRef = useRef<string | null>(null);
-  const paymentExpiresAtRef = useRef<string | null>(null);
-  const fallbackOrderKeyRef = useRef<{ bookingId: string; key: string } | null>(null);
+  const paymentExpiresAtRef = useRef<string | null>(initialPaymentExpiresAt);
   const fallbackCaptureKeysRef = useRef<Map<string, string>>(new Map());
   const inFlightOrderRef = useRef<{
     bookingId: string;
@@ -127,12 +140,7 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
     if (orderIdempotencyKey && orderIdempotencyKey.trim().length > 0) {
       return orderIdempotencyKey.trim();
     }
-    if (fallbackOrderKeyRef.current?.bookingId === bookingId) {
-      return fallbackOrderKeyRef.current.key;
-    }
-    const generated = generateIdempotencyKey("pay-order");
-    fallbackOrderKeyRef.current = { bookingId, key: generated };
-    return generated;
+    return apiClient.getOrCreateActionKey(`payment-order:${bookingId}`, "pay-order");
   }, [bookingId, orderIdempotencyKey]);
 
   const resolveCaptureKey = useCallback(
@@ -155,10 +163,10 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
   useEffect(() => {
     paymentIntentIdRef.current = null;
     paypalOrderIdRef.current = null;
-    paymentExpiresAtRef.current = null;
+    paymentExpiresAtRef.current = initialPaymentExpiresAt ?? null;
     inFlightOrderRef.current = null;
-    setPaymentExpiresAt(null);
-  }, [bookingId]);
+    setPaymentExpiresAt(initialPaymentExpiresAt ?? null);
+  }, [bookingId, initialPaymentExpiresAt]);
 
   const ensurePaymentOrder = useCallback(async () => {
     if (paymentIntentIdRef.current && paypalOrderIdRef.current) {
