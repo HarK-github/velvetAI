@@ -1012,5 +1012,39 @@ describe("W2, W3, W4: Stateless MCP 2026-07-28 Streamable HTTP & Two-Phase Human
       expect(commitBody.result?.isError).toBe(true);
       expect(commitBody.result.content[0].text).toContain("OAuth client substitution detected");
     });
+
+    it("rejects explicit unsupported MCP-Protocol-Version with 400 before Bearer auth while keeping 401 WWW-Authenticate when header is absent", async () => {
+      const downgradeRes = await app.inject({
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          "content-type": "application/json",
+          "mcp-protocol-version": "2024-11-05",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 901,
+          method: "tools/list",
+        }),
+      });
+      expect(downgradeRes.statusCode).toBe(400);
+      const downgradeBody = JSON.parse(downgradeRes.body);
+      expect(downgradeBody.code).toBe("unsupported_protocol_version");
+
+      const unauthRes = await app.inject({
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 902,
+          method: "tools/list",
+        }),
+      });
+      expect(unauthRes.statusCode).toBe(401);
+      expect(unauthRes.headers["www-authenticate"]).toContain("Bearer");
+    });
   });
 });

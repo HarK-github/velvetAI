@@ -14,7 +14,8 @@
     "build": "tsc -b",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "report": "tsc -b && node dist/report.js"
   },
   "dependencies": {
     "@velvetai/contracts": "workspace:*",

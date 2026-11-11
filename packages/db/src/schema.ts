@@ -32,6 +32,7 @@ export interface Database {
   inbox_events: InboxEventTable;
   audit_events: AuditEventTable;
   judge_runs: JudgeRunTable;
+  judge_abuse_runs: JudgeAbuseRunTable;
   demo_schedule_fixtures: DemoScheduleFixtureTable;
   synthetic_history: SyntheticHistoryTable;
 }
@@ -437,6 +438,17 @@ export interface JudgeRunTable {
   requested_by: string;
   steps: ColumnType<unknown, string | unknown | undefined, unknown>;
   summary: ColumnType<unknown | null, string | unknown | null | undefined, unknown | null>;
+}
+
+export interface JudgeAbuseRunTable {
+  id: string;
+  tenant_id: string;
+  status: "RUNNING" | "SUCCEEDED" | "FAILED" | string;
+  started_at: ColumnType<Date, string | Date | undefined, never>;
+  finished_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
+  requested_by: string;
+  scenarios: ColumnType<unknown, string | unknown | undefined, string | unknown>;
+  summary: ColumnType<unknown | null, string | unknown | null | undefined, string | unknown | null>;
 }
 
 export interface DemoScheduleFixtureTable {

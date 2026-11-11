@@ -11,6 +11,7 @@ import { SchedulePage } from "./pages/SchedulePage.js";
 import { PolicyPage } from "./pages/PolicyPage.js";
 import { StatusPage } from "./pages/StatusPage.js";
 import { ApprovalPage } from "./pages/ApprovalPage.js";
+import { SecurityPage } from "./pages/SecurityPage.js";
 import { computeAuthDiagnostic } from "./lib/auth-config.js";
 import { API_BASE_URL } from "./api-client.js";
 
@@ -86,6 +87,8 @@ const AppContent: FC = () => {
         return <PolicyPage />;
       case "/status":
         return <StatusPage />;
+      case "/security":
+        return <SecurityPage />;
       case "/":
       default:
         return <HomePage />;

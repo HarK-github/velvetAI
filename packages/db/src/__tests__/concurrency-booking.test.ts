@@ -109,7 +109,11 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
 
         successfulCommits++;
       } catch (err: unknown) {
-        if (err instanceof SlotUnavailableError && err.status === 409 && err.code === "slot_unavailable") {
+        if (
+          err instanceof SlotUnavailableError &&
+          err.status === 409 &&
+          err.code === "slot_unavailable"
+        ) {
           exclusionConflicts++;
         } else {
           otherErrors++;
@@ -831,7 +835,9 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
               endsAt: slotEnd,
               state: "HELD",
             },
-            () => ({ conflictSlot: { startsAt: slotStart.toISOString(), endsAt: slotEnd.toISOString() } }),
+            () => ({
+              conflictSlot: { startsAt: slotStart.toISOString(), endsAt: slotEnd.toISOString() },
+            }),
           );
         });
       } catch (err) {
@@ -845,7 +851,9 @@ describe("PostgreSQL 17 GiST Exclusion & Concurrency Tests", () => {
       expect(getState().rolledBack).toBe(true);
 
       const lockIdx = executedSql.findIndex((q) => q.sql.includes("pg_advisory_xact_lock"));
-      const insertIdx = executedSql.findIndex((q) => q.sql.includes('insert into "resource_claims"'));
+      const insertIdx = executedSql.findIndex((q) =>
+        q.sql.includes('insert into "resource_claims"'),
+      );
       expect(lockIdx).toBeGreaterThanOrEqual(0);
       expect(insertIdx).toBeGreaterThan(lockIdx);
       expect(executedSql[lockIdx]?.parameters).toEqual([seedA.tenantId, seedA.resourceId]);

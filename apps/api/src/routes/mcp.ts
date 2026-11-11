@@ -191,6 +191,24 @@ export const mcpRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    const preAuthVersionHeader = request.headers["mcp-protocol-version"];
+    if (preAuthVersionHeader !== undefined) {
+      const preAuthClaimedVersion = Array.isArray(preAuthVersionHeader)
+        ? preAuthVersionHeader[0]
+        : preAuthVersionHeader;
+      if (preAuthClaimedVersion !== "2026-07-28" && preAuthClaimedVersion !== "2025-11-25") {
+        return reply.status(400).send({
+          type: "https://velvetai.example/errors/unsupported-protocol-version",
+          title: "Bad Request",
+          status: 400,
+          code: "unsupported_protocol_version",
+          detail:
+            "Unsupported MCP-Protocol-Version header. Supported versions are 2026-07-28 and 2025-11-25.",
+          instance: request.url,
+        });
+      }
+    }
+
     // D. Extract & validate Bearer Token
     const authHeader = request.headers.authorization;
     const resourceMetadataUrl = `${request.protocol}://${request.host}/.well-known/oauth-protected-resource/mcp`;

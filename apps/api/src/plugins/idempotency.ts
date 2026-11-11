@@ -44,6 +44,7 @@ const MUTATING_ROUTES_REQUIRING_IDEMPOTENCY = [
   /^\/v1\/bookings\/[^/]+\/complete\/?$/,
   /^\/v1\/bookings\/[^/]+\/no-show\/?$/,
   /^\/v1\/judge\/reset\/?$/,
+  /^\/v1\/judge\/abuse-lab\/runs\/?$/,
 ];
 
 // Exempt routes: provably read-only despite POST semantics or external webhook deduplication

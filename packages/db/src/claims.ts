@@ -49,9 +49,7 @@ function extractPgErrorInfo(err: unknown): { code?: string; message?: string } {
 export function isSlotConflictPgError(err: unknown): boolean {
   const { code, message } = extractPgErrorInfo(err);
   return (
-    code === "23P01" ||
-    code === "40P01" ||
-    Boolean(message?.includes("no_overlapping_claims"))
+    code === "23P01" || code === "40P01" || Boolean(message?.includes("no_overlapping_claims"))
   );
 }
 
@@ -120,4 +118,3 @@ export async function insertBlockingResourceClaim(
     throw mapPgSlotConflictError(err, buildConflictDetails);
   }
 }
-
