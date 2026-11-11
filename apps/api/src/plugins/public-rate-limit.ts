@@ -39,4 +39,3 @@ export function getPublicRateLimitRetryAfter(clientIp: string): number {
 export function resetPublicRateLimits(): void {
   publicRateWindows.clear();
 }
-

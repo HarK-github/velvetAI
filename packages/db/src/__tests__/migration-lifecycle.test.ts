@@ -242,7 +242,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     expect(role.rolbypassrls).toBe(false);
     expect(role.rolcanlogin).toBe(false);
 
-    // Verify FORCE ROW LEVEL SECURITY across all 25 tenant tables
+    // Verify FORCE ROW LEVEL SECURITY across all 29 tenant tables
     const tenantTables = [
       "locations",
       "customers",
@@ -270,6 +270,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       "financial_journal_lines",
       "invoices",
       "judge_runs",
+      "judge_abuse_runs",
       "demo_schedule_fixtures",
       "synthetic_history",
     ];
@@ -301,7 +302,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       WHERE policyname = 'tenant_isolation_policy'
     `.execute(adminDb);
 
-    expect(policies.rows.length).toBe(28);
+    expect(policies.rows.length).toBe(29);
     for (const p of policies.rows) {
       // The qual must match NULLIF(current_setting('app.tenant_id', true), '')::uuid
       expect(p.qual).toContain("app.tenant_id");
@@ -311,6 +312,18 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
   });
 
   it("4. Migration Rollback and Re-apply Proof: verifies down() and up() idempotency", async () => {
+    // Rollback migration 0009
+    await migrateDown(adminDb);
+
+    // After rollback of 0009, judge_abuse_runs table should be absent
+    const rolledBackJudgeAbuseRuns = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'judge_abuse_runs'
+      ) as exists
+    `.execute(adminDb);
+    expect(rolledBackJudgeAbuseRuns.rows[0]?.exists).toBe(false);
+
     // Rollback migration 0007
     await migrateDown(adminDb);
 
@@ -410,6 +423,14 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       ) as exists
     `.execute(adminDb);
     expect(restoredJudgeRuns.rows[0]?.exists).toBe(true);
+
+    const restoredJudgeAbuseRuns = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'judge_abuse_runs'
+      ) as exists
+    `.execute(adminDb);
+    expect(restoredJudgeAbuseRuns.rows[0]?.exists).toBe(true);
 
     const restoredBinding = await sql<{ exists: boolean }>`
       SELECT EXISTS (
@@ -736,6 +757,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
               async down() {},
             },
             "0007_judge_tenant_seed_and_reset": { async up() {}, async down() {} },
+            "0009_judge_abuse_runs": { async up() {}, async down() {} },
           };
         },
       },

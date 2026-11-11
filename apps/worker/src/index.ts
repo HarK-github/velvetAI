@@ -15,6 +15,8 @@ export * from "./reconciliation-processor.js";
 export class OutboxWorker {
   private isRunning = false;
   private timer: NodeJS.Timeout | null = null;
+  private activeCycle: Promise<void> | null = null;
+  private ownedDb: Kysely<Database> | null = null;
   private readonly logger = createLogger({ name: "outbox-worker" });
   readonly processor: OutboxProcessor;
   readonly holdReaper?: HoldReaperProcessor;
@@ -22,7 +24,7 @@ export class OutboxWorker {
 
   constructor(store?: OutboxStore, db?: Kysely<Database>, paymentPort?: PaymentPort) {
     loadRootEnv();
-    validateEnv();
+    const env = validateEnv();
 
     const isProduction = process.env.NODE_ENV === "production";
 
@@ -33,16 +35,28 @@ export class OutboxWorker {
       );
     }
 
-    let effectiveStore: OutboxStore;
-    if (store) {
-      effectiveStore = store;
-    } else if (isProduction || process.env.DATABASE_URL) {
+    let dbClient: Kysely<Database> | null = db ?? null;
+    const ensureDbClient = (): Kysely<Database> => {
+      if (dbClient) {
+        return dbClient;
+      }
       const dbUrl = process.env.DATABASE_URL;
       if (!dbUrl) {
         throw new Error("DATABASE_URL is required for production or PostgreSqlOutboxStore.");
       }
-      const dbClient = db || createDatabaseClient(dbUrl);
-      effectiveStore = new PostgreSqlOutboxStore(dbClient);
+      this.ownedDb = createDatabaseClient(dbUrl, {
+        min: env.DATABASE_POOL_MIN,
+        max: env.DATABASE_POOL_MAX,
+      });
+      dbClient = this.ownedDb;
+      return dbClient;
+    };
+
+    let effectiveStore: OutboxStore;
+    if (store) {
+      effectiveStore = store;
+    } else if (isProduction || process.env.DATABASE_URL) {
+      effectiveStore = new PostgreSqlOutboxStore(ensureDbClient());
     } else {
       effectiveStore = new InMemoryOutboxStore();
     }
@@ -50,15 +64,25 @@ export class OutboxWorker {
     this.processor = new OutboxProcessor(effectiveStore);
 
     if (db || process.env.DATABASE_URL) {
-      const dbUrl = process.env.DATABASE_URL;
-      if (!dbUrl) {
-        throw new Error("DATABASE_URL is required for HoldReaperProcessor.");
-      }
-      const dbClient = db || createDatabaseClient(dbUrl);
-      this.holdReaper = new HoldReaperProcessor(dbClient);
+      const client = ensureDbClient();
+      this.holdReaper = new HoldReaperProcessor(client);
       if (paymentPort) {
-        this.reconciliation = new ReconciliationProcessor(dbClient, paymentPort);
+        this.reconciliation = new ReconciliationProcessor(client, paymentPort);
       }
+    }
+  }
+
+  async runOnce(): Promise<void> {
+    try {
+      await this.processor.processNextBatch(20);
+      if (this.holdReaper) {
+        await this.holdReaper.reapOnce(50);
+      }
+      if (this.reconciliation) {
+        await this.reconciliation.reconcilePendingOperations(20);
+      }
+    } catch (err) {
+      this.logger.error({ err }, "Error in outbox worker background cycle");
     }
   }
 
@@ -67,19 +91,13 @@ export class OutboxWorker {
     this.logger.info("Outbox worker started");
 
     if (intervalMs > 0 && !this.timer) {
-      this.timer = setInterval(async () => {
-        if (!this.isRunning) return;
-        try {
-          await this.processor.processNextBatch(20);
-          if (this.holdReaper) {
-            await this.holdReaper.reapOnce(50);
-          }
-          if (this.reconciliation) {
-            await this.reconciliation.reconcilePendingOperations(20);
-          }
-        } catch (err) {
-          this.logger.error({ err }, "Error in outbox worker background cycle");
+      this.timer = setInterval(() => {
+        if (!this.isRunning || this.activeCycle) {
+          return;
         }
+        this.activeCycle = this.runOnce().finally(() => {
+          this.activeCycle = null;
+        });
       }, intervalMs);
       this.timer.unref();
     }
@@ -91,18 +109,18 @@ export class OutboxWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.activeCycle) {
+      await this.activeCycle;
+    }
+    if (this.ownedDb) {
+      const dbToClose = this.ownedDb;
+      this.ownedDb = null;
+      await dbToClose.destroy();
+    }
     this.logger.info("Outbox worker stopped");
   }
 
   getStatus(): { isRunning: boolean } {
     return { isRunning: this.isRunning };
   }
-}
-
-if (process.env.NODE_ENV !== "test") {
-  const worker = new OutboxWorker();
-  worker.start().catch((err) => {
-    console.error("Worker failed to start:", err);
-    process.exit(1);
-  });
 }

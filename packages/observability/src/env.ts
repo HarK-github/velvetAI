@@ -14,8 +14,19 @@ export const envSchema = z
     DATABASE_URL: z
       .string()
       .default(process.env.DATABASE_URL || "postgresql://localhost:5432/velvetai?sslmode=disable"),
+    DATABASE_MIGRATION_URL: z.string().optional(),
     DATABASE_POOL_MIN: z.coerce.number().default(2),
     DATABASE_POOL_MAX: z.coerce.number().default(10),
+    MIGRATE_ON_START: z
+      .string()
+      .transform((val) => val === "true" || val === "1")
+      .or(z.boolean())
+      .default(false),
+    RUN_WORKER_IN_PROCESS: z
+      .string()
+      .transform((val) => val === "true" || val === "1")
+      .or(z.boolean())
+      .default(false),
 
     // Redis
     REDIS_URL: z.string().default("redis://localhost:6379"),
@@ -92,6 +103,17 @@ export const envSchema = z
     MCP_RESOURCE_URL: z.string().default("http://localhost:3000/mcp"),
   })
   .superRefine((data, ctx) => {
+    if (
+      data.MIGRATE_ON_START &&
+      (!data.DATABASE_MIGRATION_URL || !data.DATABASE_MIGRATION_URL.trim())
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["DATABASE_MIGRATION_URL"],
+        message: "DATABASE_MIGRATION_URL is required when MIGRATE_ON_START=true",
+      });
+    }
+
     if (data.NODE_ENV === "production") {
       // 1. INTENT_SIGNING_KEY: Reject placeholders, require valid EC private key PEM or base64 PKCS#8
       if (

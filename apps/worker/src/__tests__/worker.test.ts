@@ -148,4 +148,22 @@ describe("OutboxWorker & OutboxProcessor", () => {
     expect(result.failed).toBe(0);
     expect(store.getEvents()[0]?.processedAt).toBeDefined();
   });
+
+  it("awaits in-flight runOnce cycles during graceful stop()", async () => {
+    const worker = new OutboxWorker(new InMemoryOutboxStore());
+    let cycleFinished = false;
+    const origRunOnce = worker.runOnce.bind(worker);
+    worker.runOnce = async () => {
+      await origRunOnce();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      cycleFinished = true;
+    };
+
+    await worker.start(10);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await worker.stop();
+
+    expect(cycleFinished).toBe(true);
+    expect(worker.getStatus().isRunning).toBe(false);
+  });
 });

@@ -403,7 +403,17 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
 
     const role = membership.role as Role;
     const roles: Role[] = role === "JUDGE" ? ["JUDGE", "BUYER", "SCHEDULER"] : [role];
-    const scopes = this.extractScopes(payload, role);
+    const isHumanPrincipal = !subject.endsWith("@clients") && payload.gty !== "client-credentials";
+    const baseScopes = this.extractScopes(payload, role);
+    const scopes: Scope[] =
+      isHumanPrincipal && role === "JUDGE"
+        ? Array.from(
+            new Set([
+              ...baseScopes,
+              ...(DEFAULT_ROLE_SCOPES.JUDGE || []).filter((s) => s.startsWith("judge:")),
+            ]),
+          )
+        : baseScopes;
 
     return {
       subject,

@@ -88,8 +88,8 @@ When changes merge to `main`, running `git push origin main` pushes simultaneous
 | `SELF_SIGNUP_TENANT_ID`  |   No   | Target tenant ID for self-signup buyers (defaults to Judge Demo Tenant)                     | `01932b10-0000-7000-8000-000000000a01`                            | Yes                             |
 | `PUBLIC_DEMO_TENANT_ID`  |   No   | Default tenant ID for unauthenticated public reads (/v1/services, /v1/availability)         | `01932b10-0000-7000-8000-000000000a01`                            | Yes                             |
 | `SELF_SIGNUP_ENABLED`    |   No   | Enable JIT buyer self-service provisioning on first Auth0 login                             | `true`                                                            | Yes                             |
-| `SELF_SIGNUP_TENANT_ID`  |   No   | Target tenant ID for self-signup buyers (defaults to Judge Demo Tenant)                      | `01932b10-0000-7000-8000-000000000a01`                           | Yes                             |
-| `PUBLIC_DEMO_TENANT_ID`  |   No   | Default tenant ID for unauthenticated public reads (/v1/services, /v1/availability)         | `01932b10-0000-7000-8000-000000000a01`                           | Yes                             |
+| `SELF_SIGNUP_TENANT_ID`  |   No   | Target tenant ID for self-signup buyers (defaults to Judge Demo Tenant)                     | `01932b10-0000-7000-8000-000000000a01`                            | Yes                             |
+| `PUBLIC_DEMO_TENANT_ID`  |   No   | Default tenant ID for unauthenticated public reads (/v1/services, /v1/availability)         | `01932b10-0000-7000-8000-000000000a01`                            | Yes                             |
 | `REDIS_URL`              |   No   | Redis connection URL (not used by runtime; outbox is in PostgreSQL, health returns mock ok) | Not required (defaults to `redis://localhost:6379`)               | No                              |
 
 ### Background Worker (`velvetai-worker`)

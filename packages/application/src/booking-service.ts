@@ -650,7 +650,16 @@ export class BookingService {
     tenantId: TenantId,
     locator: string,
     buyerUserId: UserId,
+    options?: { actorSubject?: string },
   ): Promise<ConfirmBookingApprovalResponse> {
+    const actorSubject = options?.actorSubject;
+    if (actorSubject && (actorSubject.endsWith("@clients") || actorSubject.startsWith("client|"))) {
+      throw new DomainError(
+        "Machine-to-machine clients cannot approve booking holds. Human buyer approval is required.",
+        "HUMAN_APPROVAL_REQUIRED",
+        403,
+      );
+    }
     const cleanLocator = locator.replace(/^\/v1\/booking-approvals\//, "");
     return await withTenantTransaction(this.db, tenantId, async (trx) => {
       const conf = await trx

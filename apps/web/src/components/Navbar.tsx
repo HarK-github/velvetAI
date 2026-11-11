@@ -381,6 +381,17 @@ export const Navbar: FC<NavbarProps> = ({ apiHealthy, apiLatency, onOpenAi }) =>
             >
               API Status
             </Link>
+            <Link
+              to="/security"
+              className="nav-link"
+              style={{
+                borderColor: currentPath === "/security" ? "var(--accent)" : "transparent",
+                color: currentPath === "/security" ? "var(--ink)" : "var(--secondary)",
+                fontWeight: currentPath === "/security" ? 600 : 500,
+              }}
+            >
+              Security
+            </Link>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>

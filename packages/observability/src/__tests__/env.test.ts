@@ -94,4 +94,25 @@ describe("envSchema and validateEnv", () => {
       }),
     ).toThrow(/Envelope encryption key must be a 64-character hex string/);
   });
+
+  it("defaults MIGRATE_ON_START and RUN_WORKER_IN_PROCESS to false and requires DATABASE_MIGRATION_URL when MIGRATE_ON_START=true", () => {
+    const defaults = validateEnv({});
+    expect(defaults.MIGRATE_ON_START).toBe(false);
+    expect(defaults.RUN_WORKER_IN_PROCESS).toBe(false);
+
+    expect(() =>
+      validateEnv({
+        MIGRATE_ON_START: "true",
+      }),
+    ).toThrow(/DATABASE_MIGRATION_URL is required when MIGRATE_ON_START=true/);
+
+    const enabled = validateEnv({
+      MIGRATE_ON_START: "true",
+      RUN_WORKER_IN_PROCESS: "true",
+      DATABASE_MIGRATION_URL: "postgresql://owner:pass@ep-demo.neon.tech/neondb?sslmode=require",
+    });
+    expect(enabled.MIGRATE_ON_START).toBe(true);
+    expect(enabled.RUN_WORKER_IN_PROCESS).toBe(true);
+    expect(enabled.DATABASE_MIGRATION_URL).toContain("ep-demo.neon.tech");
+  });
 });

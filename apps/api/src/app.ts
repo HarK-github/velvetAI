@@ -19,6 +19,9 @@ import { paymentsRoutes, webhookRoutes, paymentService } from "./routes/payments
 import { mcpRoutes, setMcpDb } from "./routes/mcp.js";
 import { aiRoutes } from "./routes/ai.js";
 import { judgeRoutes, setJudgeDb } from "./routes/judge.js";
+import { judgeAbuseLabRoutes, setJudgeAbuseLabDb } from "./routes/judge-abuse-lab.js";
+import { judgeProofRoutes, setJudgeProofDb } from "./routes/judge-proof.js";
+import type { JudgeAbuseLabService } from "./judge/abuse-lab-runner.js";
 import { registerAuth } from "./plugins/auth.js";
 import { registerIdempotency } from "./plugins/idempotency.js";
 import { Kysely } from "kysely";
@@ -27,6 +30,7 @@ import { Database } from "@velvetai/db";
 export interface AppOptions {
   modelProvider?: ModelProviderPort;
   db?: Kysely<Database>;
+  abuseLabService?: JudgeAbuseLabService;
 }
 
 export function buildApp(options: AppOptions = {}): FastifyInstance {
@@ -155,6 +159,8 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     setBookingService(new BookingService(options.db, paymentService));
     setMcpDb(options.db);
     setJudgeDb(options.db);
+    setJudgeAbuseLabDb(options.db);
+    setJudgeProofDb(options.db);
   }
 
   // Business & frontend endpoints
@@ -166,6 +172,13 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   app.register(webhookRoutes);
   app.register(mcpRoutes);
   app.register(judgeRoutes);
+  app.register(judgeAbuseLabRoutes, {
+    db: options.db,
+    abuseLabService: options.abuseLabService,
+  });
+  app.register(judgeProofRoutes, {
+    db: options.db,
+  });
   app.register(aiRoutes, options);
 
   // RFC 9457 Problem Details error handler
