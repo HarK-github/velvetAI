@@ -1,8 +1,34 @@
 # velvetAI
 
-> **AI books it. PayPal seals it.**
+> **velvetAI — AI agents can book your appointments, but only you can approve and pay.**
 >
-> Production-grade appointment booking and deposit platform for local service businesses, designed for autonomous AI agents with PayPal payment security and deterministic safety enforcement through the Agent Abuse Lab.
+> **Live Demo:** https://velvetai-five.vercel.app
+
+velvetAI is a production-grade appointment booking and deposit platform for local service businesses. AI agents (in-page Ask AI and stateless MCP clients) can search services, inspect availability, and place temporary slot holds—while every booking requires explicit human approval and PayPal Sandbox payment finality enforced by PostgreSQL 17 and deterministic Abuse Lab checks.
+
+## Try It
+
+1. **Sign in** at [https://velvetai-five.vercel.app](https://velvetai-five.vercel.app).
+2. Open **Ask AI** and ask: `"Find an Executive Haircut tomorrow afternoon"`.
+3. **Click a time** from the available slots returned.
+4. Click **Hold this time** to reserve the slot and generate an ES256-signed booking intent.
+5. Click **Open approval page** to review the exact service, time, deposit, and cancellation policy.
+6. Approve the terms and **pay the deposit with the PayPal Sandbox buyer** account.
+
+## Built With
+
+- **Payments:** PayPal Orders v2 + PayPal JS SDK v6 + Webhooks
+- **AI & Agent Protocol:** Google Gemini via Vercel AI SDK, Model Context Protocol (MCP)
+- **Authentication:** Auth0 (OIDC + JWT RBAC + JIT provisioning)
+- **Frontend:** React 19, Vite, TypeScript — hosted on **Vercel**
+- **Backend:** Fastify 5, Node.js 24 LTS, TypeScript — hosted on **Render**
+- **Database:** PostgreSQL 17 with GiST exclusion constraints + Row-Level Security (`FORCE ROW LEVEL SECURITY`)
+
+## Future Work
+
+- **Forecasting UI:** Demand-forecast calendar overlays, variable deposit signals, and weak-slot promotions.
+- **Judge reset UI:** Browser console for one-click judge-tenant resets, guided checklist, and booking proof drawer.
+- **Fault-injection demo:** Simulated dropped PayPal capture reply toggle demonstrating live webhook and outbox reconciliation.
 
 ---
 
