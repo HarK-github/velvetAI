@@ -8,6 +8,7 @@ import {
   AccountProvisioningNotice,
   isUserNotProvisionedError,
 } from "./AccountProvisioningNotice.js";
+import { Link } from "../router.js";
 
 interface ServiceItem {
   id: string;
@@ -105,6 +106,7 @@ export const BookingSimulatorSection: FC = () => {
   const [holdError, setHoldError] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [isLockingHold, setIsLockingHold] = useState<boolean>(false);
+  const [showProofDetails, setShowProofDetails] = useState<boolean>(false);
 
   const { isAuthenticated, user, loginWithRedirect } = useAuth0();
   const [customerEmail, setCustomerEmail] = useState<string>(() => user?.email || "");
@@ -371,26 +373,35 @@ export const BookingSimulatorSection: FC = () => {
   };
 
   return (
-    <section className="section simulator-section" id="simulator" aria-labelledby="simulator-title">
-      <span className="section-index mono">05 / Interactive Console</span>
-
+    <section className="simulator-section" id="simulator" aria-labelledby="simulator-title" style={{ padding: "40px var(--page-padding) 80px" }}>
       <div className="section-inner">
-        <div className="reveal">
-          <p className="eyebrow mono">
-            <span className="signal-dot signal-dot--emerald" aria-hidden="true"></span>
-            Live PostgreSQL + Fastify Integration
-          </p>
+        <div className="reveal" style={{ marginBottom: "28px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "16px" }}>
+            <div>
+              <p className="eyebrow mono" style={{ marginBottom: "12px" }}>
+                <span className="signal-dot signal-dot--emerald" aria-hidden="true"></span>
+                CUSTOMER BOOKING ENGINE &bull; 300s GiST GUARANTEE
+              </p>
 
-          <h2 className="display section-title" id="simulator-title">
-            Book the slot.
-            <br />
-            <span className="accent">Test live policy.</span>
-          </h2>
+              <h1 className="display section-title" id="simulator-title" style={{ fontSize: "clamp(32px, 4.5vw, 56px)", margin: 0 }}>
+                Select service. <span className="accent">Lock guaranteed slot.</span>
+              </h1>
 
-          <p className="lede">
-            Execute real-time service queries, demand forecasts, deposit tier calculations, and
-            300-second slot holds backed by cryptographic JWS signed intents.
-          </p>
+              <p className="lede" style={{ marginTop: "12px", maxWidth: "60ch" }}>
+                Directly interact with velvetAI's PostgreSQL catalog and real-time availability engine.
+                When you reserve, an exclusion lock guarantees no double bookings during checkout.
+              </p>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <Link to="/schedule" className="button button--outline button--sm">
+                View Schedule &rarr;
+              </Link>
+              <Link to="/policy" className="button button--outline button--sm">
+                Risk Policies &rarr;
+              </Link>
+            </div>
+          </div>
         </div>
 
         {isDemoMode && (
@@ -469,12 +480,14 @@ export const BookingSimulatorSection: FC = () => {
           <div className="simulator-grid reveal">
             {/* Left Column: Service & Slot Selection */}
             <div>
-              <span
-                className="mono"
-                style={{ color: "var(--secondary)", display: "block", marginBottom: "16px" }}
-              >
-                Select Published Service
-              </span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                <span style={{ fontSize: "14px", fontWeight: 700, color: "var(--ink)" }}>
+                  1. Select Published Service
+                </span>
+                <span className="mono" style={{ fontSize: "11px", color: "var(--muted)" }}>
+                  {services.length} services loaded
+                </span>
+              </div>
 
               {services.map((service) => {
                 const isSelected = selectedService?.id === service.id;
@@ -488,34 +501,55 @@ export const BookingSimulatorSection: FC = () => {
                       style={{
                         display: "flex",
                         justifyContent: "space-between",
-                        alignItems: "baseline",
+                        alignItems: "flex-start",
+                        gap: "16px",
                       }}
                     >
-                      <div>
-                        <span className="mono" style={{ color: "var(--accent)", fontSize: "10px" }}>
-                          {service.category} &bull; {service.durationMinutes} MIN
-                        </span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                          <span
+                            className="mono"
+                            style={{
+                              color: isSelected ? "var(--accent)" : "var(--secondary)",
+                              fontSize: "10px",
+                              background: isSelected ? "rgba(30, 64, 175, 0.08)" : "var(--surface-sunken)",
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                            }}
+                          >
+                            {service.category}
+                          </span>
+                          <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                            ⏱ {service.durationMinutes} min
+                          </span>
+                        </div>
                         <h3
                           style={{
                             fontFamily: "Archivo, sans-serif",
-                            fontSize: "18px",
-                            margin: "4px 0",
+                            fontSize: "17px",
+                            fontWeight: 700,
+                            margin: "6px 0 2px",
+                            color: "var(--ink)",
                           }}
                         >
                           {service.name}
                         </h3>
+                        <p style={{ margin: "4px 0 0", fontSize: "12px", color: "var(--secondary)", lineHeight: 1.4 }}>
+                          {service.cancellationSummary}
+                        </p>
                       </div>
-                      <div style={{ textAlign: "right" }}>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
                         <div
                           style={{
                             fontFamily: "Archivo, sans-serif",
                             fontWeight: 800,
-                            fontSize: "18px",
+                            fontSize: "20px",
+                            color: isSelected ? "var(--accent)" : "var(--ink)",
                           }}
                         >
                           {formatMoney(service.priceMinor, service.currency)}
                         </div>
-                        <div className="mono" style={{ fontSize: "10px", color: "var(--muted)" }}>
+                        <div className="mono" style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px" }}>
                           Base Deposit: {formatMoney(service.depositMinor, service.currency)}
                         </div>
                       </div>
@@ -529,13 +563,18 @@ export const BookingSimulatorSection: FC = () => {
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
-                    alignItems: "baseline",
+                    alignItems: "center",
+                    marginBottom: "12px",
                   }}
                 >
-                  <span className="mono" style={{ color: "var(--secondary)" }}>
-                    Available Slots Today (
-                    {isLoadingSlots ? "Querying..." : `${slots.length} available`})
-                  </span>
+                  <div>
+                    <span style={{ fontSize: "14px", fontWeight: 700, color: "var(--ink)" }}>
+                      2. Available Slots Today
+                    </span>
+                    <span style={{ fontSize: "12px", color: "var(--muted)", marginLeft: "8px" }}>
+                      ({isLoadingSlots ? "Querying..." : `${slots.length} available`})
+                    </span>
+                  </div>
                   <span className="mono" style={{ fontSize: "10px", color: "var(--muted)" }}>
                     UTC Authority &bull; GiST Lock
                   </span>
@@ -549,15 +588,14 @@ export const BookingSimulatorSection: FC = () => {
                       padding: "16px",
                       background: "rgba(239, 68, 68, 0.08)",
                       border: "1px solid rgba(239, 68, 68, 0.3)",
-                      borderRadius: "4px",
+                      borderRadius: "6px",
                       fontSize: "12px",
                     }}
                   >
                     <p style={{ margin: "0 0 10px 0", color: "#dc2626" }}>{slotError}</p>
                     <button
                       type="button"
-                      className="button"
-                      style={{ fontSize: "11px", padding: "4px 10px" }}
+                      className="button button--sm"
                       onClick={() => selectedService && void fetchSlots(selectedService)}
                       disabled={isLoadingSlots}
                     >
@@ -584,7 +622,7 @@ export const BookingSimulatorSection: FC = () => {
                         >
                           <div style={{ fontWeight: 600 }}>{slot.localStartsAt}</div>
                           {slot.fillProbability !== undefined && (
-                            <div style={{ fontSize: "9px", opacity: 0.8, marginTop: "2px" }}>
+                            <div style={{ fontSize: "10px", opacity: 0.8, marginTop: "2px" }}>
                               {Math.round(slot.fillProbability * 100)}% fill
                             </div>
                           )}
@@ -605,11 +643,11 @@ export const BookingSimulatorSection: FC = () => {
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      marginBottom: "20px",
+                      marginBottom: "16px",
                     }}
                   >
-                    <span className="mono" style={{ color: "var(--accent)" }}>
-                      01 / Live Quote Snapshot
+                    <span className="mono" style={{ color: "var(--accent)", fontWeight: 600 }}>
+                      RESERVATION MANIFEST
                     </span>
 
                     {remainingSeconds !== null && (
@@ -619,6 +657,30 @@ export const BookingSimulatorSection: FC = () => {
                       </div>
                     )}
                   </div>
+
+                  {remainingSeconds !== null && (
+                    <div style={{ marginBottom: "18px" }}>
+                      <div
+                        style={{
+                          width: "100%",
+                          height: "6px",
+                          background: "rgba(0,0,0,0.06)",
+                          borderRadius: "999px",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${Math.min(100, Math.max(0, ((remainingSeconds ?? 300) / 300) * 100))}%`,
+                            height: "100%",
+                            background:
+                              remainingSeconds < 60 ? "var(--accent-coral)" : "var(--accent-emerald)",
+                            transition: "width 1s linear",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   <div className="quote-line">
                     <span style={{ color: "var(--secondary)" }}>Service</span>
@@ -664,19 +726,19 @@ export const BookingSimulatorSection: FC = () => {
                     <div
                       role="status"
                       style={{
-                        margin: "12px 0",
-                        padding: "10px 14px",
-                        background: "rgba(47, 91, 255, 0.08)",
-                        border: "1px solid rgba(47, 91, 255, 0.25)",
-                        borderRadius: "4px",
+                        margin: "16px 0",
+                        padding: "12px 16px",
+                        background: "rgba(30, 64, 175, 0.06)",
+                        border: "1px solid rgba(30, 64, 175, 0.2)",
+                        borderRadius: "var(--radius-sm)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
                         gap: "12px",
-                        fontSize: "12px",
+                        fontSize: "13px",
                       }}
                     >
-                      <span>Sign in to get a live quote</span>
+                      <span style={{ fontWeight: 500 }}>Sign in to get a live quote</span>
                       {typeof loginWithRedirect === "function" && (
                         <button
                           type="button"
@@ -715,23 +777,23 @@ export const BookingSimulatorSection: FC = () => {
                         role="alert"
                         style={{
                           margin: "12px 0",
-                          padding: "8px 12px",
+                          padding: "10px 14px",
                           background: "rgba(239, 68, 68, 0.08)",
                           border: "1px solid rgba(239, 68, 68, 0.3)",
-                          borderRadius: "4px",
+                          borderRadius: "var(--radius-sm)",
                           color: "#dc2626",
-                          fontSize: "11px",
+                          fontSize: "12px",
                         }}
                       >
                         {quoteError}
                       </div>
                     ))}
 
-                  <div style={{ margin: "20px 0" }}>
+                  <div style={{ margin: "18px 0" }}>
                     <label
-                      className="mono"
                       style={{
-                        fontSize: "10px",
+                        fontSize: "12px",
+                        fontWeight: 600,
                         color: "var(--secondary)",
                         display: "block",
                         marginBottom: "6px",
@@ -747,23 +809,29 @@ export const BookingSimulatorSection: FC = () => {
                       style={{
                         width: "100%",
                         padding: "10px 14px",
-                        fontFamily: "IBM Plex Mono, monospace",
-                        fontSize: "11px",
-                        border: "1px solid var(--hairline)",
-                        background: "var(--ground)",
+                        fontFamily: "inherit",
+                        fontSize: "13px",
+                        border: "1px solid var(--hairline-strong)",
+                        borderRadius: "var(--radius-sm)",
+                        background: "var(--surface)",
+                        color: "var(--ink)",
+                        outline: "none",
                       }}
                     />
                   </div>
 
                   <div
                     style={{
-                      marginBottom: "24px",
-                      fontSize: "11px",
+                      marginBottom: "20px",
+                      fontSize: "12px",
                       color: "var(--secondary)",
                       lineHeight: 1.5,
+                      background: "var(--surface-sunken)",
+                      padding: "10px 12px",
+                      borderRadius: "var(--radius-sm)",
                     }}
                   >
-                    <strong>Cancellation Policy:</strong>{" "}
+                    <strong style={{ color: "var(--ink)" }}>Cancellation Policy:</strong>{" "}
                     {quote?.cancellationPolicy?.summary || selectedService.cancellationSummary}
                   </div>
 
@@ -783,9 +851,9 @@ export const BookingSimulatorSection: FC = () => {
                           padding: "10px 14px",
                           background: "rgba(239, 68, 68, 0.08)",
                           border: "1px solid rgba(239, 68, 68, 0.3)",
-                          borderRadius: "4px",
+                          borderRadius: "var(--radius-sm)",
                           color: "#dc2626",
-                          fontSize: "11px",
+                          fontSize: "12px",
                         }}
                       >
                         {holdError}
@@ -795,7 +863,7 @@ export const BookingSimulatorSection: FC = () => {
                   {!hold ? (
                     <button
                       className="button button--solid"
-                      style={{ width: "100%", minHeight: "48px" }}
+                      style={{ width: "100%", minHeight: "46px", fontSize: "14px", fontWeight: 600 }}
                       onClick={() => void handleLockHold()}
                       disabled={isLockingHold || !quote || isDemoMode}
                     >
@@ -812,7 +880,8 @@ export const BookingSimulatorSection: FC = () => {
                         style={{
                           background: "rgba(16, 185, 129, 0.08)",
                           border: "1px solid rgba(16, 185, 129, 0.3)",
-                          padding: "16px",
+                          borderRadius: "var(--radius-sm)",
+                          padding: "14px",
                           marginBottom: "16px",
                         }}
                       >
@@ -820,7 +889,7 @@ export const BookingSimulatorSection: FC = () => {
                           style={{
                             display: "flex",
                             justifyContent: "space-between",
-                            marginBottom: "6px",
+                            marginBottom: "4px",
                           }}
                         >
                           <span className="mono" style={{ color: "#059669", fontWeight: 700 }}>
@@ -828,41 +897,52 @@ export const BookingSimulatorSection: FC = () => {
                           </span>
                           <span
                             className="mono"
-                            style={{ fontSize: "10px", color: "var(--secondary)" }}
+                            style={{ fontSize: "11px", color: "var(--secondary)" }}
                           >
                             {formatTimer(remainingSeconds ?? 300)} left
                           </span>
                         </div>
-                        <div className="mono" style={{ fontSize: "10px", wordBreak: "break-all" }}>
+                        <div className="mono" style={{ fontSize: "11px", color: "var(--secondary)", wordBreak: "break-all" }}>
                           Booking ID: {hold.bookingId}
                         </div>
                       </div>
 
+                      {/* Technical Cryptographic Proof Accordion */}
                       <div style={{ marginBottom: "16px" }}>
-                        <span
-                          className="mono"
+                        <button
+                          type="button"
+                          onClick={() => setShowProofDetails(!showProofDetails)}
                           style={{
-                            fontSize: "9px",
+                            background: "transparent",
+                            border: "none",
+                            padding: "4px 0",
+                            fontSize: "11px",
+                            fontWeight: 600,
                             color: "var(--muted)",
-                            display: "block",
-                            marginBottom: "4px",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
                           }}
                         >
-                          Cryptographic JWS Signed Intent (HMAC-SHA256):
-                        </span>
-                        <pre
-                          style={{
-                            background: "var(--ink)",
-                            color: "var(--accent-lift)",
-                            padding: "12px",
-                            fontSize: "9px",
-                            overflowX: "auto",
-                            maxHeight: "80px",
-                            margin: 0,
-                          }}
-                        >
-                          {hold.signedIntent}
-                        </pre>
+                          <span>{showProofDetails ? "▾ Hide" : "▸ Show"} Cryptographic JWS Signed Intent (HMAC-SHA256)</span>
+                        </button>
+                        {showProofDetails && (
+                          <pre
+                            style={{
+                              background: "var(--ink)",
+                              color: "var(--accent-lift)",
+                              padding: "10px 12px",
+                              borderRadius: "6px",
+                              fontSize: "9px",
+                              overflowX: "auto",
+                              maxHeight: "90px",
+                              margin: "6px 0 0",
+                            }}
+                          >
+                            {hold.signedIntent}
+                          </pre>
+                        )}
                       </div>
 
                       {paymentOutcome ? (
@@ -871,6 +951,7 @@ export const BookingSimulatorSection: FC = () => {
                             style={{
                               background: "rgba(16, 185, 129, 0.12)",
                               border: "1px solid rgba(16, 185, 129, 0.4)",
+                              borderRadius: "var(--radius-sm)",
                               padding: "20px",
                               marginTop: "16px",
                             }}
@@ -893,7 +974,7 @@ export const BookingSimulatorSection: FC = () => {
                             </div>
                             <p
                               style={{
-                                fontSize: "11px",
+                                fontSize: "12px",
                                 color: "var(--secondary)",
                                 margin: "4px 0",
                               }}
@@ -905,7 +986,7 @@ export const BookingSimulatorSection: FC = () => {
                             </p>
                             <p
                               style={{
-                                fontSize: "11px",
+                                fontSize: "12px",
                                 color: "var(--secondary)",
                                 margin: "4px 0",
                               }}
@@ -915,7 +996,7 @@ export const BookingSimulatorSection: FC = () => {
                             <div
                               className="mono"
                               style={{
-                                fontSize: "10px",
+                                fontSize: "11px",
                                 color: "var(--muted)",
                                 marginTop: "8px",
                               }}
@@ -924,8 +1005,8 @@ export const BookingSimulatorSection: FC = () => {
                             </div>
                             <button
                               type="button"
-                              className="button"
-                              style={{ marginTop: "12px", width: "100%", fontSize: "11px" }}
+                              className="button button--solid"
+                              style={{ marginTop: "14px", width: "100%", fontSize: "12px" }}
                               onClick={() => {
                                 setHold(null);
                                 setPaymentOutcome(null);
@@ -939,6 +1020,7 @@ export const BookingSimulatorSection: FC = () => {
                             style={{
                               background: "rgba(245, 158, 11, 0.12)",
                               border: "1px solid rgba(245, 158, 11, 0.4)",
+                              borderRadius: "var(--radius-sm)",
                               padding: "20px",
                               marginTop: "16px",
                             }}
@@ -961,7 +1043,7 @@ export const BookingSimulatorSection: FC = () => {
                             </div>
                             <p
                               style={{
-                                fontSize: "11px",
+                                fontSize: "12px",
                                 color: "var(--secondary)",
                                 margin: "4px 0",
                               }}
@@ -987,10 +1069,13 @@ export const BookingSimulatorSection: FC = () => {
               ) : (
                 <div
                   className="quote-console"
-                  style={{ textAlign: "center", padding: "40px 20px" }}
+                  style={{ textAlign: "center", padding: "48px 24px" }}
                 >
-                  <span className="mono" style={{ color: "var(--muted)" }}>
-                    Select a service above to inspect real-time quote
+                  <p style={{ margin: "0 0 6px", fontSize: "15px", fontWeight: 600, color: "var(--ink)" }}>
+                    Ready to Book
+                  </p>
+                  <span style={{ fontSize: "13px", color: "var(--muted)" }}>
+                    Select a service on the left to configure your appointment and calculate the deposit.
                   </span>
                 </div>
               )}

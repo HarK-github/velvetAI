@@ -321,6 +321,15 @@ interface NavbarProps {
 export const Navbar: FC<NavbarProps> = ({ apiHealthy, apiLatency, onOpenAi }) => {
   const { currentPath } = useRouter();
 
+  const navItems = [
+    { to: "/", label: "Overview" },
+    { to: "/book", label: "Book Slot" },
+    { to: "/schedule", label: "Schedule" },
+    { to: "/policy", label: "Policy & Spec" },
+    { to: "/status", label: "API Status" },
+    { to: "/security", label: "Security" },
+  ];
+
   return (
     <nav className="site-nav" aria-label="Primary navigation">
       <div className="nav-inner">
@@ -330,85 +339,36 @@ export const Navbar: FC<NavbarProps> = ({ apiHealthy, apiLatency, onOpenAi }) =>
 
         <div className="nav-actions">
           <div className="nav-links" aria-label="Page sections">
-            <Link
-              to="/"
-              className="nav-link"
-              style={{
-                borderColor: currentPath === "/" ? "var(--accent)" : "transparent",
-                color: currentPath === "/" ? "var(--ink)" : "var(--secondary)",
-                fontWeight: currentPath === "/" ? 600 : 500,
-              }}
-            >
-              Overview
-            </Link>
-            <Link
-              to="/book"
-              className="nav-link"
-              style={{
-                borderColor: currentPath === "/book" ? "var(--accent)" : "transparent",
-                color: currentPath === "/book" ? "var(--ink)" : "var(--secondary)",
-                fontWeight: currentPath === "/book" ? 600 : 500,
-              }}
-            >
-              Book Slot
-            </Link>
-            <Link
-              to="/schedule"
-              className="nav-link"
-              style={{
-                borderColor: currentPath === "/schedule" ? "var(--accent)" : "transparent",
-                color: currentPath === "/schedule" ? "var(--ink)" : "var(--secondary)",
-                fontWeight: currentPath === "/schedule" ? 600 : 500,
-              }}
-            >
-              Schedule
-            </Link>
-            <Link
-              to="/policy"
-              className="nav-link"
-              style={{
-                borderColor: currentPath === "/policy" ? "var(--accent)" : "transparent",
-                color: currentPath === "/policy" ? "var(--ink)" : "var(--secondary)",
-                fontWeight: currentPath === "/policy" ? 600 : 500,
-              }}
-            >
-              Policy & Spec
-            </Link>
-            <Link
-              to="/status"
-              className="nav-link"
-              style={{
-                borderColor: currentPath === "/status" ? "var(--accent)" : "transparent",
-                color: currentPath === "/status" ? "var(--ink)" : "var(--secondary)",
-                fontWeight: currentPath === "/status" ? 600 : 500,
-              }}
-            >
-              API Status
-            </Link>
-            <Link
-              to="/security"
-              className="nav-link"
-              style={{
-                borderColor: currentPath === "/security" ? "var(--accent)" : "transparent",
-                color: currentPath === "/security" ? "var(--ink)" : "var(--secondary)",
-                fontWeight: currentPath === "/security" ? 600 : 500,
-              }}
-            >
-              Security
-            </Link>
+            {navItems.map((item) => {
+              const isActive = currentPath === item.to;
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={`nav-link ${isActive ? "nav-link--active" : ""}`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <Link
               to="/status"
               className="mono"
               style={{
-                fontSize: "10px",
+                fontSize: "11px",
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "6px",
-                color: apiHealthy ? "var(--ink)" : "var(--muted)",
+                padding: "4px 10px",
+                borderRadius: "999px",
+                background: apiHealthy ? "rgba(5, 150, 105, 0.08)" : "rgba(107, 114, 128, 0.1)",
+                color: apiHealthy ? "#059669" : "var(--muted)",
                 cursor: "pointer",
+                fontWeight: 600,
+                letterSpacing: "0.02em",
               }}
               title={apiHealthy ? `API Live (${apiLatency}ms)` : "Connecting to API..."}
             >
@@ -416,7 +376,7 @@ export const Navbar: FC<NavbarProps> = ({ apiHealthy, apiLatency, onOpenAi }) =>
                 className={`signal-dot ${apiHealthy ? "signal-dot--emerald" : ""}`}
                 aria-hidden="true"
               ></span>
-              {apiHealthy ? `API ${apiLatency ?? 0}ms` : "API Syncing"}
+              {apiHealthy ? `${apiLatency ?? 0}ms` : "Syncing"}
             </Link>
 
             {onOpenAi && (
@@ -429,12 +389,14 @@ export const Navbar: FC<NavbarProps> = ({ apiHealthy, apiLatency, onOpenAi }) =>
                   display: "inline-flex",
                   alignItems: "center",
                   gap: "6px",
-                  borderColor: "rgba(47, 91, 255, 0.4)",
+                  borderColor: "rgba(30, 64, 175, 0.3)",
                   color: "var(--accent)",
+                  background: "rgba(30, 64, 175, 0.04)",
+                  fontWeight: 600,
                 }}
                 aria-label="Open Ask AI concierge drawer"
               >
-                <span>✦</span> Ask AI
+                <span style={{ fontSize: "14px", color: "var(--accent)" }}>✦</span> Ask AI
               </button>
             )}
 
