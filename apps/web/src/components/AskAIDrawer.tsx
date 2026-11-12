@@ -1923,9 +1923,8 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
       const cleanLocator = extractCleanLocator(rawLocator);
       if (!cleanLocator) return;
       navigate(`/approve/${cleanLocator}`);
-      onClose();
     },
-    [navigate, onClose],
+    [navigate],
   );
 
   const handleFollowUpClick = (prompt: string) => {
@@ -2039,12 +2038,10 @@ const AskAIDrawerInner: FC<AskAIDrawerInnerProps> = ({
   return (
     <div
       className="ai-drawer-overlay"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
+      role="region"
       aria-label="velvetAI Concierge Assistant"
     >
-      <aside className="ai-drawer" onClick={(e) => e.stopPropagation()} tabIndex={-1}>
+      <aside className="ai-drawer" tabIndex={-1}>
         {/* Header */}
         <header className="ai-drawer-header">
           <div className="ai-drawer-title-group">

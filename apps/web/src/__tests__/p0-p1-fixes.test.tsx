@@ -230,12 +230,12 @@ describe("P0 & P1 Comprehensive Fixes (TZ=Asia/Kolkata)", () => {
       expect(stored).toContain("loc_client_nav");
     });
 
-    // Click "Open approval page" button -> SPA navigation to /approve/loc_client_nav & closes drawer
+    // Click "Open approval page" button -> SPA navigation to /approve/loc_client_nav & drawer stays open alongside
     const openBtn = screen.getAllByRole("button", { name: "Open approval page" })[0]!;
     fireEvent.click(openBtn);
     expect(screen.getByTestId("current-path").textContent).toBe("/approve/loc_client_nav");
     expect(window.location.pathname).toBe("/approve/loc_client_nav");
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
 
     // Simulate browser reload: clear in-memory chat, remount fresh AskAIProvider, should restore from sessionStorage!
     unmount();

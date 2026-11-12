@@ -1,4 +1,5 @@
 import type { FC } from "react";
+import { Link } from "../router.js";
 
 export const HeroSection: FC = () => {
   return (
@@ -29,17 +30,9 @@ export const HeroSection: FC = () => {
             <a className="button" href="#proof">
               Run proof
             </a>
-            <a
-              className="button button--solid"
-              href="#simulator"
-              style={{
-                borderColor: "var(--accent)",
-                color: "var(--accent)",
-                background: "transparent",
-              }}
-            >
+            <Link to="/book" className="button button--primary">
               Live simulator &rarr;
-            </a>
+            </Link>
           </div>
 
           <div className="hero-specs hairline-top" aria-label="Core system specifications">
@@ -195,28 +188,6 @@ export const HeroSection: FC = () => {
               PAYMENT / VERIFIED
             </text>
           </svg>
-        </div>
-
-        <div className="hero-word hero-word--back" aria-hidden="true">
-          <span data-plane="back">V</span>
-          <span data-plane="back">E</span>
-          <span data-plane="back">L</span>
-          <span data-plane="back">V</span>
-          <span data-plane="back">E</span>
-          <span data-plane="back">T</span>
-          <span data-plane="front">A</span>
-          <span data-plane="back">I</span>
-        </div>
-
-        <div className="hero-word hero-word--front" aria-hidden="true">
-          <span data-plane="back">V</span>
-          <span data-plane="back">E</span>
-          <span data-plane="back">L</span>
-          <span data-plane="back">V</span>
-          <span data-plane="back">E</span>
-          <span data-plane="back">T</span>
-          <span data-plane="front">A</span>
-          <span data-plane="back">I</span>
         </div>
       </div>
     </section>

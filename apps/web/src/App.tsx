@@ -162,11 +162,13 @@ const AppContent: FC = () => {
         </div>
       )}
 
-      <Navbar apiHealthy={apiHealthy} apiLatency={apiLatency} onOpenAi={openDrawer} />
-      <FirstRunWelcomeBanner onOpenAi={openDrawer} />
-      <EdgeMeta scrollPercentage={scrollPercentage} />
+      <div className={`app-shell ${isAiOpen ? "app-shell--ai-open" : ""}`}>
+        <Navbar apiHealthy={apiHealthy} apiLatency={apiLatency} onOpenAi={openDrawer} />
+        <FirstRunWelcomeBanner onOpenAi={openDrawer} />
+        <EdgeMeta scrollPercentage={scrollPercentage} />
 
-      <main id="main-content">{renderCurrentPage()}</main>
+        <main id="main-content">{renderCurrentPage()}</main>
+      </div>
 
       <AskAIDrawer isOpen={isAiOpen} onClose={closeDrawer} />
     </>
