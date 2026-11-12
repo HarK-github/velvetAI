@@ -344,6 +344,18 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     `.execute(adminDb);
     expect(rolledBackBinding.rows[0]?.exists).toBe(false);
 
+    // Rollback migration 0006
+    await migrateDown(adminDb);
+
+    // After rollback of 0006, signed_intent should be absent from buyer_confirmations
+    const rolledBack0006 = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'buyer_confirmations' AND column_name = 'signed_intent'
+      ) as exists
+    `.execute(adminDb);
+    expect(rolledBack0006.rows[0]?.exists).toBe(false);
+
     // Rollback migration 0005
     await migrateDown(adminDb);
 
@@ -443,6 +455,14 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
       ) as exists
     `.execute(adminDb);
     expect(restoredPolicy.rows[0]?.exists).toBe(true);
+
+    const restored0006 = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'buyer_confirmations' AND column_name = 'signed_intent'
+      ) as exists
+    `.execute(adminDb);
+    expect(restored0006.rows[0]?.exists).toBe(true);
 
     // Verify CHECK constraint restored
     const checkConstraint = await sql<{ conname: string }>`
@@ -717,6 +737,7 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
   it("8. Unordered migration proof: verifies allowUnorderedMigrations applies 0006-style migration after 0007", async () => {
     let upExecuted = false;
     const { Migrator } = await import("kysely");
+    const testMigrationName = "0006_test_unordered_migration";
     const testMigrator = new Migrator({
       db: adminDb,
       allowUnorderedMigrations: true,
@@ -728,7 +749,8 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
             "0003_payment_core_ledger": { async up() {}, async down() {} },
             "0004_outbox_lease_hardening": { async up() {}, async down() {} },
             "0005_self_membership_rls": { async up() {}, async down() {} },
-            "0006_approval_signed_intent": {
+            "0006_approval_signed_intent": { async up() {}, async down() {} },
+            [testMigrationName]: {
               async up() {
                 upExecuted = true;
               },
@@ -744,14 +766,10 @@ describe("PostgreSQL 17 Migration Lifecycle, Constraints & RLS Verification", ()
     const { error, results } = await testMigrator.migrateToLatest();
     expect(error).toBeUndefined();
     expect(upExecuted).toBe(true);
-    expect(results?.find((r) => r.migrationName === "0006_approval_signed_intent")?.status).toBe(
-      "Success",
-    );
+    expect(results?.find((r) => r.migrationName === testMigrationName)?.status).toBe("Success");
 
-    // Clean up the test migration entry from kysely_migration table
-    await sql`DELETE FROM kysely_migration WHERE name = '0006_approval_signed_intent'`.execute(
-      adminDb,
-    );
+    // Clean up the synthetic test migration entry from kysely_migration table
+    await sql`DELETE FROM kysely_migration WHERE name = ${testMigrationName}`.execute(adminDb);
   });
 
   it("9. Resource claims source binding check & GiST exclusion with demo fixtures", async () => {

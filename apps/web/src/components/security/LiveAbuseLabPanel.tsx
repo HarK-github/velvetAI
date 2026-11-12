@@ -1,21 +1,13 @@
 import { useState, useEffect, useRef, useCallback, type FC } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
-import { apiClient, API_BASE_URL } from "../../api-client.js";
+import { apiClient, ApiError, API_BASE_URL } from "../../api-client.js";
 import { isAuth0Configured, isMockAuthEnabled } from "../../lib/auth-config.js";
 import type {
   ListLiveAbuseRunsResponse,
   LiveAbuseRun,
   LiveAbuseScenarioResult,
   LiveAbuseScenarioStatus,
-  TriggerLiveAbuseRunResponse,
 } from "./types.js";
-
-function createIdempotencyKey(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `live-abuse-${crypto.randomUUID()}`;
-  }
-  return `live-abuse-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
 
 function getScenarioStatusDisplay(status: LiveAbuseScenarioStatus): {
   icon: string;
@@ -218,41 +210,25 @@ export const LiveAbuseLabPanel: FC = () => {
         return;
       }
 
-      const res = await fetch(`${API_BASE_URL}/v1/judge/abuse-lab/runs`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "Idempotency-Key": createIdempotencyKey(),
-        },
-        body: JSON.stringify({}),
-      });
+      const outcome = await apiClient.triggerLiveAbuseRun(token);
 
-      if (res.status === 429) {
-        const retryAfter = res.headers.get("retry-after") || "30";
-        const body = await res.json().catch(() => null);
-        setRateLimitNotice(
-          body?.detail ||
-            `Live checks are rate-limited to 1 run per 30 seconds. Retry after ${retryAfter}s.`,
-        );
+      if (outcome.kind === "rate_limited") {
+        setRateLimitNotice(outcome.detail);
         return;
       }
 
-      if (res.status === 401 || res.status === 403) {
+      if (outcome.kind === "unauthorized") {
         setJudgeStatus("not_judge");
         return;
       }
 
-      if (!res.ok) {
-        const problem = await res.json().catch(() => null);
-        setActionError(problem?.detail || problem?.title || `Failed with HTTP ${res.status}`);
-        return;
-      }
-
-      const started = (await res.json()) as TriggerLiveAbuseRunResponse;
-      await pollRun(started.statusUrl, token);
+      await pollRun(outcome.data.statusUrl, token);
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : "Failed to start live abuse checks");
+      if (err instanceof ApiError) {
+        setActionError(err.problem.detail || err.problem.title || `Failed with HTTP ${err.status}`);
+      } else {
+        setActionError(err instanceof Error ? err.message : "Failed to start live abuse checks");
+      }
     } finally {
       if (mountedRef.current) {
         setIsTriggering(false);

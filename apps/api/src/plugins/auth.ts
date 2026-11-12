@@ -210,7 +210,12 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
         );
       }
     }
-    const userId = (parts[1] || "01932b10-0000-7000-8000-000000000002") as UserId;
+    const isM2mSubject = parts[1]?.endsWith("@clients");
+    const userId = (
+      isM2mSubject
+        ? "01932b10-0000-7000-8000-000000000099"
+        : parts[1] || "01932b10-0000-7000-8000-000000000002"
+    ) as UserId;
     const tenantId = (parts[2] ||
       requestedTenantId ||
       "01932b10-0000-7000-8000-000000000001") as TenantId;
@@ -245,8 +250,9 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
       }
     }
 
+    const subject = isM2mSubject ? parts[1]! : `dev|${userId}`;
     return {
-      subject: `dev|${userId}`,
+      subject,
       userId,
       tenantId,
       roles: [role],
@@ -423,6 +429,9 @@ export class Auth0AuthenticationAdapter implements AuthenticationPort {
 
   private async queryMembershipByUserId(userId: string, tenantId: string) {
     if (!this.db) return undefined;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+      return undefined;
+    }
     return await this.db.transaction().execute(async (trx) => {
       await trx.executeQuery(
         sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`.compile(this.db!),
@@ -615,6 +624,19 @@ export function registerAuth(app: FastifyInstance): void {
         return;
       }
 
+      if (request.url.startsWith("/v1/booking-approvals/")) {
+        // Non-GET approval mutations MUST reject missing credentials BEFORE idempotency checks
+        // and even when dev tokens are enabled, preserving 401 HUMAN_APPROVAL_REQUIRED.
+        const problem = createProblemDetails({
+          title: "Unauthorized",
+          status: 401,
+          code: "HUMAN_APPROVAL_REQUIRED",
+          requestId: request.id,
+          detail:
+            "Authentication credentials missing. Human buyer session required to approve booking.",
+        });
+        return reply.status(401).header("content-type", "application/problem+json").send(problem);
+      }
       // In explicit test/mock environment, allow tests without headers to use default dev token
       if (authAdapter.isDevTokensAllowed()) {
         token =

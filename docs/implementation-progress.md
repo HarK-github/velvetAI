@@ -65,7 +65,7 @@
 
 4. **Epic 5 Work Packages Status**:
    - WP 01: Baseline and Plan — `NOT_STARTED`
-   - WP 02: Approval Page and Golden Path — `NOT_STARTED`
+   - WP 02: Approval Page and Golden Path — `VERIFIED`
    - WP 03: Render Deployment — `IMPLEMENTED`
    - WP 04: Judge Tenant Seed and Reset — `IMPLEMENTED` (Commit 1 merged to main @ `ec732a1`)
    - WP 04A: Judge Onboarding and First-Run Access — `IMPLEMENTED` (JIT buyer self-provisioning, public read-only catalog/availability, strict judge user provisioning CLI with placeholder rejection, production hold advisory lock + 40P01/23P01 -> 409 mapping; verified 54 test files, 450 tests across 12 packages)
@@ -655,3 +655,59 @@ COMMITTING
 - ADR 0007 accepted and committed.
 - Zero PII / secret leakage in logs, traces, or database records.
 - Strict scope boundary maintained: No Bryntum, forecasting UI, Abuse Lab UI, Judge Mode, live PayPal, Vault, Subscriptions, Payouts, multiparty onboarding, or BullMQ work begun.
+
+---
+
+## Epic 5 Track B — Package 02: Approval Page, Direct Commit & Golden Path Hardening
+
+### Summary
+
+Package 02 completes the end-to-end human approval and direct commit flow for reservations held by external AI agents (MCP) or Ask AI, enforces Auth0 session persistence via Refresh Token Rotation, and updates the approval UI to customer-friendly plain English with merchant-local time presentation.
+
+### Honest Labels & Gaps
+
+- **Playwright Golden-Path Browser E2E**: `DEFERRED`. `auth0-login.test.tsx` is an in-memory/jsdom unit test suite simulating browser Auth0 client interactions and PKCE parameters, not an automated headless Playwright browser run. Golden-path verification is executed via real browser manual testing on Track B (web port 5174, API port 3001) per runbook.
+- **Hosted Smoke & PayPal Tests**: `pnpm mcp:smoke` against live hosted endpoints and live hosted PayPal tests are executed by Track A per `PARALLEL_RULES.md` rule 6. Track B executes comprehensive local integration and unit tests.
+
+1. **Task 0: Isolated Test DB Resolution**
+   - Implemented package test database resolution in `packages/db/src/test-db.ts` using stack trace inspection fallback and explicit vitest environment injection (`TEST_PACKAGE_NAME`).
+   - Every package test worker accesses its own dedicated database (`velvetai_test_<package>_b`), eliminating cross-package database contention.
+   - Verified via `packages/db/src/__tests__/test-db-isolation.test.ts` (11/11 tests pass) and consecutive clean full parallel runs.
+
+2. **Finding 1: Auth0 Session Persistence & Refresh Token Rotation**
+   - Configured `useRefreshTokens: true`, `cacheLocation: "localstorage"`, and `offline_access` scope in `apps/web/src/lib/auth-config.ts` and `apps/web/src/App.tsx`.
+   - Implemented sanitized relative `returnTo` navigation in `onRedirectCallback` and `loginWithRedirect`, rejecting absolute URLs, protocol-relative URLs (`//`), and control characters.
+   - Added ADR 0007 Addendum documenting Refresh Token Rotation, localstorage security trade-offs, and XSS mitigations.
+   - Verified with unit tests in `apps/web/src/__tests__/auth-session.test.tsx` (8/8 tests pass) and `apps/web/src/__tests__/auth0-login.test.tsx` (9/9 tests pass).
+
+3. **Finding 2: Approval Page Copy & Time Presentation**
+   - Updated `apps/web/src/pages/ApprovalPage.tsx` to display appointment time in the merchant/resource time zone using backend display fields (`display.localDate`, `display.localStart`, `display.localEnd`, `display.timeZoneLabel`).
+   - Added secondary "Your time: ..." line when the browser timezone differs from the merchant timezone.
+   - Replaced internal engineering jargon ("AMENDMENT D.4", "authoritative ledger", "Hold session: loc_...") with plain language ("Your AI assistant reserved this time for you", "Prepared by Ask AI" / "Prepared by an external AI agent (MCP)").
+   - Handled missing deposit/pricing information safely without rendering `$0.00`.
+
+4. **Finding 3: M2M Agent Hold Claiming & Buyer Mismatch Guard**
+   - Migration `0006_approval_signed_intent.ts` altered `buyer_confirmations.buyer_user_id` to allow `NULL` at hold preparation time for M2M agent holds.
+   - When an authenticated human buyer visits the approval page for an unclaimed M2M hold, the first human buyer claims the hold; an audit event `booking.claimed_by_buyer` is recorded.
+   - Any subsequent attempt by a different buyer is blocked with canonical error code `BUYER_MISMATCH` ("This approval belongs to another account.").
+   - Holds prepared in human sessions (Ask AI or web) remain bound to that human buyer from the start.
+
+5. **Finding 4: Ask AI Prose Discipline & Real Provider Live Badge**
+   - Updated Ask AI system prompt in `apps/api/src/routes/ai.ts` to strictly limit prose to at most 2 short sentences and prohibit repeating card items when a card is rendered.
+   - Tracked `serverProcessRealProviderVerified` on successful live provider responses, updating `GET /v1/ai/status` and displaying `Gemini (live)` on the Ask AI drawer.
+   - Verified with unit tests in `apps/api/src/__tests__/ai-chat.test.ts` (13/13 tests pass).
+
+6. **Finding 5 & Route Implementation: Approve and Direct Commit**
+   - Added `POST /v1/booking-approvals/:locator/approve-and-commit` in `apps/api/src/routes/bookings.ts` and `BookingService.approveAndCommit()` in `packages/application/src/booking-service.ts`.
+   - Atomically records buyer approval and commits the booking in a single tenant transaction without exposing raw confirmation tokens to external callers.
+   - Idempotent replay supported: re-posting returns the existing confirmed booking.
+   - If an external agent attempts to commit an already-committed booking, returns `ALREADY_COMMITTED` with booking details.
+   - Verified with unit tests in `apps/api/src/__tests__/approval-commit.test.ts` (11/11 tests pass).
+
+7. **Approval Page UI State Machine & CSP Hardening**
+   - All 12 approval page states implemented: `loading`, `sign_in_required`, `ready`, `wrong_buyer`, `expired`, `committing`, `pay_deposit`, `verifying_payment`, `confirmed`, `payment_failed`, `already_done`, and `error`.
+   - Terms & Conditions checkbox gating enforced before approval.
+   - For MCP holds, secondary "Approve only" option provided alongside "Approve & Book".
+   - Hardened Vite server and production headers with `frame-ancestors 'none'` CSP and `X-Frame-Options: DENY`.
+   - Verified with unit tests in `apps/web/src/__tests__/approve-page.test.tsx` (16/16 tests pass).
+   - Updated `packages/db/src/__tests__/migration-lifecycle.test.ts` to prove `down()` and `up()` idempotency for migration 0006.

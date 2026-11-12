@@ -7,6 +7,7 @@ import { loadRootEnv, extractDatabaseName } from "./load-env.js";
 
 function parseStreamEvents(sseBody: string): Array<{ type: string; [key: string]: any }> {
   const events: Array<{ type: string; [key: string]: any }> = [];
+  const toolNameByCallId = new Map<string, string>();
   const lines = sseBody.split("\n");
   for (const line of lines) {
     if (line.startsWith("data: ")) {
@@ -14,7 +15,26 @@ function parseStreamEvents(sseBody: string): Array<{ type: string; [key: string]
       if (payload === "[DONE]") continue;
       try {
         const parsed = JSON.parse(payload);
-        events.push(parsed);
+        // Normalize AI SDK UI message stream event types
+        if (parsed.type === "tool-input-available") {
+          toolNameByCallId.set(parsed.toolCallId, parsed.toolName);
+          events.push({
+            type: "tool-call",
+            toolCallId: parsed.toolCallId,
+            toolName: parsed.toolName,
+            args: parsed.input,
+          });
+        } else if (parsed.type === "tool-output-available") {
+          events.push({
+            type: "tool-result",
+            toolCallId: parsed.toolCallId,
+            toolName: parsed.toolName || toolNameByCallId.get(parsed.toolCallId) || "unknown_tool",
+            result: parsed.output,
+            output: parsed.output,
+          });
+        } else {
+          events.push(parsed);
+        }
       } catch {
         // ignore non-json
       }
@@ -150,9 +170,9 @@ async function runRealGeminiVerification() {
   );
 
   // --------------------------------------------------------------------------------
-  // RUN 2: "Find available haircut slots tomorrow afternoon"
+  // RUN 2: "Find an Executive Haircut tomorrow afternoon"
   // --------------------------------------------------------------------------------
-  console.log("\n--- [RUN 2] 'Find available haircut slots tomorrow afternoon' ---");
+  console.log("\n--- [RUN 2] 'Find an Executive Haircut tomorrow afternoon' ---");
   const res2 = await app.inject({
     method: "POST",
     url: "/v1/ai/chat",
@@ -161,7 +181,7 @@ async function runRealGeminiVerification() {
       messages: [
         {
           role: "user",
-          parts: [{ type: "text", text: "Find available haircut slots tomorrow afternoon" }],
+          parts: [{ type: "text", text: "Find an Executive Haircut tomorrow afternoon" }],
         },
       ],
     }),
@@ -172,35 +192,39 @@ async function runRealGeminiVerification() {
   }
 
   const events2 = parseStreamEvents(res2.body);
-  const toolResultEvent2 = events2.find(
-    (e) => e.type === "tool-result" || e.result?.slots || e.output?.slots,
-  );
-  const toolData2 = toolResultEvent2?.result || toolResultEvent2?.output;
+  const toolCalls2 = events2.filter((e) => e.type === "tool-call");
+  console.log("Tool call sequence [RUN 2]:");
+  for (const tc of toolCalls2) {
+    console.log(`  -> Tool Call: ${tc.toolName}`, JSON.stringify(tc.args));
+  }
 
+  const toolResults2 = events2.filter((e) => e.type === "tool-result");
+  for (const tr of toolResults2) {
+    console.log(`  <- Tool Result: ${tr.toolName}`, {
+      resolvedDate: tr.result?.resolvedDate,
+      dayPart: tr.result?.dayPart,
+      timeZone: tr.result?.timeZone,
+      slotsCount: tr.result?.slots?.length,
+      sampleSlot: tr.result?.slots?.[0]?.display,
+    });
+  }
+
+  const toolData2 = toolResults2.find((tr) => tr.result?.slots)?.result;
   if (toolData2?.slots) {
     console.log(
-      `✓ Authoritative DB slots returned: ${toolData2.slots.length} available window(s).`,
+      `✓ Authoritative DB slots returned: ${toolData2.slots.length} available window(s). Resolved date: ${toolData2.resolvedDate || "today/tomorrow"}`,
     );
   } else {
-    console.log("Tool result 2:", toolData2);
+    console.log("Tool results 2:", toolResults2);
   }
   console.log(
     "✓ Run 2 Passed: Authoritative DB-backed slots invoked without inventing availability.",
   );
 
   // --------------------------------------------------------------------------------
-  // RUN 3: "Prepare the 2 PM slot"
+  // RUN 3: "I want to book for 6 pm of private acoustic studio block"
   // --------------------------------------------------------------------------------
-  console.log("\n--- [RUN 3] 'Prepare the 2 PM slot' ---");
-  // Calculate tomorrow 2 PM in UTC (America/New_York EDT 2 PM = 18:00 UTC)
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const dateStr = tomorrow.toISOString().slice(0, 10);
-  const slot2pmUtc = `${dateStr}T18:00:00.000Z`;
-
-  const haircutServiceId = returnedServices[0]?.id || "01932b10-0001-7000-8000-000000000001";
-
-  // Call prepare_booking directly via registry tool execution in chat context
+  console.log("\n--- [RUN 3] 'I want to book for 6 pm of private acoustic studio block' ---");
   const res3 = await app.inject({
     method: "POST",
     url: "/v1/ai/chat",
@@ -212,7 +236,7 @@ async function runRealGeminiVerification() {
           parts: [
             {
               type: "text",
-              text: `Please prepare a booking hold for service ${haircutServiceId} tomorrow at 2 PM (${slot2pmUtc}).`,
+              text: "I want to book for 6 pm of private acoustic studio block",
             },
           ],
         },
@@ -225,10 +249,30 @@ async function runRealGeminiVerification() {
   }
 
   const events3 = parseStreamEvents(res3.body);
-  const toolResultEvent3 = events3.find(
-    (e) => e.type === "tool-result" || e.result?.approvalLocator || e.output?.approvalLocator,
-  );
-  const toolData3 = toolResultEvent3?.result || toolResultEvent3?.output;
+  const toolCalls3 = events3.filter((e) => e.type === "tool-call");
+  console.log("Tool call sequence [RUN 3]:");
+  for (const tc of toolCalls3) {
+    console.log(`  -> Tool Call: ${tc.toolName}`, JSON.stringify(tc.args));
+  }
+
+  const toolResults3 = events3.filter((e) => e.type === "tool-result");
+  for (const tr of toolResults3) {
+    console.log(`  <- Tool Result: ${tr.toolName}`, {
+      bookingId: tr.result?.bookingId,
+      status: tr.result?.status,
+      approvalLocator: tr.result?.approvalLocator,
+      approvalUrl: tr.result?.approvalUrl,
+      quoteId: tr.result?.quoteId,
+      total: tr.result?.total,
+      deposit: tr.result?.deposit,
+      resolvedDate: tr.result?.resolvedDate,
+      display: tr.result?.display || tr.result?.terms?.display,
+    });
+  }
+
+  const toolData3 = toolResults3.find(
+    (tr) => tr.result?.approvalLocator || tr.result?.bookingId,
+  )?.result;
 
   if (toolData3) {
     console.log("✓ Prepare booking hold output:", {

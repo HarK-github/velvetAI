@@ -217,10 +217,19 @@ sharedToolRegistry.register({
       from: z.string().datetime().optional(),
       to: z.string().datetime().optional(),
       timeZone: z.string().max(100).optional(),
+      day: z
+        .union([z.enum(["today", "tomorrow"]), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)])
+        .optional(),
+      dayPart: z.enum(["morning", "afternoon", "evening"]).optional(),
     })
     .strict(),
   outputSchema: z.object({
     slots: z.array(z.any()),
+    serviceId: z.string().optional(),
+    serviceName: z.string().optional(),
+    timeZone: z.string().optional(),
+    resolvedDate: z.string().optional(),
+    dayPart: z.enum(["morning", "afternoon", "evening"]).optional(),
     scheduleRevision: z.number().optional(),
     generatedAt: z.string().optional(),
   }),
@@ -242,6 +251,8 @@ sharedToolRegistry.register({
       from: input.from ? new Date(input.from) : undefined,
       to: input.to ? new Date(input.to) : undefined,
       timeZone: input.timeZone as IanaTimeZone | undefined,
+      day: input.day,
+      dayPart: input.dayPart,
     });
     return result;
   },
@@ -259,6 +270,18 @@ sharedToolRegistry.register({
     expiresAt: z.string(),
     serviceVersion: z.number(),
     scheduleRevision: z.number(),
+    serviceName: z.string().optional(),
+    startsAt: z.string().optional(),
+    endsAt: z.string().optional(),
+    display: z
+      .object({
+        localDate: z.string(),
+        localStart: z.string(),
+        localEnd: z.string(),
+        timeZone: z.string(),
+        timeZoneLabel: z.string(),
+      })
+      .optional(),
     total: z.object({ valueMinor: z.bigint().or(z.string()), currency: z.string() }),
     deposit: z.object({ valueMinor: z.bigint().or(z.string()), currency: z.string() }),
     cancellationPolicy: z.object({
@@ -281,6 +304,16 @@ sharedToolRegistry.register({
         expiresAt: new Date(Date.now() + 300_000).toISOString(),
         serviceVersion: 1,
         scheduleRevision: 1,
+        serviceName: "Executive Haircut & Beard Sculpt",
+        startsAt: new Date(Date.now() + 86400000).toISOString(),
+        endsAt: new Date(Date.now() + 86400000 + 45 * 60000).toISOString(),
+        display: {
+          localDate: "Tue, Oct 27, 2026",
+          localStart: "2:00 PM",
+          localEnd: "2:45 PM",
+          timeZone: "America/New_York",
+          timeZoneLabel: "EDT",
+        },
         total: { valueMinor: "7500", currency: "USD" },
         deposit: { valueMinor: "2000", currency: "USD" },
         cancellationPolicy: { policyId: "mock-policy", version: 1, summary: "24h full refund" },
@@ -304,11 +337,22 @@ sharedToolRegistry.register({
     version: z.number(),
     intent: z.string(),
     approvalLocator: z.string(),
+    approvalUrl: z.string().optional(),
     requiresHumanConfirmation: z.literal(true),
     terms: z.object({
       serviceId: z.string(),
+      serviceName: z.string().optional(),
       startsAt: z.string(),
       timeZone: z.string(),
+      display: z
+        .object({
+          localDate: z.string(),
+          localStart: z.string(),
+          localEnd: z.string(),
+          timeZone: z.string(),
+          timeZoneLabel: z.string(),
+        })
+        .optional(),
     }),
   }),
   riskLevel: "CONSEQUENTIAL",
@@ -323,15 +367,24 @@ sharedToolRegistry.register({
       return {
         bookingId: "mock-booking",
         status: "HELD" as const,
-        holdExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+        holdExpiresAt: new Date(Date.now() + 300_000).toISOString(),
         version: 1,
         intent: "mock.intent.jwt",
         approvalLocator: "/v1/booking-approvals/mock-loc",
+        approvalUrl: "http://localhost:5174/approve/loc_mock",
         requiresHumanConfirmation: true as const,
         terms: {
           serviceId: input.serviceId,
+          serviceName: "Executive Haircut & Beard Sculpt",
           startsAt: input.startsAt,
           timeZone: input.timeZone,
+          display: {
+            localDate: "Tue, Oct 27, 2026",
+            localStart: "2:00 PM",
+            localEnd: "2:45 PM",
+            timeZone: "America/New_York",
+            timeZoneLabel: "EDT",
+          },
         },
       };
     }
@@ -350,11 +403,14 @@ sharedToolRegistry.register({
       version: res.version,
       intent: res.intent,
       approvalLocator: res.approvalLocator,
+      approvalUrl: res.approvalUrl,
       requiresHumanConfirmation: true as const,
       terms: {
         serviceId: input.serviceId,
+        serviceName: (res as any).serviceName,
         startsAt: input.startsAt,
         timeZone: input.timeZone,
+        display: (res as any).display,
       },
     };
   },
@@ -481,9 +537,10 @@ sharedToolRegistry.register({
   inputSchema: commitBookingInputSchema,
   outputSchema: z.object({
     bookingId: z.string(),
-    status: z.literal("COMMITTING"),
+    status: z.enum(["COMMITTING", "CONFIRMED"]),
     version: z.number(),
     committedAt: z.string(),
+    code: z.string().optional(),
   }),
   riskLevel: "CONSEQUENTIAL",
   requiredScopes: ["booking:commit"],

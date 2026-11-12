@@ -203,8 +203,11 @@ export interface BuyerConfirmationTable {
   booking_id: string;
   confirmation_jti: string;
   token_hash: string;
-  buyer_user_id: string;
+  buyer_user_id: string | null;
   interaction_locator: string;
+  signed_intent: string | null;
+  signed_intent_hash: string | null;
+  prepared_by_surface: string | null;
   consumed_at: ColumnType<Date | null, string | Date | null | undefined, string | Date | null>;
   expires_at: ColumnType<Date, string | Date, never>;
   created_at: ColumnType<Date, string | Date | undefined, never>;

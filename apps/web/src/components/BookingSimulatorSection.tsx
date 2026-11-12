@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { FC } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import { PayPalButton, PayPalPaymentSuccess } from "./PayPalButton.js";
-import { API_BASE_URL } from "../api-client.js";
+import { API_BASE_URL, apiClient } from "../api-client.js";
+import { isAuth0Configured, isMockAuthEnabled } from "../lib/auth-config.js";
 
 interface ServiceItem {
   id: string;
@@ -100,8 +102,21 @@ export const BookingSimulatorSection: FC = () => {
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [isLockingHold, setIsLockingHold] = useState<boolean>(false);
 
-  const [customerEmail, setCustomerEmail] = useState<string>("agent.alex@velvetai.internal");
+  const { isAuthenticated, user, loginWithRedirect } = useAuth0();
+  const [customerEmail, setCustomerEmail] = useState<string>(() => user?.email || "");
   const [paymentOutcome, setPaymentOutcome] = useState<PayPalPaymentSuccess | null>(null);
+
+  useEffect(() => {
+    if (user?.email && !customerEmail) {
+      setCustomerEmail(user.email);
+    }
+  }, [user?.email, customerEmail]);
+
+  const canQuote =
+    isDemoMode ||
+    isAuthenticated ||
+    Boolean(apiClient.getAuthToken()) ||
+    (!isAuth0Configured() && isMockAuthEnabled());
 
   // Fetch published services from Fastify API
   const fetchServices = useCallback(async () => {
@@ -242,21 +257,14 @@ export const BookingSimulatorSection: FC = () => {
       setIsLoadingQuote(true);
       setQuoteError(null);
       try {
-        const res = await fetch(`${API_BASE_URL}/v1/booking-quotes`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serviceId: service.id,
-            startsAt: slot.startsAt,
-            timeZone: "UTC",
-          }),
+        const data = await apiClient.createBookingQuote({
+          serviceId: service.id,
+          locationId: "01932b10-0000-7000-8000-000000000001",
+          startsAt: slot.startsAt,
+          timeZone: "UTC",
         });
-        if (!res.ok) {
-          throw new Error(`Quote API responded with HTTP ${res.status}`);
-        }
-        const data = await res.json();
         if (!isMountedRef.current) return;
-        setQuote(data);
+        setQuote(data as unknown as QuoteData);
       } catch (err: unknown) {
         if (!isMountedRef.current) return;
         if (isDemoMode) {
@@ -283,12 +291,12 @@ export const BookingSimulatorSection: FC = () => {
   );
 
   useEffect(() => {
-    if (!selectedService || !selectedSlot) {
+    if (!selectedService || !selectedSlot || !canQuote) {
       setQuote(null);
       return;
     }
     void fetchQuote(selectedService, selectedSlot);
-  }, [selectedService, selectedSlot, fetchQuote]);
+  }, [selectedService, selectedSlot, canQuote, fetchQuote]);
 
   // Handle countdown timer when hold is active
   useEffect(() => {
@@ -318,27 +326,13 @@ export const BookingSimulatorSection: FC = () => {
     setPaymentOutcome(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/v1/booking-holds`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          quoteId: quote.quoteId,
-          customer: { email: customerEmail, displayName: "Autonomous Agent Demo" },
-          note: "Reserved via velvetAI interactive frontend console",
-        }),
+      const data = await apiClient.createBookingHold({
+        quoteId: quote.quoteId,
+        customer: { email: customerEmail, displayName: "Autonomous Agent Demo" },
+        note: "Reserved via velvetAI interactive frontend console",
       });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => null);
-        throw new Error(
-          errData?.error?.message ||
-            errData?.message ||
-            `HTTP ${res.status}: Failed to lock slot hold`,
-        );
-      }
-      const data = await res.json();
       if (!isMountedRef.current) return;
-      setHold(data);
+      setHold(data as unknown as HoldData);
     } catch (err: unknown) {
       if (!isMountedRef.current) return;
       setHoldError(err instanceof Error ? err.message : "Failed to secure slot hold on server");
@@ -652,6 +646,44 @@ export const BookingSimulatorSection: FC = () => {
                     </div>
                   </div>
 
+                  {!canQuote && (
+                    <div
+                      role="status"
+                      style={{
+                        margin: "12px 0",
+                        padding: "10px 14px",
+                        background: "rgba(47, 91, 255, 0.08)",
+                        border: "1px solid rgba(47, 91, 255, 0.25)",
+                        borderRadius: "4px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        fontSize: "12px",
+                      }}
+                    >
+                      <span>Sign in to get a live quote</span>
+                      {typeof loginWithRedirect === "function" && (
+                        <button
+                          type="button"
+                          className="button button--primary button--sm"
+                          onClick={() => {
+                            void loginWithRedirect({
+                              appState: {
+                                returnTo:
+                                  typeof window !== "undefined"
+                                    ? `${window.location.pathname}${window.location.search}`
+                                    : "/book",
+                              },
+                            });
+                          }}
+                        >
+                          Sign in
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {quoteError && (
                     <div
                       role="alert"
@@ -684,6 +716,7 @@ export const BookingSimulatorSection: FC = () => {
                     <input
                       type="email"
                       value={customerEmail}
+                      placeholder="you@example.com"
                       onChange={(e) => setCustomerEmail(e.target.value)}
                       style={{
                         width: "100%",

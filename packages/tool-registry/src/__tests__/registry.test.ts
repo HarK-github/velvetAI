@@ -121,4 +121,30 @@ describe("ToolRegistry", () => {
     expect(service.formattedPrice).toBe("$75.00");
     expect(service.formattedDeposit).toBe("$20.00");
   });
+
+  it("prepare_booking.v1 dry-run mock returns a 300-second (5-minute) slot hold TTL", async () => {
+    const prepTool = sharedToolRegistry.get("prepare_booking.v1");
+    expect(prepTool).toBeDefined();
+
+    const beforeMs = Date.now();
+    const res: any = await prepTool?.execute(
+      {
+        serviceId: "01932b10-0000-7000-8000-000000000010",
+        locationId: "01932b10-0000-7000-8000-000000000002",
+        startsAt: new Date(Date.now() + 86400_000).toISOString(),
+        timeZone: "America/New_York",
+        customer: {
+          displayName: "Dry Run Guest",
+          email: "dryrun@example.com",
+        },
+      },
+      {},
+    );
+    const afterMs = Date.now();
+
+    expect(res.status).toBe("HELD");
+    const holdExpMs = new Date(res.holdExpiresAt).getTime();
+    expect(holdExpMs - beforeMs).toBeGreaterThanOrEqual(299_000);
+    expect(holdExpMs - afterMs).toBeLessThanOrEqual(301_000);
+  });
 });

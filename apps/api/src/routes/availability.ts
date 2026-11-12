@@ -31,6 +31,8 @@ export const availabilityRoutes: FastifyPluginAsync = async (app) => {
       from?: string;
       to?: string;
       timeZone?: string;
+      day?: "today" | "tomorrow" | string;
+      dayPart?: "morning" | "afternoon" | "evening";
       tenant_id?: string;
       tenantId?: string;
     };
@@ -94,6 +96,8 @@ export const availabilityRoutes: FastifyPluginAsync = async (app) => {
       from: fromDate,
       to: toDate,
       timeZone: query.timeZone as IanaTimeZone | undefined,
+      day: query.day,
+      dayPart: query.dayPart,
     });
 
     return reply.status(200).send(result);

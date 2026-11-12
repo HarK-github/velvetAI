@@ -24,6 +24,18 @@ export default defineConfig(({ mode }) => {
       port: webPort,
       strictPort: true,
       host: "0.0.0.0",
+      headers: {
+        "X-Frame-Options": "DENY",
+        "Content-Security-Policy": "frame-ancestors 'none'",
+      },
+    },
+    preview: {
+      port: webPort,
+      strictPort: true,
+      headers: {
+        "X-Frame-Options": "DENY",
+        "Content-Security-Policy": "frame-ancestors 'none'",
+      },
     },
   };
 });

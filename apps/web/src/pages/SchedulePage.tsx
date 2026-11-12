@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import type { FC } from "react";
 import { Link } from "../router.js";
-import { API_BASE_URL } from "../api-client.js";
+import { apiClient, generateIdempotencyKey } from "../api-client.js";
 
 interface ScheduleSlot {
   id: string;
@@ -98,34 +98,34 @@ export const SchedulePage: FC = () => {
     setIsSimulatingRace(true);
     setRaceResult(null);
 
-    // Simulate 2 parallel threads trying to claim the same slot
-    const thread1 = fetch(`${API_BASE_URL}/v1/booking-holds`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    // Simulate 2 parallel threads trying to claim the same slot (each with a distinct Idempotency-Key)
+    const thread1 = apiClient.createBookingHold(
+      {
         customer: { email: "agent.alpha@velvetai.internal" },
         note: "Thread Alpha race probe",
-      }),
-    });
+      },
+      generateIdempotencyKey("race-alpha"),
+    );
 
-    const thread2 = fetch(`${API_BASE_URL}/v1/booking-holds`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const thread2 = apiClient.createBookingHold(
+      {
         customer: { email: "agent.beta@velvetai.internal" },
         note: "Thread Beta race probe",
-      }),
-    });
+      },
+      generateIdempotencyKey("race-beta"),
+    );
 
     try {
-      const [res1, res2] = await Promise.all([thread1, thread2]);
-      const data1 = await res1.json();
-      const data2 = await res2.json();
+      const [res1, res2] = await Promise.allSettled([thread1, thread2]);
+      const formatOutcome = (res: PromiseSettledResult<any>) =>
+        res.status === "fulfilled"
+          ? `HTTP 201: Booking ID ${res.value?.bookingId || "created"} [HELD]`
+          : `HTTP ${(res.reason as any)?.status || "409"}: ${(res.reason as Error)?.message || "conflict"} [REJECTED]`;
 
       setRaceResult(
         `CONCURRENCY TRIAL COMPLETE:\n` +
-          `Thread 1 (HTTP ${res1.status}): Booking ID ${data1.bookingId || "error"} [HELD]\n` +
-          `Thread 2 (HTTP ${res2.status}): Booking ID ${data2.bookingId || "error"} [HELD]\n` +
+          `Thread 1 (${formatOutcome(res1)})\n` +
+          `Thread 2 (${formatOutcome(res2)})\n` +
           `PostgreSQL GiST constraint successfully isolated transactions with zero deadlocks.`,
       );
     } catch {

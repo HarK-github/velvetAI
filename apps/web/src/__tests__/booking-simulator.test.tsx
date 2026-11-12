@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { BookingSimulatorSection } from "../components/BookingSimulatorSection.js";
+import { apiClient } from "../api-client.js";
 
 describe("BookingSimulatorSection — Database Truth & Fallback Elimination (C4)", () => {
   const originalFetch = globalThis.fetch;
@@ -12,10 +13,14 @@ describe("BookingSimulatorSection — Database Truth & Fallback Elimination (C4)
   beforeEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    apiClient.setAuthToken("");
+    apiClient.resetActionKeys();
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    apiClient.setAuthToken("");
+    apiClient.resetActionKeys();
     vi.unstubAllEnvs();
   });
 
@@ -45,9 +50,11 @@ describe("BookingSimulatorSection — Database Truth & Fallback Elimination (C4)
 
   it("recovers and renders live catalog services when Retry is clicked", async () => {
     vi.stubEnv("VITE_ENABLE_OFFLINE_DEMO", "false");
+    apiClient.setAuthToken("test-simulator-token");
 
     let callCount = 0;
-    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+    let quoteHeaders: Headers | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("/v1/services")) {
         callCount++;
         if (callCount === 1) {
@@ -91,6 +98,7 @@ describe("BookingSimulatorSection — Database Truth & Fallback Elimination (C4)
         });
       }
       if (url.includes("/v1/booking-quotes")) {
+        quoteHeaders = new Headers(init?.headers);
         return Promise.resolve({
           ok: true,
           json: () =>
@@ -123,8 +131,9 @@ describe("BookingSimulatorSection — Database Truth & Fallback Elimination (C4)
     expect(await screen.findByText("14:00")).toBeTruthy();
     expect(await screen.findByText("$25.00")).toBeTruthy();
 
-    // Error alert is cleared
+    // Error alert is cleared and quote sent Idempotency-Key
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(quoteHeaders?.get("idempotency-key")).toMatch(/^quote-/);
   });
 
   it("renders visible offline demo banner and disables hold when VITE_ENABLE_OFFLINE_DEMO is true", async () => {

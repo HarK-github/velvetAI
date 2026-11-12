@@ -1,5 +1,5 @@
 import { FC, useEffect, useState, useRef, useCallback } from "react";
-import { apiClient } from "../api-client.js";
+import { apiClient, generateIdempotencyKey } from "../api-client.js";
 
 /**
  * Official PayPal JS SDK v6 URLs.
@@ -72,6 +72,8 @@ export interface PayPalPaymentSuccess {
   bookingStatus: "CONFIRMED" | "CAPTURE_UNCERTAIN" | "PAYMENT_FAILED" | "CANCELLED";
   paymentStatus: "CAPTURED" | "UNCERTAIN" | "FAILED";
   providerCaptureId?: string;
+  operationId?: string;
+  statusUrl?: string;
 }
 
 export interface PayPalButtonProps {
@@ -79,8 +81,23 @@ export interface PayPalButtonProps {
   onPaymentOutcome: (outcome: PayPalPaymentSuccess) => void;
   onPaymentExpired?: () => void;
   onCancel?: () => void;
+  onCaptureNetworkError?: (info: { message: string; paymentIntentId?: string }) => void;
+  serverTimeOffsetMs?: number;
+  initialPaymentExpiresAt?: string | null;
+  orderIdempotencyKey?: string;
+  getCaptureIdempotencyKey?: (paymentIntentId: string) => string;
   clientId?: string;
   environment?: "sandbox" | "production";
+}
+
+function computeRemainingSeconds(
+  expiresAtIso: string | null | undefined,
+  serverTimeOffsetMs: number,
+): number | null {
+  if (!expiresAtIso) return null;
+  const targetTime = new Date(expiresAtIso).getTime();
+  if (Number.isNaN(targetTime)) return null;
+  return Math.max(0, Math.floor((targetTime - (Date.now() + serverTimeOffsetMs)) / 1000));
 }
 
 export const PayPalButton: FC<PayPalButtonProps> = ({
@@ -88,41 +105,123 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
   onPaymentOutcome,
   onPaymentExpired,
   onCancel,
+  onCaptureNetworkError,
+  serverTimeOffsetMs = 0,
+  initialPaymentExpiresAt = null,
+  orderIdempotencyKey,
+  getCaptureIdempotencyKey,
   clientId = (typeof import.meta !== "undefined" &&
     (import.meta.env?.VITE_PAYPAL_CLIENT_ID as string | undefined)) ||
     "placeholder_paypal_sandbox_client_id",
   environment = "sandbox",
 }) => {
-  const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
-  const [paymentExpiresAt, setPaymentExpiresAt] = useState<string | null>(null);
-  const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
+  const [paymentExpiresAt, setPaymentExpiresAt] = useState<string | null>(initialPaymentExpiresAt);
+  const [countdownSeconds, setCountdownSeconds] = useState<number | null>(() =>
+    computeRemainingSeconds(initialPaymentExpiresAt, serverTimeOffsetMs),
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sdkReady, setSdkReady] = useState(false);
   const sessionRef = useRef<PayPalV6PaymentSession | null>(null);
+  const paymentIntentIdRef = useRef<string | null>(null);
+  const paypalOrderIdRef = useRef<string | null>(null);
+  const paymentExpiresAtRef = useRef<string | null>(initialPaymentExpiresAt);
+  const fallbackCaptureKeysRef = useRef<Map<string, string>>(new Map());
+  const inFlightOrderRef = useRef<{
+    bookingId: string;
+    promise: Promise<{
+      paymentIntentId: string;
+      paypalOrderId: string;
+      paymentExpiresAt: string;
+    }>;
+  } | null>(null);
+
+  const resolveOrderKey = useCallback(() => {
+    if (orderIdempotencyKey && orderIdempotencyKey.trim().length > 0) {
+      return orderIdempotencyKey.trim();
+    }
+    return apiClient.getOrCreateActionKey(`payment-order:${bookingId}`, "pay-order");
+  }, [bookingId, orderIdempotencyKey]);
+
+  const resolveCaptureKey = useCallback(
+    (intentId: string) => {
+      if (getCaptureIdempotencyKey) {
+        return getCaptureIdempotencyKey(intentId);
+      }
+      const existing = fallbackCaptureKeysRef.current.get(intentId);
+      if (existing) {
+        return existing;
+      }
+      const generated = generateIdempotencyKey("capture");
+      fallbackCaptureKeysRef.current.set(intentId, generated);
+      return generated;
+    },
+    [getCaptureIdempotencyKey],
+  );
+
+  // Reset refs when bookingId changes
+  useEffect(() => {
+    paymentIntentIdRef.current = null;
+    paypalOrderIdRef.current = null;
+    paymentExpiresAtRef.current = initialPaymentExpiresAt ?? null;
+    inFlightOrderRef.current = null;
+    setPaymentExpiresAt(initialPaymentExpiresAt ?? null);
+  }, [bookingId, initialPaymentExpiresAt]);
+
+  const ensurePaymentOrder = useCallback(async () => {
+    if (paymentIntentIdRef.current && paypalOrderIdRef.current) {
+      return {
+        paymentIntentId: paymentIntentIdRef.current,
+        paypalOrderId: paypalOrderIdRef.current,
+        paymentExpiresAt: paymentExpiresAtRef.current || "",
+      };
+    }
+    if (inFlightOrderRef.current?.bookingId === bookingId) {
+      return inFlightOrderRef.current.promise;
+    }
+
+    const orderKey = resolveOrderKey();
+    const promise = apiClient.createPaymentOrder(bookingId, orderKey).then((order) => {
+      paymentIntentIdRef.current = order.paymentIntentId;
+      paypalOrderIdRef.current = order.paypalOrderId;
+      paymentExpiresAtRef.current = order.paymentExpiresAt;
+      return {
+        paymentIntentId: order.paymentIntentId,
+        paypalOrderId: order.paypalOrderId,
+        paymentExpiresAt: order.paymentExpiresAt,
+      };
+    });
+
+    inFlightOrderRef.current = { bookingId, promise };
+    try {
+      const order = await promise;
+      setPaymentExpiresAt(order.paymentExpiresAt);
+      return order;
+    } finally {
+      if (inFlightOrderRef.current?.promise === promise) {
+        inFlightOrderRef.current = null;
+      }
+    }
+  }, [bookingId, resolveOrderKey]);
 
   // 1. Initialize payment order to retrieve server-backed payment_expires_at
   useEffect(() => {
     let isMounted = true;
-    apiClient
-      .createPaymentOrder(bookingId)
-      .then((order) => {
-        if (!isMounted) return;
-        setPaymentIntentId(order.paymentIntentId);
-        setPaymentExpiresAt(order.paymentExpiresAt);
-      })
-      .catch((err: Error) => {
-        if (!isMounted) return;
-        setError(err.message || "Failed to initialize payment window");
-      });
+    ensurePaymentOrder().catch((err: Error) => {
+      if (!isMounted) return;
+      setError(err.message || "Failed to initialize payment window");
+    });
 
     return () => {
       isMounted = false;
     };
-  }, [bookingId]);
+  }, [bookingId, ensurePaymentOrder]);
 
-  // 2. Countdown timer derived strictly from server payment_expires_at
+  const hasEmittedExpiredRef = useRef(false);
+
+  // 2. Countdown timer derived strictly from server payment_expires_at + server offset (P1-12)
   useEffect(() => {
+    hasEmittedExpiredRef.current = false;
     if (!paymentExpiresAt) {
       setCountdownSeconds(null);
       return;
@@ -130,9 +229,11 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
 
     const targetTime = new Date(paymentExpiresAt).getTime();
     const updateCountdown = () => {
-      const remaining = Math.max(0, Math.floor((targetTime - Date.now()) / 1000));
+      const effectiveNow = Date.now() + serverTimeOffsetMs;
+      const remaining = Math.max(0, Math.floor((targetTime - effectiveNow) / 1000));
       setCountdownSeconds(remaining);
-      if (remaining <= 0) {
+      if (remaining <= 0 && !hasEmittedExpiredRef.current) {
+        hasEmittedExpiredRef.current = true;
         onPaymentExpired?.();
       }
     };
@@ -140,7 +241,7 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [paymentExpiresAt, onPaymentExpired]);
+  }, [paymentExpiresAt, serverTimeOffsetMs, onPaymentExpired]);
 
   // 3. Dynamic loading of PayPal JS SDK v6 core script
   useEffect(() => {
@@ -162,6 +263,23 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
     };
   }, [environment]);
 
+  const handleCaptureException = useCallback(
+    (err: unknown, activeIntentId?: string) => {
+      const rawMsg = err instanceof Error ? err.message : String(err || "");
+      const isNetworkErr =
+        err instanceof TypeError ||
+        /failed to fetch|networkerror|network request failed|load failed/i.test(rawMsg);
+      if (isNetworkErr) {
+        const friendly = "We couldn't confirm the payment yet — please check payment status.";
+        setError(friendly);
+        onCaptureNetworkError?.({ message: friendly, paymentIntentId: activeIntentId });
+        return;
+      }
+      setError(rawMsg || "Capture failed");
+    },
+    [onCaptureNetworkError],
+  );
+
   // 4. Initialize v6 SDK instance and One-Time Payment Session
   const initV6Session = useCallback(async () => {
     if (typeof window === "undefined" || !window.paypal?.createInstance) return;
@@ -179,10 +297,8 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
           setIsProcessing(true);
           setError(null);
           try {
-            const res = await apiClient.createPaymentOrder(bookingId);
-            setPaymentIntentId(res.paymentIntentId);
-            setPaymentExpiresAt(res.paymentExpiresAt);
-            return { orderId: res.paypalOrderId };
+            const order = await ensurePaymentOrder();
+            return { orderId: order.paypalOrderId };
           } catch (err: unknown) {
             setError((err as Error).message || "Order creation failed");
             throw err;
@@ -191,21 +307,25 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
           }
         },
         onApprove: async (_data: { orderId: string }) => {
-          if (!paymentIntentId) return;
+          const activeIntentId = paymentIntentIdRef.current;
+          if (!activeIntentId) return;
           setIsProcessing(true);
           try {
-            const outcome = await apiClient.capturePayment(paymentIntentId);
+            const captureKey = resolveCaptureKey(activeIntentId);
+            const outcome = await apiClient.capturePayment(activeIntentId, captureKey);
             onPaymentOutcome(outcome);
           } catch (err: unknown) {
-            setError((err as Error).message || "Capture failed");
+            handleCaptureException(err, activeIntentId);
           } finally {
             setIsProcessing(false);
           }
         },
         onCancel: () => {
+          setIsProcessing(false);
           onCancel?.();
         },
         onError: (err) => {
+          setIsProcessing(false);
           setError(typeof err === "string" ? err : "PayPal Checkout error occurred");
         },
       });
@@ -214,7 +334,14 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
     } catch (err: unknown) {
       setError((err as Error).message || "Failed to initialize PayPal v6 session");
     }
-  }, [bookingId, clientId, onPaymentOutcome, onCancel, paymentIntentId]);
+  }, [
+    clientId,
+    ensurePaymentOrder,
+    handleCaptureException,
+    onCancel,
+    onPaymentOutcome,
+    resolveCaptureKey,
+  ]);
 
   useEffect(() => {
     if (sdkReady) {
@@ -231,7 +358,12 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
       try {
         await sessionRef.current.start({ presentationMode: "auto" });
       } catch (err: unknown) {
-        setError((err as Error).message || "PayPal checkout session failed");
+        const msg = err instanceof Error ? err.message : String(err || "");
+        if (/cancel/i.test(msg)) {
+          onCancel?.();
+        } else {
+          setError(msg || "PayPal checkout session failed");
+        }
       } finally {
         setIsProcessing(false);
       }
@@ -239,18 +371,15 @@ export const PayPalButton: FC<PayPalButtonProps> = ({
     }
 
     // Direct API fallback execution (when CDN is blocked or mock testing)
+    let activeIntentId: string | undefined;
     try {
-      let intentId = paymentIntentId;
-      if (!intentId) {
-        const order = await apiClient.createPaymentOrder(bookingId);
-        intentId = order.paymentIntentId;
-        setPaymentIntentId(order.paymentIntentId);
-        setPaymentExpiresAt(order.paymentExpiresAt);
-      }
-      const outcome = await apiClient.capturePayment(intentId);
+      const order = await ensurePaymentOrder();
+      activeIntentId = order.paymentIntentId;
+      const captureKey = resolveCaptureKey(order.paymentIntentId);
+      const outcome = await apiClient.capturePayment(order.paymentIntentId, captureKey);
       onPaymentOutcome(outcome);
     } catch (err: unknown) {
-      setError((err as Error).message || "Capture failed");
+      handleCaptureException(err, activeIntentId);
     } finally {
       setIsProcessing(false);
     }

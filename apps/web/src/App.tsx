@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
-import type { FC } from "react";
-import { Auth0Provider } from "@auth0/auth0-react";
+import type { FC, ReactNode } from "react";
+import { Auth0Provider, useAuth0 } from "@auth0/auth0-react";
 import { RouterProvider, useRouter } from "./router.js";
+import { AskAIProvider, useAskAI } from "./context/AskAIContext.js";
+import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Navbar } from "./components/Navbar.js";
 import { EdgeMeta } from "./components/EdgeMeta.js";
 import { AskAIDrawer } from "./components/AskAIDrawer.js";
@@ -12,19 +14,44 @@ import { PolicyPage } from "./pages/PolicyPage.js";
 import { StatusPage } from "./pages/StatusPage.js";
 import { ApprovalPage } from "./pages/ApprovalPage.js";
 import { SecurityPage } from "./pages/SecurityPage.js";
-import { computeAuthDiagnostic } from "./lib/auth-config.js";
-import { API_BASE_URL } from "./api-client.js";
+import {
+  computeAuthDiagnostic,
+  sanitizeReturnTo,
+  buildAuthScope,
+  cleanStaleAuthParams,
+} from "./lib/auth-config.js";
+import { API_BASE_URL, isApiConfigured } from "./api-client.js";
+
+const AskAIAuthSync: FC = () => {
+  const { isLoading, isAuthenticated, user } = useAuth0();
+  const { syncAuthState } = useAskAI();
+
+  useEffect(() => {
+    syncAuthState({
+      sub: user?.sub ?? null,
+      isAuthenticated,
+      isLoading,
+    });
+  }, [user?.sub, isAuthenticated, isLoading, syncAuthState]);
+
+  return null;
+};
 
 const AppContent: FC = () => {
   const { currentPath } = useRouter();
+  const { isOpen: isAiOpen, openDrawer, closeDrawer } = useAskAI();
   const [apiHealthy, setApiHealthy] = useState<boolean>(false);
   const [apiLatency, setApiLatency] = useState<number | null>(null);
   const [scrollPercentage, setScrollPercentage] = useState<number>(0);
-  const [isAiOpen, setIsAiOpen] = useState<boolean>(false);
 
   // Monitor Fastify REST API health
   useEffect(() => {
     const checkApi = async () => {
+      if (!API_BASE_URL) {
+        setApiHealthy(false);
+        setApiLatency(null);
+        return;
+      }
       const start = performance.now();
       try {
         const res = await fetch(`${API_BASE_URL}/health/live`);
@@ -101,12 +128,32 @@ const AppContent: FC = () => {
         Skip to content
       </a>
 
-      <Navbar apiHealthy={apiHealthy} apiLatency={apiLatency} onOpenAi={() => setIsAiOpen(true)} />
+      {!isApiConfigured() && (
+        <div
+          role="alert"
+          id="api-unconfigured-alert"
+          style={{
+            background: "#b91c1c",
+            color: "#ffffff",
+            padding: "12px 16px",
+            textAlign: "center",
+            fontWeight: 600,
+            fontSize: "14px",
+            letterSpacing: "0.02em",
+            zIndex: 99999,
+            position: "relative",
+          }}
+        >
+          API not configured: VITE_API_BASE_URL environment variable must be set in production.
+        </div>
+      )}
+
+      <Navbar apiHealthy={apiHealthy} apiLatency={apiLatency} onOpenAi={openDrawer} />
       <EdgeMeta scrollPercentage={scrollPercentage} />
 
       <main id="main-content">{renderCurrentPage()}</main>
 
-      <AskAIDrawer isOpen={isAiOpen} onClose={() => setIsAiOpen(false)} />
+      <AskAIDrawer isOpen={isAiOpen} onClose={closeDrawer} />
     </>
   );
 };
@@ -143,6 +190,52 @@ if (typeof window !== "undefined") {
   }
 }
 
+export const Auth0ProviderWithRedirect: FC<{
+  domain: string;
+  clientId: string;
+  audience?: string;
+  children: ReactNode;
+}> = ({ domain, clientId, audience, children }) => {
+  const { navigate } = useRouter();
+
+  // Proactively detect and clean stale code/state parameters before Auth0 initializes
+  const [isStaleParam] = useState(() => cleanStaleAuthParams(clientId));
+
+  const onRedirectCallback = (appState?: { returnTo?: string }) => {
+    const target = sanitizeReturnTo(appState?.returnTo);
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, document.title, target);
+    }
+    navigate(target, { replace: true });
+  };
+
+  const redirectUri =
+    typeof window !== "undefined"
+      ? window.location.origin
+      : (typeof import.meta.env !== "undefined" && import.meta.env.VITE_PUBLIC_WEB_ORIGIN) || "";
+
+  const hasAudience = Boolean(audience && audience.trim().length > 0);
+  const effectiveScope = buildAuthScope(audience);
+
+  return (
+    <Auth0Provider
+      domain={domain}
+      clientId={clientId}
+      authorizationParams={{
+        redirect_uri: redirectUri,
+        audience: hasAudience ? audience : undefined,
+        scope: effectiveScope,
+      }}
+      useRefreshTokens={true}
+      cacheLocation="localstorage"
+      skipRedirectCallback={isStaleParam}
+      onRedirectCallback={onRedirectCallback}
+    >
+      {children}
+    </Auth0Provider>
+  );
+};
+
 export function App() {
   const auth0Domain =
     ((typeof import.meta.env !== "undefined" ? import.meta.env.VITE_AUTH0_DOMAIN : "") as string) ||
@@ -158,50 +251,44 @@ export function App() {
 
   const isConfigured = Boolean(auth0Domain && auth0ClientId);
 
-  const content = (
-    <RouterProvider>
-      {!isConfigured && (
-        <div
-          id="auth0-unconfigured-alert"
-          role="alert"
-          style={{
-            background: "rgba(239, 68, 68, 0.12)",
-            color: "var(--crimson, #ef4444)",
-            padding: "8px 16px",
-            fontSize: "12px",
-            textAlign: "center",
-            borderBottom: "1px solid rgba(239, 68, 68, 0.3)",
-            fontFamily: "var(--font-mono, monospace)",
-          }}
-        >
-          Auth0 public configuration missing. Please verify VITE_AUTH0_DOMAIN and
-          VITE_AUTH0_CLIENT_ID.
-        </div>
-      )}
-      <AppContent />
-    </RouterProvider>
+  return (
+    <ErrorBoundary>
+      <AskAIProvider>
+        <RouterProvider>
+          {!isConfigured && (
+            <div
+              id="auth0-unconfigured-alert"
+              role="alert"
+              style={{
+                background: "rgba(239, 68, 68, 0.12)",
+                color: "var(--crimson, #ef4444)",
+                padding: "8px 16px",
+                fontSize: "12px",
+                textAlign: "center",
+                borderBottom: "1px solid rgba(239, 68, 68, 0.3)",
+                fontFamily: "var(--font-mono, monospace)",
+              }}
+            >
+              Auth0 public configuration missing. Please verify VITE_AUTH0_DOMAIN and
+              VITE_AUTH0_CLIENT_ID.
+            </div>
+          )}
+          {isConfigured ? (
+            <Auth0ProviderWithRedirect
+              domain={auth0Domain}
+              clientId={auth0ClientId}
+              audience={auth0Audience}
+            >
+              <AskAIAuthSync />
+              <AppContent />
+            </Auth0ProviderWithRedirect>
+          ) : (
+            <AppContent />
+          )}
+        </RouterProvider>
+      </AskAIProvider>
+    </ErrorBoundary>
   );
-
-  if (isConfigured) {
-    return (
-      <Auth0Provider
-        domain={auth0Domain}
-        clientId={auth0ClientId}
-        authorizationParams={{
-          redirect_uri:
-            typeof window !== "undefined" ? window.location.origin : "http://localhost:5173",
-          audience: auth0Audience || undefined,
-          scope:
-            "openid profile email booking:read booking:quote booking:prepare booking:commit booking:cancel",
-        }}
-        cacheLocation="memory"
-      >
-        {content}
-      </Auth0Provider>
-    );
-  }
-
-  return content;
 }
 
 export default App;

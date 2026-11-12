@@ -16,6 +16,7 @@ import {
   PrepareBookingResponse,
   BookingApprovalDetails,
   ConfirmBookingApprovalResponse,
+  ApproveAndCommitResponse,
   BookingQuoteDTO,
   TenantId,
   UserId,
@@ -30,6 +31,7 @@ import {
   CommitCancellationResponse,
   AttendanceActionResponse,
   PaymentCaptureId,
+  formatMoney,
 } from "@velvetai/contracts";
 import {
   SlotUnavailableError,
@@ -41,6 +43,7 @@ import {
 import { signBookingIntent, verifyBookingIntent } from "./booking-intent.js";
 import { canonicalHash, sha256Hex } from "./canonicalizer.js";
 import type { PaymentService } from "./payment-service.js";
+import type { ClockPort } from "./ports.js";
 
 export interface BookingActor {
   subject: string;
@@ -49,10 +52,44 @@ export interface BookingActor {
   roles: string[];
 }
 
+export function formatSlotDisplay(startsAt: Date, endsAt: Date, timeZone: string) {
+  const dateFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+  const timeFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  const tzLabelFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "short",
+  });
+
+  const tzParts = tzLabelFormatter.formatToParts(startsAt);
+  const timeZoneLabel = tzParts.find((p) => p.type === "timeZoneName")?.value || timeZone;
+
+  return {
+    localDate: dateFormatter.format(startsAt),
+    localStart: timeFormatter.format(startsAt),
+    localEnd: timeFormatter.format(endsAt),
+    timeZone,
+    timeZoneLabel,
+  };
+}
+
 export class BookingService {
   constructor(
     private readonly db: Kysely<Database>,
     private readonly paymentService?: PaymentService,
+    private readonly clock?: ClockPort,
   ) {}
 
   /**
@@ -82,8 +119,16 @@ export class BookingService {
       }
 
       const startsAt = new Date(input.startsAt);
+      const currentNow = this.clock ? this.clock.now() : new Date();
+      if (startsAt.getTime() <= currentNow.getTime()) {
+        throw new DomainError(
+          "SLOT_IN_PAST: Booking slot start time cannot be in the past",
+          "SLOT_IN_PAST",
+          400,
+        );
+      }
       const endsAt = new Date(startsAt.getTime() + service.duration_minutes * 60_000);
-      const expiresAt = new Date(Date.now() + 5 * 60_000); // Max 5-min TTL per Amendment B.4
+      const expiresAt = new Date(currentNow.getTime() + 5 * 60_000); // Max 5-min TTL per Amendment B.4
 
       const canonicalPayload = {
         tenantId,
@@ -116,11 +161,18 @@ export class BookingService {
         })
         .execute();
 
+      const effectiveTimeZone = input.timeZone || "America/New_York";
+      const displayInfo = formatSlotDisplay(startsAt, endsAt, effectiveTimeZone);
+
       return {
         quoteId,
         expiresAt: expiresAt.toISOString() as Rfc3339Timestamp,
         serviceVersion: service.version,
         scheduleRevision: 1,
+        serviceName: service.name,
+        startsAt: startsAt.toISOString() as Rfc3339Timestamp,
+        endsAt: endsAt.toISOString() as Rfc3339Timestamp,
+        display: displayInfo,
         total: {
           valueMinor: String(service.price_minor) as MoneyMinor,
           currency: service.currency as CurrencyCode,
@@ -182,9 +234,17 @@ export class BookingService {
         }
 
         const startsAt = new Date(input.startsAt);
+        const currentNow = this.clock ? this.clock.now() : new Date();
+        if (startsAt.getTime() <= currentNow.getTime()) {
+          throw new DomainError(
+            "SLOT_IN_PAST: Booking slot start time cannot be in the past",
+            "SLOT_IN_PAST",
+            400,
+          );
+        }
         const endsAt = new Date(startsAt.getTime() + service.duration_minutes * 60_000);
         const bookingId = crypto.randomUUID() as BookingId;
-        const holdExpiresAt = new Date(Date.now() + 15 * 60_000); // 15-min slot hold
+        const holdExpiresAt = new Date(currentNow.getTime() + 300_000); // 5-min (300s) slot hold
 
         // Ensure customer record exists
         let customer = await trx
@@ -350,18 +410,17 @@ export class BookingService {
         const confirmationSlotId = crypto.randomUUID();
         const placeholderHash = sha256Hex(`pending_${interactionLocator}`);
 
-        // Link to matching app_user if present, or actor userId (if human), or customer id
-        const matchingAppUser = await trx
-          .selectFrom("app_users")
-          .where("email_ciphertext", "=", input.customer.email)
-          .select(["id"])
-          .executeTakeFirst();
+        // Determine surface and buyer binding per Finding 3
+        const isM2MClient = actor.subject.endsWith("@clients");
+        const surface = isM2MClient
+          ? "mcp"
+          : clientId === "ask-ai" || clientId.includes("ai")
+            ? "ask_ai"
+            : "web";
 
-        const initialBuyerUserId = matchingAppUser
-          ? matchingAppUser.id
-          : !actor.subject.endsWith("@clients")
-            ? actor.userId
-            : customer.id;
+        // MCP-prepared holds have no human buyer at prepare time (the M2M agent prepared them).
+        // For holds prepared by Ask AI or the web (human session), the hold is bound to that human from the start.
+        const initialBuyerUserId = isM2MClient ? null : actor.userId;
 
         await trx
           .insertInto("buyer_confirmations")
@@ -373,6 +432,9 @@ export class BookingService {
             token_hash: placeholderHash,
             buyer_user_id: initialBuyerUserId,
             interaction_locator: interactionLocator,
+            signed_intent: signedIntent,
+            signed_intent_hash: sha256Hex(signedIntent),
+            prepared_by_surface: surface,
             expires_at: holdExpiresAt,
           })
           .execute();
@@ -404,6 +466,12 @@ export class BookingService {
           })
           .execute();
 
+        const webOrigin =
+          process.env.PUBLIC_WEB_ORIGIN || process.env.WEB_BASE_URL || "http://localhost:5174";
+        const approvalUrl = `${webOrigin}/approve/${interactionLocator}`;
+        const effectiveTimeZone = input.timeZone || "America/New_York";
+        const displayInfo = formatSlotDisplay(startsAt, endsAt, effectiveTimeZone);
+
         return {
           bookingId,
           status: "HELD",
@@ -411,7 +479,10 @@ export class BookingService {
           version: 1,
           intent: signedIntent,
           approvalLocator: `/v1/booking-approvals/${interactionLocator}`,
+          approvalUrl,
           interactionToken,
+          serviceName: service.name,
+          display: displayInfo,
           requiresHumanConfirmation: true as const,
         };
       });
@@ -421,7 +492,7 @@ export class BookingService {
   }
 
   /**
-   * Retrieves terms from the immutable server-side snapshot for buyer approval per Section D.4.
+   * Retrieves terms from the immutable server-side snapshot for buyer approval per Section D.4 and WP 02.
    */
   async getApprovalDetails(tenantId: TenantId, locator: string): Promise<BookingApprovalDetails> {
     const cleanLocator = locator.replace(/^\/v1\/booking-approvals\//, "");
@@ -448,6 +519,8 @@ export class BookingService {
           "service_versions.id",
           "booking_hold_snapshots.service_version_id",
         )
+        .innerJoin("resources", "resources.id", "booking_hold_snapshots.resource_id")
+        .innerJoin("bookings", "bookings.id", "booking_hold_snapshots.booking_id")
         .where("booking_hold_snapshots.booking_id", "=", conf.booking_id)
         .where("booking_hold_snapshots.tenant_id", "=", tenantId)
         .select([
@@ -455,18 +528,62 @@ export class BookingService {
           "booking_hold_snapshots.tenant_id",
           "service_versions.name as service_name",
           "service_versions.version as service_version",
+          "service_versions.duration_minutes",
+          "resources.display_name as resource_name",
           "booking_hold_snapshots.starts_at",
           "booking_hold_snapshots.ends_at",
           "booking_hold_snapshots.total_minor",
           "booking_hold_snapshots.deposit_minor",
           "booking_hold_snapshots.currency",
           "booking_hold_snapshots.client_id",
+          "bookings.status as booking_status",
+          "bookings.payment_expires_at as booking_payment_expires_at",
         ])
         .executeTakeFirst();
 
       if (!snapshot) {
         throw new DomainError("Hold snapshot not found", "SNAPSHOT_NOT_FOUND", 404);
       }
+
+      const location = await trx
+        .selectFrom("locations")
+        .where("tenant_id", "=", tenantId)
+        .select(["timezone"])
+        .executeTakeFirst();
+
+      const latestIntent = await trx
+        .selectFrom("payment_intents")
+        .where("booking_id", "=", conf.booking_id)
+        .where("tenant_id", "=", tenantId)
+        .orderBy("created_at", "desc")
+        .select(["state", "payment_expires_at"])
+        .executeTakeFirst();
+
+      const isCaptureUncertainOrInFlight =
+        snapshot.booking_status === "CAPTURE_UNCERTAIN" ||
+        latestIntent?.state === "CAPTURE_IN_FLIGHT" ||
+        latestIntent?.state === "SUBMISSION_UNKNOWN";
+
+      const latestCaptureOp = isCaptureUncertainOrInFlight
+        ? await trx
+            .selectFrom("provider_operations")
+            .where("booking_id", "=", conf.booking_id)
+            .where("tenant_id", "=", tenantId)
+            .where("operation_type", "=", "CAPTURE")
+            .orderBy("created_at", "desc")
+            .select(["id", "state"])
+            .executeTakeFirst()
+        : undefined;
+
+      const resolvedPaymentExpiresAt =
+        snapshot.booking_payment_expires_at ?? latestIntent?.payment_expires_at ?? null;
+
+      const effectiveTimeZone = (location?.timezone || "America/New_York") as IanaTimeZone;
+      const displayInfo = formatSlotDisplay(
+        snapshot.starts_at,
+        snapshot.ends_at,
+        effectiveTimeZone,
+      );
 
       const pendingPlaceholderHash = sha256Hex(`pending_${conf.interaction_locator}`);
       const approvalStatus =
@@ -476,22 +593,50 @@ export class BookingService {
             ? "CONSUMED"
             : "APPROVED";
 
+      const formattedPrice = formatMoney({
+        valueMinor: snapshot.total_minor,
+        currency: snapshot.currency as CurrencyCode,
+      });
+
+      const formattedDeposit = formatMoney({
+        valueMinor: snapshot.deposit_minor,
+        currency: snapshot.currency as CurrencyCode,
+      });
+
       return {
         bookingId: snapshot.booking_id as BookingId,
         tenantId: snapshot.tenant_id as TenantId,
         serviceName: snapshot.service_name,
         serviceVersion: snapshot.service_version,
+        durationMinutes: snapshot.duration_minutes,
+        resourceName: snapshot.resource_name,
         startsAt: snapshot.starts_at.toISOString() as Rfc3339Timestamp,
         endsAt: snapshot.ends_at.toISOString() as Rfc3339Timestamp,
-        timeZone: "UTC" as IanaTimeZone,
+        timeZone: effectiveTimeZone,
         allInPriceMinor: snapshot.total_minor,
         depositMinor: snapshot.deposit_minor,
+        formattedPrice,
+        formattedDeposit,
         currency: snapshot.currency as CurrencyCode,
         cancellationSummary:
-          "Full deposit refund if cancelled at least 24 hours prior to appointment.",
+          "Full deposit refund if cancelled at least 24 hours prior to appointment. After that the deposit is retained.",
         requestingAgent: snapshot.client_id,
+        preparedBySurface: conf.prepared_by_surface || "web",
         expiresAt: conf.expires_at.toISOString() as Rfc3339Timestamp,
         status: approvalStatus,
+        bookingStatus: snapshot.booking_status,
+        ...(latestIntent?.state ? { paymentStatus: latestIntent.state } : {}),
+        ...(resolvedPaymentExpiresAt
+          ? { paymentExpiresAt: resolvedPaymentExpiresAt.toISOString() as Rfc3339Timestamp }
+          : {}),
+        ...(latestCaptureOp?.id ? { operationId: latestCaptureOp.id } : {}),
+        display: {
+          localDate: displayInfo.localDate,
+          localStart: displayInfo.localStart,
+          localEnd: displayInfo.localEnd,
+          timeZone: effectiveTimeZone,
+          timeZoneLabel: displayInfo.timeZoneLabel,
+        },
       };
     });
   }
@@ -499,6 +644,7 @@ export class BookingService {
   /**
    * Buyer approves terms -> issues a separate one-time opaque confirmation record per Section D.1 / D.6.
    * Strictly enforces that only the buyer the hold was prepared for can approve.
+   * For holds prepared by an M2M agent, the first authenticated human buyer who approves claims it.
    */
   async confirmApproval(
     tenantId: TenantId,
@@ -541,7 +687,11 @@ export class BookingService {
 
       const now = new Date();
       if (conf.expires_at.getTime() <= now.getTime()) {
-        throw new DomainError("Approval session has expired", "APPROVAL_EXPIRED", 410);
+        throw new DomainError(
+          "Booking hold has expired. The time was released.",
+          "HOLD_EXPIRED",
+          410,
+        );
       }
 
       // Verify that the approving buyer matches the buyer the hold was prepared for
@@ -549,8 +699,16 @@ export class BookingService {
         .selectFrom("bookings")
         .where("id", "=", conf.booking_id)
         .where("tenant_id", "=", tenantId)
-        .select(["customer_id"])
+        .select(["customer_id", "hold_expires_at"])
         .executeTakeFirst();
+
+      if (booking?.hold_expires_at && booking.hold_expires_at.getTime() <= now.getTime()) {
+        throw new DomainError(
+          "Booking hold has expired. The time was released.",
+          "HOLD_EXPIRED",
+          410,
+        );
+      }
 
       const holdCustomer = booking
         ? await trx
@@ -567,20 +725,50 @@ export class BookingService {
         .select(["id", "email_ciphertext"])
         .executeTakeFirst();
 
-      const isDirectMatch = conf.buyer_user_id === buyerUserId;
-      const isEmailMatch = Boolean(
-        approvingAppUser &&
-        holdCustomer &&
-        approvingAppUser.email_ciphertext.toLowerCase() ===
-          holdCustomer.email_ciphertext.toLowerCase(),
-      );
+      if (!conf.buyer_user_id) {
+        // Finding 3: M2M hold - first authenticated human buyer who approves claims it atomically
+        const claimed = await trx
+          .updateTable("buyer_confirmations")
+          .set({ buyer_user_id: buyerUserId })
+          .where("id", "=", conf.id)
+          .where("buyer_user_id", "is", null)
+          .returning(["id", "buyer_user_id"])
+          .executeTakeFirst();
 
-      if (!isDirectMatch && !isEmailMatch) {
-        throw new DomainError(
-          "The approving buyer does not match the buyer for this booking hold",
-          "BUYER_MISMATCH",
-          403,
+        if (!claimed) {
+          throw new DomainError("This approval belongs to another account.", "BUYER_MISMATCH", 403);
+        }
+
+        conf.buyer_user_id = buyerUserId;
+
+        await trx
+          .insertInto("audit_events")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: tenantId,
+            actor_id: buyerUserId,
+            actor_type: "USER",
+            action: "booking.claimed_by_buyer",
+            resource_type: "booking",
+            resource_id: conf.booking_id,
+            metadata_redacted: {
+              interactionLocator: cleanLocator,
+              claimedBy: buyerUserId,
+            },
+          })
+          .execute();
+      } else {
+        const isDirectMatch = conf.buyer_user_id === buyerUserId;
+        const isEmailMatch = Boolean(
+          approvingAppUser &&
+          holdCustomer &&
+          approvingAppUser.email_ciphertext.toLowerCase() ===
+            holdCustomer.email_ciphertext.toLowerCase(),
         );
+
+        if (!isDirectMatch && !isEmailMatch) {
+          throw new DomainError("This approval belongs to another account.", "BUYER_MISMATCH", 403);
+        }
       }
 
       // Generate opaque one-time confirmation token
@@ -602,6 +790,297 @@ export class BookingService {
         confirmation: rawConfirmationToken,
         expiresAt: conf.expires_at.toISOString() as Rfc3339Timestamp,
       };
+    });
+  }
+
+  /**
+   * Performs human approve + commit atomically per D1.
+   * Never returns the confirmation token.
+   */
+  async approveAndCommit(
+    tenantId: TenantId,
+    locator: string,
+    buyerUserId: UserId,
+    actor: BookingActor,
+    clientId: string,
+    idempotencyKey: string,
+  ): Promise<ApproveAndCommitResponse> {
+    const cleanLocator = locator.replace(/^\/v1\/booking-approvals\//, "");
+    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+      // 0. Idempotency management
+      const payloadHash = sha256Hex(JSON.stringify({ locator: cleanLocator, buyerUserId }));
+      const existingIdempotency = await trx
+        .selectFrom("idempotency_records")
+        .where("tenant_id", "=", tenantId)
+        .where("client_id", "=", clientId)
+        .where("idempotency_key", "=", idempotencyKey)
+        .selectAll()
+        .executeTakeFirst();
+
+      if (existingIdempotency) {
+        if (existingIdempotency.request_hash !== payloadHash) {
+          throw new IdempotencyConflictError(
+            "Idempotency key reused with different request payload",
+          );
+        }
+        if (existingIdempotency.state === "COMPLETED" && existingIdempotency.response_body) {
+          return existingIdempotency.response_body as ApproveAndCommitResponse;
+        }
+      }
+
+      // 1. Load pending confirmation record
+      const conf = await trx
+        .selectFrom("buyer_confirmations")
+        .where("interaction_locator", "=", cleanLocator)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!conf) {
+        throw new DomainError(
+          "Approval interaction expired or not found",
+          "APPROVAL_NOT_FOUND",
+          404,
+        );
+      }
+
+      // 2. Load booking
+      const booking = await trx
+        .selectFrom("bookings")
+        .where("id", "=", conf.booking_id)
+        .where("tenant_id", "=", tenantId)
+        .selectAll()
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!booking) {
+        throw new DomainError("Booking hold not found", "BOOKING_NOT_FOUND", 404);
+      }
+
+      // Check expiry
+      const now = new Date();
+      if (conf.expires_at.getTime() <= now.getTime()) {
+        throw new DomainError(
+          "Booking hold has expired. The time was released.",
+          "HOLD_EXPIRED",
+          410,
+        );
+      }
+      if (booking.hold_expires_at && booking.hold_expires_at.getTime() <= now.getTime()) {
+        throw new DomainError(
+          "Booking hold has expired. The time was released.",
+          "HOLD_EXPIRED",
+          410,
+        );
+      }
+
+      // 3. Check buyer binding
+      const approvingAppUser = await trx
+        .selectFrom("app_users")
+        .where("id", "=", buyerUserId)
+        .select(["id", "email_ciphertext"])
+        .executeTakeFirst();
+
+      const holdCustomer = await trx
+        .selectFrom("customers")
+        .where("id", "=", booking.customer_id)
+        .where("tenant_id", "=", tenantId)
+        .select(["email_ciphertext"])
+        .executeTakeFirst();
+
+      if (!conf.buyer_user_id) {
+        // M2M hold: The first authenticated human buyer who approves claims it atomically!
+        const claimed = await trx
+          .updateTable("buyer_confirmations")
+          .set({ buyer_user_id: buyerUserId })
+          .where("id", "=", conf.id)
+          .where("buyer_user_id", "is", null)
+          .returning(["id", "buyer_user_id"])
+          .executeTakeFirst();
+
+        if (!claimed) {
+          throw new DomainError("This approval belongs to another account.", "BUYER_MISMATCH", 403);
+        }
+
+        conf.buyer_user_id = buyerUserId;
+
+        await trx
+          .insertInto("audit_events")
+          .values({
+            id: crypto.randomUUID(),
+            tenant_id: tenantId,
+            actor_id: buyerUserId,
+            actor_type: "USER",
+            action: "booking.claimed_by_buyer",
+            resource_type: "booking",
+            resource_id: conf.booking_id,
+            metadata_redacted: {
+              interactionLocator: cleanLocator,
+              claimedBy: buyerUserId,
+            },
+          })
+          .execute();
+      } else {
+        const isDirectMatch = conf.buyer_user_id === buyerUserId;
+        const isEmailMatch = Boolean(
+          approvingAppUser &&
+          holdCustomer &&
+          approvingAppUser.email_ciphertext.toLowerCase() ===
+            holdCustomer.email_ciphertext.toLowerCase(),
+        );
+
+        if (!isDirectMatch && !isEmailMatch) {
+          throw new DomainError("This approval belongs to another account.", "BUYER_MISMATCH", 403);
+        }
+      }
+
+      // If already committed or confirmed (e.g. agent commit after human confirm, or duplicate call), return 200 with existing booking
+      if (booking.status === "COMMITTING" || booking.status === "CONFIRMED") {
+        return {
+          bookingId: booking.id as BookingId,
+          status: booking.status as "COMMITTING" | "CONFIRMED",
+          next: {
+            type: "PAY_DEPOSIT",
+            paymentOrderUrl: `/v1/bookings/${booking.id}/payment-order`,
+          },
+        };
+      }
+
+      // 4. Retrieve stored signed intent
+      const signedIntent = conf.signed_intent;
+      if (!signedIntent) {
+        throw new DomainError("Stored signed intent not found for hold", "INTENT_NOT_FOUND", 500);
+      }
+
+      let claims;
+      try {
+        claims = await verifyBookingIntent(signedIntent, {
+          expectedIssuer: "https://api.velvetai.example",
+          expectedAudience: "velvetai-booking",
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Invalid intent signature";
+        throw new DomainError(message, "INVALID_SIGNED_INTENT", 400);
+      }
+
+      // 5. Generate and immediately consume one-time confirmation token
+      const rawConfirmationToken = `conf_${crypto.randomBytes(32).toString("hex")}`;
+      const tokenHash = sha256Hex(rawConfirmationToken);
+      const confirmationJti = crypto.randomUUID();
+
+      const clockRes = await sql<{ now: Date }>`SELECT clock_timestamp() as now`.execute(trx);
+      const dbNow = clockRes.rows[0]?.now ?? new Date();
+
+      await trx
+        .updateTable("buyer_confirmations")
+        .set({
+          token_hash: tokenHash,
+          confirmation_jti: confirmationJti,
+          buyer_user_id: buyerUserId,
+          consumed_at: dbNow,
+        })
+        .where("id", "=", conf.id)
+        .execute();
+
+      // 6. Transition booking to COMMITTING
+      const nextVersion = booking.version + 1;
+      const paymentExpiresAt = new Date(dbNow.getTime() + 10 * 60_000);
+      await trx
+        .updateTable("bookings")
+        .set({
+          status: "COMMITTING",
+          version: nextVersion,
+          payment_expires_at: paymentExpiresAt,
+        })
+        .where("id", "=", booking.id)
+        .execute();
+
+      await trx
+        .updateTable("resource_claims")
+        .set({
+          state: "COMMITTING",
+          blocking: true,
+        })
+        .where("booking_id", "=", booking.id)
+        .where("tenant_id", "=", tenantId)
+        .execute();
+
+      // 7. Record committed intent to guarantee (tenant_id, intent_jti) uniqueness
+      await trx
+        .insertInto("committed_intents")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          intent_jti: claims.jti,
+          booking_id: booking.id,
+          committed_at: dbNow,
+        })
+        .execute();
+
+      // 8. Append outbox event and audit event
+      const committedAtStr = dbNow.toISOString();
+      await trx
+        .insertInto("outbox_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          aggregate_type: "booking",
+          aggregate_id: booking.id,
+          event_type: "booking.committing",
+          payload: {
+            bookingId: booking.id,
+            status: "COMMITTING",
+            version: nextVersion,
+            committedAt: committedAtStr,
+          },
+        })
+        .execute();
+
+      await trx
+        .insertInto("audit_events")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          actor_id: buyerUserId,
+          actor_type: "USER",
+          action: "booking.committed",
+          resource_type: "booking",
+          resource_id: booking.id,
+          metadata_redacted: {
+            bookingId: booking.id,
+            intentJti: claims.jti,
+            committedAt: committedAtStr,
+          },
+        })
+        .execute();
+
+      const response: ApproveAndCommitResponse = {
+        bookingId: booking.id as BookingId,
+        status: "COMMITTING",
+        next: {
+          type: "PAY_DEPOSIT",
+          paymentOrderUrl: `/v1/bookings/${booking.id}/payment-order`,
+        },
+      };
+
+      await trx
+        .insertInto("idempotency_records")
+        .values({
+          id: crypto.randomUUID(),
+          tenant_id: tenantId,
+          actor_id: actor.userId,
+          client_id: clientId,
+          operation: "approve_and_commit.v1",
+          idempotency_key: idempotencyKey,
+          request_hash: payloadHash,
+          state: "COMPLETED",
+          response_body: response,
+          expires_at: new Date(Date.now() + 24 * 60 * 60_000),
+        })
+        .execute();
+
+      return response;
     });
   }
 
@@ -773,7 +1252,34 @@ export class BookingService {
         throw new DomainError("Buyer confirmation has expired", "CONFIRMATION_EXPIRED", 410);
       }
 
+      // If confirmation was already consumed:
       if (confirmation.consumed_at) {
+        // If an agent calls without providing a confirmation token (agent pattern) and the booking was already committed:
+        if (!input.confirmation) {
+          const bookingCheck = await trx
+            .selectFrom("bookings")
+            .where("id", "=", claims.hold_id)
+            .where("tenant_id", "=", tenantId)
+            .select(["id", "status", "version", "created_at"])
+            .executeTakeFirst();
+
+          if (
+            bookingCheck &&
+            (bookingCheck.status === "COMMITTING" || bookingCheck.status === "CONFIRMED")
+          ) {
+            return {
+              bookingId: bookingCheck.id as BookingId,
+              status: bookingCheck.status as "COMMITTING" | "CONFIRMED",
+              version: bookingCheck.version,
+              committedAt: (bookingCheck.created_at
+                ? bookingCheck.created_at.toISOString()
+                : new Date().toISOString()) as Rfc3339Timestamp,
+              code: "ALREADY_COMMITTED",
+            };
+          }
+        }
+
+        // Reusing an already-consumed confirmation token with a different idempotency key is blocked
         throw new DomainError(
           "Buyer confirmation token has already been consumed (replay blocked)",
           "CONFIRMATION_REPLAY_BLOCKED",
@@ -790,6 +1296,30 @@ export class BookingService {
         .executeTakeFirst();
 
       if (existingIntentCommit) {
+        if (!input.confirmation) {
+          const bookingCheck = await trx
+            .selectFrom("bookings")
+            .where("id", "=", claims.hold_id)
+            .where("tenant_id", "=", tenantId)
+            .select(["id", "status", "version", "created_at"])
+            .executeTakeFirst();
+
+          if (
+            bookingCheck &&
+            (bookingCheck.status === "COMMITTING" || bookingCheck.status === "CONFIRMED")
+          ) {
+            return {
+              bookingId: bookingCheck.id as BookingId,
+              status: bookingCheck.status as "COMMITTING" | "CONFIRMED",
+              version: bookingCheck.version,
+              committedAt: (bookingCheck.created_at
+                ? bookingCheck.created_at.toISOString()
+                : new Date().toISOString()) as Rfc3339Timestamp,
+              code: "ALREADY_COMMITTED",
+            };
+          }
+        }
+
         throw new DomainError(
           "Signed intent has already been committed",
           "INTENT_REPLAY_DETECTED",

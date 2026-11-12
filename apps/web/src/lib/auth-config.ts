@@ -36,6 +36,41 @@ export function isJwtShaped(token?: string | null): boolean {
   return parts.length === 3 && parts.every((p) => p.length > 0);
 }
 
+/**
+ * Sanitizes returnTo paths to guarantee relative, same-origin redirection.
+ * Rejects absolute URLs, protocol-relative paths (//), javascript: or data: schemes,
+ * and backslash path traversal tricks.
+ */
+export function sanitizeReturnTo(returnTo?: string | null): string {
+  if (!returnTo || typeof returnTo !== "string") return "/";
+  const trimmed = returnTo.trim();
+
+  // Must begin with single forward slash
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.startsWith("/\\")) {
+    return "/";
+  }
+
+  // Reject control characters
+  for (let i = 0; i < trimmed.length; i++) {
+    const code = trimmed.charCodeAt(i);
+    if ((code >= 0 && code <= 31) || code === 127) {
+      return "/";
+    }
+  }
+
+  try {
+    // Construct dummy URL to test parsing and prevent origin escaping
+    const dummy = new URL(trimmed, "https://velvet.internal");
+    if (dummy.origin !== "https://velvet.internal") {
+      return "/";
+    }
+    // Return relative path including query and hash
+    return `${dummy.pathname}${dummy.search}${dummy.hash}`;
+  } catch {
+    return "/";
+  }
+}
+
 export function computeAuthDiagnostic(token?: string | null): AuthDiagnostic {
   const present = Boolean(token && typeof token === "string" && token.trim().length > 0);
   const jwt = isJwtShaped(token);
@@ -63,4 +98,101 @@ export function computeAuthDiagnostic(token?: string | null): AuthDiagnostic {
   }
 
   return diagnostic;
+}
+
+/**
+ * Builds the Auth0 authorization scope string.
+ * offline_access is strictly included only when an API audience is present,
+ * as Auth0 refresh token issuance requires an authorized API resource identifier.
+ */
+export function buildAuthScope(audience?: string | null): string {
+  const hasAudience = Boolean(audience && audience.trim().length > 0);
+  return hasAudience
+    ? "openid profile email offline_access booking:read booking:quote booking:prepare booking:commit booking:cancel"
+    : "openid profile email booking:read booking:quote booking:prepare booking:commit booking:cancel";
+}
+
+/**
+ * Detects stale authorization callback parameters (code, state, iss) in the URL.
+ * If present without an active Auth0 transaction in storage, cleans them from the URL
+ * via replaceState and returns true so Auth0Provider skips processing.
+ */
+export function cleanStaleAuthParams(clientId?: string): boolean {
+  if (typeof window === "undefined" || !window.location) {
+    return false;
+  }
+
+  try {
+    const url = new URL(window.location.href);
+    const hasCodeOrState =
+      url.searchParams.has("code") ||
+      url.searchParams.has("state") ||
+      url.searchParams.has("error") ||
+      url.searchParams.has("iss");
+
+    if (!hasCodeOrState) {
+      return false;
+    }
+
+    // Check if an active Auth0 transaction exists in storage
+    let hasActiveTransaction = false;
+    if (clientId) {
+      const txKey = `a0.spajs.txs.${clientId}`;
+      try {
+        if (typeof window.sessionStorage !== "undefined" && window.sessionStorage.getItem(txKey)) {
+          hasActiveTransaction = true;
+        }
+      } catch {
+        // sessionStorage unavailable
+      }
+
+      try {
+        if (
+          document.cookie &&
+          (document.cookie.includes(txKey) || document.cookie.includes("a0.spajs.txs"))
+        ) {
+          hasActiveTransaction = true;
+        }
+      } catch {
+        // document.cookie unavailable
+      }
+    }
+
+    if (!hasActiveTransaction) {
+      url.searchParams.delete("code");
+      url.searchParams.delete("state");
+      url.searchParams.delete("error");
+      url.searchParams.delete("error_description");
+      url.searchParams.delete("iss");
+      const cleanUrl = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState({}, document.title, cleanUrl);
+      return true;
+    }
+  } catch {
+    // Malformed URL or restricted environment
+  }
+
+  return false;
+}
+
+/**
+ * Clears Auth0 cached session keys from localStorage on logout.
+ */
+export function clearAuthCache(): void {
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
+        if (key && (key.startsWith("@@auth0spajs@@") || key.startsWith("auth0"))) {
+          keysToRemove.push(key);
+        }
+      }
+      for (const k of keysToRemove) {
+        window.localStorage.removeItem(k);
+      }
+    } catch {
+      // Ignore storage errors in restricted contexts
+    }
+  }
 }

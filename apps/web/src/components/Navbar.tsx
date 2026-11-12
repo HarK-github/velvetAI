@@ -1,8 +1,9 @@
 import { useState, useEffect, type FC } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { Link, useRouter } from "../router.js";
-import { apiClient, API_BASE_URL } from "../api-client.js";
-import { isAuth0Configured, computeAuthDiagnostic } from "../lib/auth-config.js";
+import { apiClient, ApiError } from "../api-client.js";
+import { isAuth0Configured, computeAuthDiagnostic, clearAuthCache } from "../lib/auth-config.js";
+import { useAskAI } from "../context/AskAIContext.js";
 
 const Auth0StateButton: FC = () => {
   const {
@@ -14,6 +15,7 @@ const Auth0StateButton: FC = () => {
     logout,
     getAccessTokenSilently,
   } = useAuth0();
+  const { clearConversation } = useAskAI();
   const [authStatus, setAuthStatus] = useState<string | null>(null);
   const [authDetail, setAuthDetail] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -61,20 +63,18 @@ const Auth0StateButton: FC = () => {
             computeAuthDiagnostic(token);
           }
           // First protected request to test backend Auth0 verification:
-          const res = await fetch(`${API_BASE_URL}/v1/services`, {
-            headers: token
-              ? {
-                  authorization: `Bearer ${token}`,
-                }
-              : {},
-          });
-          if (!res.ok) {
-            const body = await res.json().catch(() => null);
-            setAuthStatus(`HTTP ${res.status}`);
-            setAuthDetail(body?.detail || body?.code || null);
-          } else {
-            setAuthStatus(`HTTP ${res.status}`);
+          try {
+            await apiClient.getServices();
+            setAuthStatus("HTTP 200");
             setAuthDetail(null);
+          } catch (err: unknown) {
+            if (err instanceof ApiError) {
+              setAuthStatus(`HTTP ${err.status}`);
+              setAuthDetail(err.problem.detail || err.problem.code || null);
+            } else {
+              setAuthStatus("Token Error");
+              setAuthDetail(err instanceof Error ? err.message : String(err));
+            }
           }
         })
         .catch((err: unknown) => {
@@ -85,6 +85,36 @@ const Auth0StateButton: FC = () => {
     }
   }, [isAuthenticated, getAccessTokenSilently]);
 
+  const isStaleAuthError =
+    Boolean(error?.message) &&
+    (error!.message.toLowerCase().includes("invalid state") ||
+      error!.message.toLowerCase().includes("missing transaction") ||
+      error!.message.toLowerCase().includes("missing_transaction"));
+
+  useEffect(() => {
+    if (isStaleAuthError && typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        if (
+          url.searchParams.has("code") ||
+          url.searchParams.has("state") ||
+          url.searchParams.has("error") ||
+          url.searchParams.has("iss")
+        ) {
+          url.searchParams.delete("code");
+          url.searchParams.delete("state");
+          url.searchParams.delete("error");
+          url.searchParams.delete("error_description");
+          url.searchParams.delete("iss");
+          const cleanUrl = `${url.pathname}${url.search}${url.hash}`;
+          window.history.replaceState({}, document.title, cleanUrl);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, [isStaleAuthError]);
+
   const handleLogin = async () => {
     try {
       setLoginError(null);
@@ -92,7 +122,12 @@ const Auth0StateButton: FC = () => {
         (typeof import.meta.env !== "undefined"
           ? (import.meta.env.VITE_AUTH0_AUDIENCE as string)
           : "") || "https://velvetai.example/api";
+      const returnTo =
+        typeof window !== "undefined" ? window.location.pathname + window.location.search : "/";
       await loginWithRedirect({
+        appState: {
+          returnTo,
+        },
         authorizationParams: {
           audience,
         },
@@ -101,6 +136,8 @@ const Auth0StateButton: FC = () => {
       setLoginError(err instanceof Error ? err.message : "Authentication redirect failed");
     }
   };
+
+  const activeError = isStaleAuthError ? null : loginError || error?.message;
 
   if (isLoading) {
     if (loadingTimeout) {
@@ -121,8 +158,6 @@ const Auth0StateButton: FC = () => {
       </span>
     );
   }
-
-  const activeError = loginError || error?.message;
 
   if (activeError) {
     return (
@@ -212,8 +247,11 @@ const Auth0StateButton: FC = () => {
         <button
           type="button"
           onClick={() => {
+            clearAuthCache();
+            clearConversation({ resetAuth: true });
             apiClient.setAuthToken("");
             apiClient.setTokenProvider(async () => undefined);
+            apiClient.resetActionKeys();
             computeAuthDiagnostic(undefined);
             logout({ logoutParams: { returnTo: window.location.origin } });
           }}

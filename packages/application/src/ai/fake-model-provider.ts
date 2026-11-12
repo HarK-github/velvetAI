@@ -11,8 +11,18 @@ export interface ScriptedStep {
 
 export class FakeModelProvider implements ModelProviderPort {
   public readonly providerName = "fake";
+  public isVerified = false;
+  public recordedPrompts: any[] = [];
   private scriptedQueue: ScriptedStep[][] = [];
   private currentCallIndex = 0;
+
+  get lastPrompt(): any {
+    return this.recordedPrompts[this.recordedPrompts.length - 1];
+  }
+
+  markVerified(): void {
+    this.isVerified = true;
+  }
 
   constructor(initialScript?: ScriptedStep[][]) {
     if (initialScript) {
@@ -32,7 +42,9 @@ export class FakeModelProvider implements ModelProviderPort {
    */
   reset(): void {
     this.scriptedQueue = [];
+    this.recordedPrompts = [];
     this.currentCallIndex = 0;
+    this.isVerified = false;
   }
 
   getLanguageModel(modelId = "fake-model"): any {
@@ -41,6 +53,7 @@ export class FakeModelProvider implements ModelProviderPort {
       modelId,
       doStream: async (options) => {
         this.currentCallIndex++;
+        this.recordedPrompts.push(options.prompt);
 
         // 1. Check for explicit scripted step
         if (this.scriptedQueue.length > 0) {
@@ -110,16 +123,65 @@ export class FakeModelProvider implements ModelProviderPort {
 
         // 1. If tool results are present, produce helpful authoritative summaries
         if (hasToolResult) {
+          // If quote was generated and user wants to book, immediately prepare booking hold
+          if (
+            promptStr.includes("quote_booking") &&
+            !promptStr.includes("prepare_booking") &&
+            (lower.includes("book") ||
+              lower.includes("prepare") ||
+              lower.includes("hold") ||
+              lower.includes("6 pm") ||
+              lower.includes("6pm") ||
+              lower.includes("studio"))
+          ) {
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrow.setUTCHours(22, 0, 0, 0); // 6:00 PM EDT
+
+            return {
+              stream: simulateReadableStream({
+                chunks: [
+                  {
+                    type: "tool-call",
+                    toolCallId: `call-prep-${Date.now()}`,
+                    toolName: "prepare_booking_v1",
+                    input: JSON.stringify({
+                      serviceId: "01932b10-0001-7000-8000-000000000001",
+                      locationId: "01932b10-0002-7000-8000-000000000001",
+                      startsAt: tomorrow.toISOString(),
+                      timeZone: "America/New_York",
+                      customer: {
+                        email: "buyer@example.com",
+                        displayName: "Valued Customer",
+                      },
+                    }),
+                  },
+                  {
+                    type: "finish",
+                    finishReason: { unified: "tool-calls", raw: "tool_calls" } as any,
+                    usage: {
+                      inputTokens: { total: 10, noCache: 10 },
+                      outputTokens: { total: 10, text: 10 },
+                    } as any,
+                  },
+                ],
+              }),
+            };
+          }
+
           let responseText = "Here are the authoritative results for your request.";
-          if (promptStr.includes("list_services")) {
+          if (promptStr.includes("prepare_booking")) {
             responseText =
-              "Here are our available luxury grooming services. Please let me know which service and time window you would like to book.";
+              "I used salon time (EST); that's 3:30 AM your time. I prepared your booking hold; please review and approve on the approval page.";
+          } else if (promptStr.includes("quote_booking")) {
+            responseText =
+              "Here is your authoritative quote. Tap below to prepare your booking hold.";
           } else if (promptStr.includes("find_available_slots")) {
             responseText =
-              "Here are the authoritative available booking slots for your selected service. Would you like me to prepare a hold for one of these slots?";
-          } else if (promptStr.includes("prepare_booking")) {
+              "Available times for Executive Haircut tomorrow afternoon are shown below. Tap a time to hold it for 5 minutes.";
+          } else if (promptStr.includes("list_services")) {
             responseText =
-              "I have placed an authoritative 300-second hold on your selected slot. Please click 'Review Terms & Confirm Hold' above to review the policy terms and approve the reservation.";
+              "Here are our available luxury services. Please select a service to view availability.";
           }
 
           return {
@@ -201,7 +263,46 @@ export class FakeModelProvider implements ModelProviderPort {
           };
         }
 
-        // 4. Flow 3: Prepare booking hold inquiry (evaluated before generic slot inquiry)
+        // 4. Flow 2.5: Direct booking quote request -> initiates quote then prepare
+        if (
+          lower.includes("book") ||
+          lower.includes("quote") ||
+          lower.includes("studio") ||
+          lower.includes("6 pm") ||
+          lower.includes("6pm")
+        ) {
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          tomorrow.setUTCHours(22, 0, 0, 0); // 6:00 PM EDT
+
+          return {
+            stream: simulateReadableStream({
+              chunks: [
+                {
+                  type: "tool-call",
+                  toolCallId: `call-quote-${Date.now()}`,
+                  toolName: "quote_booking_v1",
+                  input: JSON.stringify({
+                    serviceId: "01932b10-0001-7000-8000-000000000001",
+                    locationId: "01932b10-0002-7000-8000-000000000001",
+                    startsAt: tomorrow.toISOString(),
+                    timeZone: "America/New_York",
+                  }),
+                },
+                {
+                  type: "finish",
+                  finishReason: { unified: "tool-calls", raw: "tool_calls" } as any,
+                  usage: {
+                    inputTokens: { total: 10, noCache: 10 },
+                    outputTokens: { total: 10, text: 10 },
+                  } as any,
+                },
+              ],
+            }),
+          };
+        }
+
+        // 5. Flow 3: Prepare booking hold inquiry (evaluated before generic slot inquiry)
         if (
           lower.includes("prepare") ||
           lower.includes("reserve") ||
@@ -252,6 +353,19 @@ export class FakeModelProvider implements ModelProviderPort {
           lower.includes("haircut") ||
           lower.includes("afternoon")
         ) {
+          const resolvedDay = lower.includes("tomorrow")
+            ? "tomorrow"
+            : lower.includes("today")
+              ? "today"
+              : undefined;
+          const resolvedDayPart = lower.includes("afternoon")
+            ? "afternoon"
+            : lower.includes("morning")
+              ? "morning"
+              : lower.includes("evening")
+                ? "evening"
+                : undefined;
+
           return {
             stream: simulateReadableStream({
               chunks: [
@@ -261,6 +375,8 @@ export class FakeModelProvider implements ModelProviderPort {
                   toolName: "find_available_slots_v1",
                   input: JSON.stringify({
                     serviceId: "01932b10-0001-7000-8000-000000000001",
+                    day: resolvedDay,
+                    dayPart: resolvedDayPart,
                   }),
                 },
                 {

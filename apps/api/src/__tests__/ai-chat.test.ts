@@ -11,6 +11,7 @@ import { Kysely } from "kysely";
 import crypto from "node:crypto";
 import { FakeModelProvider, GeminiModelProvider } from "@velvetai/application";
 import { Auth0AuthenticationAdapter, setAuthAdapter } from "../plugins/auth.js";
+import { resetAiVerifiedStatus } from "../routes/ai.js";
 
 describe("W5: In-Page Ask AI with Gemini & FakeModelProvider", () => {
   let app: FastifyInstance;
@@ -470,6 +471,105 @@ describe("W5: In-Page Ask AI with Gemini & FakeModelProvider", () => {
       expect(provider.providerName).toBe("gemini");
       const model = provider.getLanguageModel();
       expect(model).toBeDefined();
+    });
+
+    it("enforces prose discipline instruction in system prompt: at most two short sentences and must not re-list items", async () => {
+      const fake = new FakeModelProvider();
+      fake.queueScript([
+        {
+          type: "text",
+          text: "Here are your options.",
+        },
+      ]);
+
+      const testApp = buildApp({ modelProvider: fake, db: testDb });
+      await testApp.ready();
+
+      const res = await testApp.inject({
+        method: "POST",
+        url: "/v1/ai/chat",
+        headers: {
+          authorization: authHeader,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: [
+            {
+              role: "user",
+              parts: [{ type: "text", text: "What services do you offer?" }],
+            },
+          ],
+        }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(fake.recordedPrompts.length).toBeGreaterThan(0);
+      const promptString = JSON.stringify(fake.lastPrompt);
+      expect(promptString).toContain("at most two short sentences");
+      expect(promptString).toContain("must not re-list");
+
+      await testApp.close();
+    });
+
+    it("reports realProviderVerified true on GET /v1/ai/status after first successful response in server process", async () => {
+      resetAiVerifiedStatus();
+      const origProvider = process.env.AI_PROVIDER;
+      process.env.AI_PROVIDER = "gemini";
+
+      try {
+        const fake = new FakeModelProvider();
+        // Provider is initially unverified
+        expect(fake.isVerified).toBe(false);
+
+        fake.queueScript([
+          {
+            type: "text",
+            text: "Hello! Welcome to VelvetAI luxury grooming.",
+          },
+        ]);
+
+        const testApp = buildApp({ modelProvider: fake, db: testDb });
+        await testApp.ready();
+
+        // 1. Initially before chat response, status is not yet verified
+        const initialStatusRes = await testApp.inject({
+          method: "GET",
+          url: "/v1/ai/status",
+        });
+        expect(initialStatusRes.statusCode).toBe(200);
+        expect(initialStatusRes.json().realProviderVerified).toBe(false);
+
+        // 2. Execute successful chat response
+        const chatRes = await testApp.inject({
+          method: "POST",
+          url: "/v1/ai/chat",
+          headers: {
+            authorization: authHeader,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            messages: [
+              {
+                role: "user",
+                parts: [{ type: "text", text: "Hello" }],
+              },
+            ],
+          }),
+        });
+        expect(chatRes.statusCode).toBe(200);
+
+        // 3. Status now reports realProviderVerified true
+        const afterStatusRes = await testApp.inject({
+          method: "GET",
+          url: "/v1/ai/status",
+        });
+        expect(afterStatusRes.statusCode).toBe(200);
+        expect(afterStatusRes.json().realProviderVerified).toBe(true);
+
+        await testApp.close();
+      } finally {
+        process.env.AI_PROVIDER = origProvider;
+      }
     });
   });
 });

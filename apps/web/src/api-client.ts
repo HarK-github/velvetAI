@@ -4,9 +4,25 @@ import {
   AvailableSlot,
   BookingQuoteDTO,
   BookingHoldResponse,
+  ApproveAndCommitResponse,
+  ConfirmBookingApprovalResponse,
+  PrepareCancellationInput,
+  PrepareCancellationResponse,
+  CommitCancellationInput,
+  CommitCancellationResponse,
+  TriggerLiveAbuseRunResponse,
   ProblemDetails,
 } from "@velvetai/contracts";
 import { isAuth0Configured, isMockAuthEnabled, computeAuthDiagnostic } from "./lib/auth-config.js";
+
+export function generateIdempotencyKey(prefix: string): string {
+  const cleanPrefix = prefix.replace(/[^a-zA-Z0-9_-]/g, "") || "idemp";
+  const randomPart =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${cleanPrefix}-${randomPart}`;
+}
 
 export interface ApiClientConfig {
   baseUrl?: string;
@@ -14,23 +30,132 @@ export interface ApiClientConfig {
 }
 
 export class ApiError extends Error {
+  public readonly code?: string;
+
   constructor(
     public readonly status: number,
     public readonly problem: ProblemDetails,
   ) {
     super(problem.detail || problem.title);
     this.name = "ApiError";
+    this.code = problem.code;
   }
 }
 
-export const API_BASE_URL =
-  typeof import.meta.env !== "undefined" && import.meta.env.VITE_API_BASE_URL
-    ? (import.meta.env.VITE_API_BASE_URL as string)
-    : "http://localhost:3000";
+function getNodeProcess(): { env?: Record<string, string | undefined> } | undefined {
+  if (typeof globalThis !== "undefined" && "process" in globalThis) {
+    return (globalThis as Record<string, any>).process;
+  }
+  return undefined;
+}
+
+export function isApiConfigured(): boolean {
+  const env = typeof import.meta !== "undefined" ? import.meta.env : undefined;
+  const nodeEnv = getNodeProcess()?.env;
+  const envUrl = (env?.VITE_API_BASE_URL as string | undefined) ?? nodeEnv?.VITE_API_BASE_URL;
+
+  if (envUrl && envUrl.trim().length > 0) {
+    return true;
+  }
+
+  const isProd =
+    (env && Boolean(env.PROD) && !env.DEV) ||
+    nodeEnv?.NODE_ENV === "production" ||
+    nodeEnv?.PROD === "true";
+
+  if (isProd) {
+    return false;
+  }
+
+  return true;
+}
+
+export function resolveApiBaseUrl(): string {
+  const env = typeof import.meta !== "undefined" ? import.meta.env : undefined;
+  const nodeEnv = getNodeProcess()?.env;
+  const envUrl = (env?.VITE_API_BASE_URL as string | undefined) ?? nodeEnv?.VITE_API_BASE_URL;
+
+  if (envUrl && envUrl.trim().length > 0) {
+    return envUrl.trim();
+  }
+
+  const isProd =
+    (env && Boolean(env.PROD) && !env.DEV) ||
+    nodeEnv?.NODE_ENV === "production" ||
+    nodeEnv?.PROD === "true";
+
+  if (isProd) {
+    console.error(
+      "API not configured: VITE_API_BASE_URL environment variable is missing in production build.",
+    );
+    return "";
+  }
+
+  return "http://localhost:3000";
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
+
+const IDEMPOTENCY_STORAGE_PREFIX = "velvetai_idemp_v1:";
+
+function readStoredActionKey(actionScope: string): string | undefined {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return undefined;
+  }
+  try {
+    const val = window.sessionStorage.getItem(`${IDEMPOTENCY_STORAGE_PREFIX}${actionScope}`);
+    return val && val.trim().length > 0 ? val : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStoredActionKey(actionScope: string, key: string): void {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(`${IDEMPOTENCY_STORAGE_PREFIX}${actionScope}`, key);
+  } catch {
+    // Ignore storage quota or restricted storage errors
+  }
+}
+
+function removeStoredActionKey(actionScope: string): void {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.removeItem(`${IDEMPOTENCY_STORAGE_PREFIX}${actionScope}`);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function clearAllStoredActionKeys(): void {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return;
+  }
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const k = window.sessionStorage.key(i);
+      if (k && k.startsWith(IDEMPOTENCY_STORAGE_PREFIX)) {
+        toRemove.push(k);
+      }
+    }
+    for (const k of toRemove) {
+      window.sessionStorage.removeItem(k);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 export class VelvetApiClient {
   private readonly baseUrl: string;
   private authToken?: string;
+  private readonly actionIdempotencyKeys = new Map<string, string>();
 
   constructor(config?: ApiClientConfig) {
     this.baseUrl = config?.baseUrl ?? API_BASE_URL;
@@ -56,10 +181,65 @@ export class VelvetApiClient {
     this.tokenProvider = provider;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    let token = this.authToken;
+  getOrCreateActionKey(actionScope: string, prefix: string): string {
+    const existing = this.actionIdempotencyKeys.get(actionScope);
+    if (existing) {
+      return existing;
+    }
+    const stored = readStoredActionKey(actionScope);
+    if (stored) {
+      this.actionIdempotencyKeys.set(actionScope, stored);
+      return stored;
+    }
+    const created = generateIdempotencyKey(prefix);
+    this.actionIdempotencyKeys.set(actionScope, created);
+    writeStoredActionKey(actionScope, created);
+    return created;
+  }
 
-    if (this.tokenProvider) {
+  clearActionKey(actionScope: string): void {
+    this.actionIdempotencyKeys.delete(actionScope);
+    removeStoredActionKey(actionScope);
+  }
+
+  resetActionKeys(): void {
+    this.actionIdempotencyKeys.clear();
+    clearAllStoredActionKeys();
+  }
+
+  private async withRetryIdempotencyKey<T>(
+    actionScope: string,
+    prefix: string,
+    explicitKey: string | undefined,
+    fn: (idempotencyKey: string) => Promise<T>,
+    options?: { keepKeyOnSuccess?: boolean },
+  ): Promise<T> {
+    const hasExplicit = Boolean(explicitKey && explicitKey.trim().length > 0);
+    const key = hasExplicit ? explicitKey!.trim() : this.getOrCreateActionKey(actionScope, prefix);
+    const result = await fn(key);
+    if (!hasExplicit && !options?.keepKeyOnSuccess) {
+      this.clearActionKey(actionScope);
+    }
+    return result;
+  }
+
+  private ensureBaseUrl(): void {
+    if (!this.baseUrl) {
+      console.error("API request blocked: API_BASE_URL is not configured.");
+      throw new ApiError(500, {
+        type: "https://api.velvetai.example/problems/unconfigured",
+        title: "API Not Configured",
+        status: 500,
+        code: "api_not_configured",
+        detail: "API not configured: VITE_API_BASE_URL must be set in production.",
+      });
+    }
+  }
+
+  private async resolveAuthToken(authTokenOverride?: string): Promise<string | undefined> {
+    let token = authTokenOverride?.trim() ? authTokenOverride.trim() : this.authToken;
+
+    if (!authTokenOverride?.trim() && this.tokenProvider) {
       try {
         const acquired = await this.tokenProvider();
         if (acquired) {
@@ -80,12 +260,14 @@ export class VelvetApiClient {
       }
     }
 
-    const headers = new Headers(options.headers);
-    headers.set("content-type", "application/json");
+    return token;
+  }
 
+  private resolveAuthorizationHeader(token: string | undefined): string | undefined {
     if (token) {
-      headers.set("authorization", `Bearer ${token}`);
-    } else if (isAuth0Configured()) {
+      return `Bearer ${token}`;
+    }
+    if (isAuth0Configured()) {
       // Never fall back to dev token when Auth0 is configured
       throw new ApiError(401, {
         type: "https://api.velvetai.example/problems/unauthorized",
@@ -94,12 +276,38 @@ export class VelvetApiClient {
         code: "unauthorized",
         detail: "Authentication required. Please sign in with Auth0.",
       });
-    } else if (isMockAuthEnabled()) {
+    }
+    if (isMockAuthEnabled()) {
       // Explicit offline test mode only
-      headers.set(
-        "authorization",
-        "Bearer test-token:01932b10-0000-7000-8000-000000000002:01932b10-0000-7000-8000-000000000001:BUYER:1",
-      );
+      return "Bearer test-token:01932b10-0000-7000-8000-000000000002:01932b10-0000-7000-8000-000000000001:BUYER:1";
+    }
+    return undefined;
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    authTokenOverride?: string,
+  ): Promise<T> {
+    this.ensureBaseUrl();
+
+    const token = await this.resolveAuthToken(authTokenOverride);
+    const authorization = this.resolveAuthorizationHeader(token);
+
+    const method = (options.method || "GET").toUpperCase();
+    const headers = new Headers(options.headers);
+    headers.set("content-type", "application/json");
+
+    // Invariant: EVERY mutating request must carry a non-empty Idempotency-Key
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+      const existingKey = headers.get("idempotency-key");
+      if (!existingKey || existingKey.trim().length === 0) {
+        headers.set("Idempotency-Key", generateIdempotencyKey("req"));
+      }
+    }
+
+    if (authorization) {
+      headers.set("authorization", authorization);
     }
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
@@ -137,35 +345,178 @@ export class VelvetApiClient {
     );
   }
 
-  async createBookingQuote(params: {
-    serviceId: string;
-    locationId: string;
-    startsAt: string;
-    timeZone: string;
-  }): Promise<BookingQuoteDTO> {
-    return this.request<BookingQuoteDTO>("/v1/booking-quotes", {
-      method: "POST",
-      body: JSON.stringify(params),
-    });
+  async createBookingQuote(
+    params: {
+      serviceId: string;
+      locationId?: string;
+      startsAt: string;
+      timeZone: string;
+    },
+    idempotencyKey?: string,
+  ): Promise<BookingQuoteDTO> {
+    const locationId = params.locationId || "01932b10-0000-7000-8000-000000000001";
+    const actionScope = `quote:${params.serviceId}:${locationId}:${params.startsAt}:${params.timeZone}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "quote",
+      idempotencyKey,
+      (key) =>
+        this.request<BookingQuoteDTO>("/v1/booking-quotes", {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify({
+            locationId,
+            ...params,
+          }),
+        }),
+      { keepKeyOnSuccess: false },
+    );
+  }
+
+  async prepareBooking(
+    params: {
+      serviceId: string;
+      locationId: string;
+      startsAt: string;
+      timeZone: string;
+      customer: { email: string; displayName?: string };
+      note?: string;
+    },
+    clientId: string = "ask-ai",
+    idempotencyKey?: string,
+  ): Promise<any> {
+    const actionScope = `prepare:${params.serviceId}:${params.locationId}:${params.startsAt}:${params.customer.email}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "prep",
+      idempotencyKey,
+      (key) =>
+        this.request<any>("/v1/bookings/prepare", {
+          method: "POST",
+          headers: {
+            "x-client-id": clientId,
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify(params),
+        }),
+      { keepKeyOnSuccess: false },
+    );
   }
 
   async createBookingHold(
     params: {
-      quoteId: string;
+      quoteId?: string;
+      serviceId?: string;
+      locationId?: string;
+      startsAt?: string;
+      timeZone?: string;
       customer: { email: string; displayName?: string };
       note?: string;
     },
     idempotencyKey?: string,
   ): Promise<BookingHoldResponse> {
-    const headers: Record<string, string> = {};
-    if (idempotencyKey) {
-      headers["idempotency-key"] = idempotencyKey;
-    }
-    return this.request<BookingHoldResponse>("/v1/booking-holds", {
-      method: "POST",
-      headers,
-      body: JSON.stringify(params),
-    });
+    const actionScope = `hold:${params.quoteId || params.serviceId || "slot"}:${params.startsAt || ""}:${params.customer.email}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "hold",
+      idempotencyKey,
+      (key) =>
+        this.request<BookingHoldResponse>("/v1/booking-holds", {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify(params),
+        }),
+      { keepKeyOnSuccess: false },
+    );
+  }
+
+  async evaluateRisk(
+    params: { tier: string; leadDays?: number; customerHistoryScore?: number },
+    idempotencyKey?: string,
+  ): Promise<{
+    noShowProbability: string;
+    depositTierPercent: string;
+    policyRoute: string;
+    rationale: string;
+  }> {
+    const actionScope = `risk:${params.tier}:${params.leadDays ?? ""}:${params.customerHistoryScore ?? ""}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "risk",
+      idempotencyKey,
+      (key) =>
+        this.request<{
+          noShowProbability: string;
+          depositTierPercent: string;
+          policyRoute: string;
+          rationale: string;
+        }>("/v1/risk/evaluate", {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify(params),
+        }),
+      { keepKeyOnSuccess: false },
+    );
+  }
+
+  async approveAndCommit(
+    locator: string,
+    idempotencyKey?: string,
+    authTokenOverride?: string,
+  ): Promise<ApproveAndCommitResponse> {
+    const cleanLocator = locator.replace(/^.*\/v1\/booking-approvals\//, "").trim();
+    const actionScope = `approve-and-commit:${cleanLocator}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "approve",
+      idempotencyKey,
+      (key) =>
+        this.request<ApproveAndCommitResponse>(
+          `/v1/booking-approvals/${cleanLocator}/approve-and-commit`,
+          {
+            method: "POST",
+            headers: {
+              "Idempotency-Key": key,
+            },
+            body: JSON.stringify({}),
+          },
+          authTokenOverride,
+        ),
+      { keepKeyOnSuccess: true },
+    );
+  }
+
+  async confirmApproval(
+    locator: string,
+    idempotencyKey?: string,
+    authTokenOverride?: string,
+  ): Promise<ConfirmBookingApprovalResponse> {
+    const cleanLocator = locator.replace(/^.*\/v1\/booking-approvals\//, "").trim();
+    const actionScope = `confirm-approval:${cleanLocator}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "confirm",
+      idempotencyKey,
+      (key) =>
+        this.request<ConfirmBookingApprovalResponse>(
+          `/v1/booking-approvals/${cleanLocator}/confirm`,
+          {
+            method: "POST",
+            headers: {
+              "Idempotency-Key": key,
+            },
+            body: JSON.stringify({}),
+          },
+          authTokenOverride,
+        ),
+      { keepKeyOnSuccess: true },
+    );
   }
 
   async createPaymentOrder(
@@ -178,15 +529,21 @@ export class VelvetApiClient {
     status: "REQUIRES_PAYER_ACTION";
     paymentExpiresAt: string;
   }> {
-    const headers: Record<string, string> = {};
-    if (idempotencyKey) {
-      headers["idempotency-key"] = idempotencyKey;
-    }
-    return this.request("/v1/bookings/" + bookingId + "/payment-order", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({}),
-    });
+    const actionScope = `payment-order:${bookingId}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "pay-order",
+      idempotencyKey,
+      (key) =>
+        this.request("/v1/bookings/" + bookingId + "/payment-order", {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify({}),
+        }),
+      { keepKeyOnSuccess: true },
+    );
   }
 
   async capturePayment(
@@ -194,22 +551,75 @@ export class VelvetApiClient {
     idempotencyKey?: string,
   ): Promise<{
     bookingId: string;
-    bookingStatus: "CONFIRMED" | "CAPTURE_UNCERTAIN" | "CANCELLED";
+    bookingStatus: "CONFIRMED" | "CAPTURE_UNCERTAIN" | "PAYMENT_FAILED" | "CANCELLED";
     paymentStatus: "CAPTURED" | "UNCERTAIN" | "FAILED";
     providerCaptureId?: string;
     operationId?: string;
     statusUrl?: string;
     version?: number;
   }> {
-    const headers: Record<string, string> = {};
-    if (idempotencyKey) {
-      headers["idempotency-key"] = idempotencyKey;
-    }
-    return this.request("/v1/payments/" + paymentIntentId + "/capture", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({}),
-    });
+    const actionScope = `capture:${paymentIntentId}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "capture",
+      idempotencyKey,
+      (key) =>
+        this.request("/v1/payments/" + paymentIntentId + "/capture", {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify({}),
+        }),
+      { keepKeyOnSuccess: true },
+    );
+  }
+
+  async prepareCancellation(
+    bookingId: string,
+    params: PrepareCancellationInput = {},
+    idempotencyKey?: string,
+  ): Promise<PrepareCancellationResponse> {
+    const actionScope = `prepare-cancel:${bookingId}:${params.reason || ""}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "cancel-prep",
+      idempotencyKey,
+      (key) =>
+        this.request<PrepareCancellationResponse>(
+          `/v1/bookings/${bookingId}/prepare-cancellation`,
+          {
+            method: "POST",
+            headers: {
+              "Idempotency-Key": key,
+            },
+            body: JSON.stringify(params),
+          },
+        ),
+      { keepKeyOnSuccess: false },
+    );
+  }
+
+  async cancelBooking(
+    bookingId: string,
+    params: CommitCancellationInput,
+    idempotencyKey?: string,
+  ): Promise<CommitCancellationResponse> {
+    const actionScope = `cancel:${bookingId}:${params.cancellationConfirmationToken}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "cancel",
+      idempotencyKey,
+      (key) =>
+        this.request<CommitCancellationResponse>(`/v1/bookings/${bookingId}/cancel`, {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify(params),
+        }),
+      { keepKeyOnSuccess: true },
+    );
   }
 
   async getOperation(operationId: string): Promise<{
@@ -222,31 +632,6 @@ export class VelvetApiClient {
     return this.request(`/v1/operations/${operationId}`);
   }
 
-  async prepareBooking(params: {
-    serviceId: string;
-    locationId: string;
-    startsAt: string;
-    timeZone: string;
-    customer: { email: string; displayName?: string };
-    note?: string;
-  }): Promise<{
-    bookingId: string;
-    status: "HELD";
-    holdExpiresAt: string;
-    version: number;
-    intent: string;
-    approvalLocator: string;
-    terms: any;
-  }> {
-    return this.request("/v1/bookings/prepare", {
-      method: "POST",
-      headers: {
-        "idempotency-key": `prep-${Date.now()}-${Math.random()}`,
-      },
-      body: JSON.stringify(params),
-    });
-  }
-
   async commitBooking(params: {
     intent: string;
     confirmation: string;
@@ -256,20 +641,99 @@ export class VelvetApiClient {
     status: string;
     version: number;
   }> {
-    return this.request("/v1/bookings/commit", {
-      method: "POST",
-      headers: {
-        "idempotency-key": params.idempotencyKey || `commit-${Date.now()}-${Math.random()}`,
-      },
-      body: JSON.stringify({
-        intent: params.intent,
-        confirmation: params.confirmation,
-      }),
-    });
+    const actionScope = `commit:${params.intent}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "commit",
+      params.idempotencyKey,
+      (key) =>
+        this.request("/v1/bookings/commit", {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify({
+            intent: params.intent,
+            confirmation: params.confirmation,
+          }),
+        }),
+      { keepKeyOnSuccess: true },
+    );
   }
 
   async getBooking(bookingId: string): Promise<any> {
     return this.request(`/v1/bookings/${bookingId}`);
+  }
+
+  /**
+   * Triggers a live Judge Abuse Lab verification run using a reusable per-action Idempotency-Key.
+   */
+  async triggerLiveAbuseRun(
+    authTokenOverride?: string,
+    idempotencyKey?: string,
+  ): Promise<
+    | { kind: "started"; data: TriggerLiveAbuseRunResponse }
+    | { kind: "rate_limited"; detail: string }
+    | { kind: "unauthorized" }
+  > {
+    this.ensureBaseUrl();
+    const token = await this.resolveAuthToken(authTokenOverride);
+    const authorization = this.resolveAuthorizationHeader(token);
+
+    return this.withRetryIdempotencyKey(
+      "live-abuse:run",
+      "live-abuse",
+      idempotencyKey,
+      async (key) => {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        };
+        if (authorization) {
+          headers.Authorization = authorization;
+        }
+
+        const res = await fetch(`${this.baseUrl}/v1/judge/abuse-lab/runs`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({}),
+        });
+
+        if (res.status === 429) {
+          const retryAfter = res.headers?.get?.("retry-after") || "30";
+          const body = await res.json().catch(() => null);
+          return {
+            kind: "rate_limited" as const,
+            detail:
+              body?.detail ||
+              `Live checks are rate-limited to 1 run per 30 seconds. Retry after ${retryAfter}s.`,
+          };
+        }
+
+        if (res.status === 401 || res.status === 403) {
+          return { kind: "unauthorized" as const };
+        }
+
+        if (!res.ok) {
+          let problem: ProblemDetails;
+          try {
+            problem = await res.json();
+          } catch {
+            problem = {
+              type: "https://api.velvetai.example/problems/unknown",
+              title: res.statusText || `Failed with HTTP ${res.status}`,
+              status: res.status,
+              code: "unknown_error",
+            };
+          }
+          throw new ApiError(res.status, problem);
+        }
+
+        const data = (await res.json()) as TriggerLiveAbuseRunResponse;
+        return { kind: "started" as const, data };
+      },
+      { keepKeyOnSuccess: false },
+    );
   }
 }
 

@@ -121,6 +121,38 @@ describe("Test Database Isolation Guard", () => {
     );
   });
 
+  it("resolves per-package test database when TEST_PACKAGE_NAME is set without argument", () => {
+    const origPkg = process.env.TEST_PACKAGE_NAME;
+    const origSuffix = process.env.TEST_DB_SUFFIX;
+    const origTestDb = process.env.TEST_DATABASE_URL;
+
+    try {
+      process.env.TEST_DATABASE_URL = "postgresql://localhost:5432/velvetai_test";
+      delete process.env.TEST_DB_SUFFIX;
+
+      process.env.TEST_PACKAGE_NAME = "worker";
+      expect(getTestDatabaseUrl()).toBe("postgresql://localhost:5432/velvetai_test_worker");
+
+      process.env.TEST_PACKAGE_NAME = "api";
+      expect(getTestDatabaseUrl()).toBe("postgresql://localhost:5432/velvetai_test_api");
+
+      process.env.TEST_PACKAGE_NAME = "application";
+      expect(getTestDatabaseUrl()).toBe("postgresql://localhost:5432/velvetai_test_application");
+
+      process.env.TEST_PACKAGE_NAME = "db";
+      expect(getTestDatabaseUrl()).toBe("postgresql://localhost:5432/velvetai_test_db");
+
+      // With worktree suffix
+      process.env.TEST_DB_SUFFIX = "_b";
+      process.env.TEST_PACKAGE_NAME = "worker";
+      expect(getTestDatabaseUrl()).toBe("postgresql://localhost:5432/velvetai_test_worker_b");
+    } finally {
+      process.env.TEST_PACKAGE_NAME = origPkg;
+      process.env.TEST_DB_SUFFIX = origSuffix;
+      process.env.TEST_DATABASE_URL = origTestDb;
+    }
+  });
+
   it("getTestDatabaseUrl supports TEST_DB_SUFFIX for parallel worktrees", () => {
     const origSuffix = process.env.TEST_DB_SUFFIX;
     const origTestDb = process.env.TEST_DATABASE_URL;
@@ -235,6 +267,27 @@ describe("Test Database Isolation Guard", () => {
         delete process.env.TEST_DB_SUFFIX;
       }
       process.env.TEST_DATABASE_URL = origTestDb;
+      if (origPkg !== undefined) {
+        process.env.TEST_PACKAGE_NAME = origPkg;
+      } else {
+        delete process.env.TEST_PACKAGE_NAME;
+      }
+    }
+  });
+
+  it("in NODE_ENV=test, getTestDatabaseUrl() throws when TEST_PACKAGE_NAME is missing", () => {
+    const origPkg = process.env.TEST_PACKAGE_NAME;
+    const origNodeEnv = process.env.NODE_ENV;
+
+    try {
+      process.env.NODE_ENV = "test";
+      delete process.env.TEST_PACKAGE_NAME;
+
+      expect(() => getTestDatabaseUrl()).toThrowError(
+        /TEST CONFIGURATION ERROR: TEST_PACKAGE_NAME is missing in NODE_ENV=test/,
+      );
+    } finally {
+      process.env.NODE_ENV = origNodeEnv;
       if (origPkg !== undefined) {
         process.env.TEST_PACKAGE_NAME = origPkg;
       } else {

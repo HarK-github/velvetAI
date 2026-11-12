@@ -59,6 +59,18 @@ export const bookingQuoteSchema = z.object({
   expiresAt: rfc3339TimestampSchema,
   serviceVersion: z.number().int().positive(),
   scheduleRevision: z.number().int().nonnegative(),
+  serviceName: z.string().optional(),
+  startsAt: rfc3339TimestampSchema.optional(),
+  endsAt: rfc3339TimestampSchema.optional(),
+  display: z
+    .object({
+      localDate: z.string(),
+      localStart: z.string(),
+      localEnd: z.string(),
+      timeZone: z.string(),
+      timeZoneLabel: z.string(),
+    })
+    .optional(),
   total: moneySchema,
   deposit: moneySchema,
   risk: z
@@ -165,6 +177,7 @@ export const prepareBookingResponseSchema = z.object({
   version: z.number().int().positive(),
   intent: z.string(),
   approvalLocator: z.string(),
+  approvalUrl: z.string().optional(),
   interactionToken: z.string(),
   requiresHumanConfirmation: z.literal(true).default(true),
 });
@@ -175,16 +188,35 @@ export const bookingApprovalDetailsSchema = z.object({
   tenantId: tenantIdSchema,
   serviceName: z.string(),
   serviceVersion: z.number().int().positive(),
+  durationMinutes: z.number().int().positive().optional(),
+  resourceName: z.string().optional(),
   startsAt: rfc3339TimestampSchema,
   endsAt: rfc3339TimestampSchema,
   timeZone: ianaTimeZoneSchema,
   allInPriceMinor: z.string(),
   depositMinor: z.string(),
+  formattedPrice: z.string().optional(),
+  formattedDeposit: z.string().optional(),
   currency: currencyCodeSchema,
   cancellationSummary: z.string(),
   requestingAgent: z.string(),
+  preparedBySurface: z.string().optional(),
+  whyDeposit: z.string().optional(),
   expiresAt: rfc3339TimestampSchema,
   status: z.enum(["PENDING", "APPROVED", "CONSUMED"]).optional(),
+  bookingStatus: z.string().optional(),
+  paymentStatus: z.string().optional(),
+  paymentExpiresAt: rfc3339TimestampSchema.optional(),
+  operationId: z.string().optional(),
+  display: z
+    .object({
+      localDate: z.string(),
+      localStart: z.string(),
+      localEnd: z.string(),
+      timeZone: z.string(),
+      timeZoneLabel: z.string(),
+    })
+    .optional(),
 });
 export type BookingApprovalDetails = z.infer<typeof bookingApprovalDetailsSchema>;
 
@@ -193,6 +225,16 @@ export const confirmBookingApprovalResponseSchema = z.object({
   expiresAt: rfc3339TimestampSchema,
 });
 export type ConfirmBookingApprovalResponse = z.infer<typeof confirmBookingApprovalResponseSchema>;
+
+export const approveAndCommitResponseSchema = z.object({
+  bookingId: bookingIdSchema,
+  status: z.enum(["COMMITTING", "CONFIRMED"]),
+  next: z.object({
+    type: z.literal("PAY_DEPOSIT"),
+    paymentOrderUrl: z.string(),
+  }),
+});
+export type ApproveAndCommitResponse = z.infer<typeof approveAndCommitResponseSchema>;
 
 export const commitBookingInputSchema = z
   .object({
@@ -205,9 +247,10 @@ export type CommitBookingInput = z.infer<typeof commitBookingInputSchema>;
 
 export const commitBookingResponseSchema = z.object({
   bookingId: bookingIdSchema,
-  status: z.literal("COMMITTING"),
+  status: z.enum(["COMMITTING", "CONFIRMED"]),
   version: z.number().int().positive(),
   committedAt: rfc3339TimestampSchema,
+  code: z.string().optional(),
 });
 export type CommitBookingResponse = z.infer<typeof commitBookingResponseSchema>;
 

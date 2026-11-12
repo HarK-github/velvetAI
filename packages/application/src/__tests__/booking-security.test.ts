@@ -1145,5 +1145,33 @@ describe("Booking Security & JWS Cryptographic Tests (Requirements 8, 9, 11, 12)
       expect(insertIdx).toBeGreaterThan(lockIdx);
       expect(executedSql[lockIdx]?.parameters).toEqual([tenantA, resourceA]);
     });
+
+    it("P0-2: prepareBooking enforces a 300-second (5-minute) slot hold TTL", async () => {
+      const fixedNow = new Date("2026-12-20T14:00:00.000Z");
+      const timedBookingService = new BookingService(db, undefined, { now: () => fixedNow });
+      const prepared = await timedBookingService.prepareBooking(
+        tenantA,
+        {
+          userId: userA,
+          subject: subjectA,
+          tenantId: tenantA,
+          roles: ["OWNER"],
+        },
+        "client-ttl-check",
+        {
+          serviceId: serviceA,
+          locationId: locationA,
+          startsAt: "2026-12-30T15:00:00.000Z" as Rfc3339Timestamp,
+          timeZone: "America/New_York" as IanaTimeZone,
+          customer: {
+            displayName: "TTL Buyer",
+            email: "ttl.buyer@example.com",
+          },
+        },
+      );
+
+      expect(prepared.status).toBe("HELD");
+      expect(prepared.holdExpiresAt).toBe(new Date(fixedNow.getTime() + 300_000).toISOString());
+    });
   });
 });
