@@ -271,6 +271,51 @@ export const paymentsRoutes: FastifyPluginAsync = async (app) => {
               captureStatus = ord.captures[0]!.status;
             } else if (ord.status === "COMPLETED") {
               captureStatus = "COMPLETED";
+            } else if (ord.status === "APPROVED") {
+              const opTenantId = op.tenant_id as TenantId;
+              const intent = op.booking_id
+                ? await withTenantTransaction(db, opTenantId, async (trx) => {
+                    return await trx
+                      .selectFrom("payment_intents")
+                      .where("tenant_id", "=", opTenantId)
+                      .where("booking_id", "=", op!.booking_id!)
+                      .orderBy("created_at", "desc")
+                      .selectAll()
+                      .executeTakeFirst();
+                  })
+                : null;
+
+              if (intent) {
+                try {
+                  const capResult = await paypalAdapter.capturePayment({
+                    tenantId: opTenantId,
+                    paymentIntentId: intent.id as PaymentIntentId,
+                    providerOrderId: op.provider_order_id,
+                    amount: {
+                      currency: intent.currency as any,
+                      valueMinor: intent.amount_minor as any,
+                    },
+                    requestId: op.paypal_request_id || op.id,
+                  });
+                  if (capResult.status === "CAPTURED") {
+                    captureStatus = "COMPLETED";
+                    await withTenantTransaction(db, opTenantId, async (trx) => {
+                      await trx
+                        .updateTable("provider_operations")
+                        .set({ provider_capture_id: capResult.providerCaptureId })
+                        .where("tenant_id", "=", opTenantId)
+                        .where("id", "=", op!.id)
+                        .execute();
+                    });
+                  } else if (capResult.status === "FAILED") {
+                    captureStatus = "FAILED";
+                  }
+                } catch (_capErr) {
+                  // Capture attempt failed or uncertain, retain for next cycle
+                }
+              }
+            } else if (ord.status === "VOIDED") {
+              captureStatus = "FAILED";
             }
           }
 

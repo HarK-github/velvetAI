@@ -1,6 +1,7 @@
 import { Kysely, Selectable } from "kysely";
 import { Database, withTenantTransaction, ProviderOperationTable } from "@velvetai/db";
 import { PaymentPort } from "@velvetai/application";
+import { TenantId, PaymentIntentId } from "@velvetai/contracts";
 import { createLogger } from "@velvetai/observability";
 
 export interface ReconciliationResult {
@@ -78,6 +79,51 @@ export class ReconciliationProcessor {
               captureStatus = ord.captures[0]!.status;
             } else if (ord.status === "COMPLETED") {
               captureStatus = "COMPLETED";
+            } else if (ord.status === "APPROVED") {
+              // Buyer approved order in PayPal; capture it now
+              const intent = op.booking_id
+                ? await withTenantTransaction(this.db, op.tenant_id, async (trx) => {
+                    return await trx
+                      .selectFrom("payment_intents")
+                      .where("tenant_id", "=", op.tenant_id)
+                      .where("booking_id", "=", op.booking_id!)
+                      .orderBy("created_at", "desc")
+                      .selectAll()
+                      .executeTakeFirst();
+                  })
+                : null;
+
+              if (intent) {
+                try {
+                  const capResult = await this.paymentPort.capturePayment({
+                    tenantId: op.tenant_id as TenantId,
+                    paymentIntentId: intent.id as PaymentIntentId,
+                    providerOrderId: op.provider_order_id,
+                    amount: {
+                      currency: intent.currency as any,
+                      valueMinor: intent.amount_minor as any,
+                    },
+                    requestId: op.paypal_request_id || op.id,
+                  });
+                  if (capResult.status === "CAPTURED") {
+                    captureStatus = "COMPLETED";
+                    await withTenantTransaction(this.db, op.tenant_id, async (trx) => {
+                      await trx
+                        .updateTable("provider_operations")
+                        .set({ provider_capture_id: capResult.providerCaptureId })
+                        .where("tenant_id", "=", op.tenant_id)
+                        .where("id", "=", op.id)
+                        .execute();
+                    });
+                  } else if (capResult.status === "FAILED") {
+                    captureStatus = "FAILED";
+                  }
+                } catch (_capErr) {
+                  // Capture attempt failed or uncertain, retain for next cycle
+                }
+              }
+            } else if (ord.status === "VOIDED") {
+              captureStatus = "FAILED";
             }
           }
 
