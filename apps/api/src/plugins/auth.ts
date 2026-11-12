@@ -590,8 +590,7 @@ export function registerAuth(app: FastifyInstance): void {
       request.url.startsWith("/.well-known/oauth-protected-resource") ||
       request.url === "/v1/ai/status" ||
       request.url === "/mcp" ||
-      request.url.startsWith("/mcp?") ||
-      (request.method === "GET" && request.url.startsWith("/v1/booking-approvals/"))
+      request.url.startsWith("/mcp?")
     ) {
       return;
     }
@@ -611,7 +610,8 @@ export function registerAuth(app: FastifyInstance): void {
         request.url === "/v1/availability" ||
         request.url.startsWith("/v1/availability?") ||
         request.url === "/v1/merchant/schedule" ||
-        request.url.startsWith("/v1/merchant/schedule?"));
+        request.url.startsWith("/v1/merchant/schedule?") ||
+        request.url.startsWith("/v1/booking-approvals/"));
 
     const authHeader = request.headers.authorization;
     let token: string | undefined;

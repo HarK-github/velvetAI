@@ -498,15 +498,63 @@ export class BookingService {
   }
 
   /**
+   * Discovers the authoritative tenant for an unguessable interaction locator.
+   * Checks the provided preferred tenant first; if not found, scans active tenants.
+   */
+  async resolveLocatorTenant(preferredTenantId: TenantId, locator: string): Promise<TenantId> {
+    const cleanLocator = locator.replace(/^\/v1\/booking-approvals\//, "").trim();
+    if (!cleanLocator) return preferredTenantId;
+
+    // 1. Check preferred tenant first
+    try {
+      const inPreferred = await withTenantTransaction(this.db, preferredTenantId, async (trx) => {
+        return await trx
+          .selectFrom("buyer_confirmations")
+          .where("interaction_locator", "=", cleanLocator)
+          .select(["id", "tenant_id"])
+          .executeTakeFirst();
+      });
+      if (inPreferred?.tenant_id) {
+        return inPreferred.tenant_id as TenantId;
+      }
+    } catch {
+      // Proceed to candidate search if preferred lookup fails
+    }
+
+    // 2. If not found in preferred tenant, check other active tenants in database
+    try {
+      const candidates = await this.db.selectFrom("tenants").select(["id"]).execute();
+      for (const c of candidates) {
+        if (c.id === preferredTenantId) continue;
+        const found = await withTenantTransaction(this.db, c.id, async (trx) => {
+          return await trx
+            .selectFrom("buyer_confirmations")
+            .where("interaction_locator", "=", cleanLocator)
+            .select(["id", "tenant_id"])
+            .executeTakeFirst();
+        });
+        if (found?.tenant_id) {
+          return found.tenant_id as TenantId;
+        }
+      }
+    } catch {
+      // Fall through to preferred tenant default
+    }
+
+    return preferredTenantId;
+  }
+
+  /**
    * Retrieves terms from the immutable server-side snapshot for buyer approval per Section D.4 and WP 02.
    */
   async getApprovalDetails(tenantId: TenantId, locator: string): Promise<BookingApprovalDetails> {
     const cleanLocator = locator.replace(/^\/v1\/booking-approvals\//, "");
-    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+    const effectiveTenantId = await this.resolveLocatorTenant(tenantId, cleanLocator);
+    return await withTenantTransaction(this.db, effectiveTenantId, async (trx) => {
       const conf = await trx
         .selectFrom("buyer_confirmations")
         .where("interaction_locator", "=", cleanLocator)
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .selectAll()
         .executeTakeFirst();
 
@@ -528,7 +576,7 @@ export class BookingService {
         .innerJoin("resources", "resources.id", "booking_hold_snapshots.resource_id")
         .innerJoin("bookings", "bookings.id", "booking_hold_snapshots.booking_id")
         .where("booking_hold_snapshots.booking_id", "=", conf.booking_id)
-        .where("booking_hold_snapshots.tenant_id", "=", tenantId)
+        .where("booking_hold_snapshots.tenant_id", "=", effectiveTenantId)
         .select([
           "booking_hold_snapshots.booking_id",
           "booking_hold_snapshots.tenant_id",
@@ -553,14 +601,14 @@ export class BookingService {
 
       const location = await trx
         .selectFrom("locations")
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .select(["timezone"])
         .executeTakeFirst();
 
       const latestIntent = await trx
         .selectFrom("payment_intents")
         .where("booking_id", "=", conf.booking_id)
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .orderBy("created_at", "desc")
         .select(["state", "payment_expires_at"])
         .executeTakeFirst();
@@ -574,7 +622,7 @@ export class BookingService {
         ? await trx
             .selectFrom("provider_operations")
             .where("booking_id", "=", conf.booking_id)
-            .where("tenant_id", "=", tenantId)
+            .where("tenant_id", "=", effectiveTenantId)
             .where("operation_type", "=", "CAPTURE")
             .orderBy("created_at", "desc")
             .select(["id", "state"])
@@ -667,11 +715,12 @@ export class BookingService {
       );
     }
     const cleanLocator = locator.replace(/^\/v1\/booking-approvals\//, "");
-    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+    const effectiveTenantId = await this.resolveLocatorTenant(tenantId, cleanLocator);
+    return await withTenantTransaction(this.db, effectiveTenantId, async (trx) => {
       const conf = await trx
         .selectFrom("buyer_confirmations")
         .where("interaction_locator", "=", cleanLocator)
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .selectAll()
         .executeTakeFirst();
 
@@ -704,7 +753,7 @@ export class BookingService {
       const booking = await trx
         .selectFrom("bookings")
         .where("id", "=", conf.booking_id)
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .select(["customer_id", "hold_expires_at"])
         .executeTakeFirst();
 
@@ -720,7 +769,7 @@ export class BookingService {
         ? await trx
             .selectFrom("customers")
             .where("id", "=", booking.customer_id)
-            .where("tenant_id", "=", tenantId)
+            .where("tenant_id", "=", effectiveTenantId)
             .select(["email_ciphertext"])
             .executeTakeFirst()
         : null;
@@ -751,7 +800,7 @@ export class BookingService {
           .insertInto("audit_events")
           .values({
             id: crypto.randomUUID(),
-            tenant_id: tenantId,
+            tenant_id: effectiveTenantId,
             actor_id: buyerUserId,
             actor_type: "USER",
             action: "booking.claimed_by_buyer",
@@ -812,12 +861,13 @@ export class BookingService {
     idempotencyKey: string,
   ): Promise<ApproveAndCommitResponse> {
     const cleanLocator = locator.replace(/^\/v1\/booking-approvals\//, "");
-    return await withTenantTransaction(this.db, tenantId, async (trx) => {
+    const effectiveTenantId = await this.resolveLocatorTenant(tenantId, cleanLocator);
+    return await withTenantTransaction(this.db, effectiveTenantId, async (trx) => {
       // 0. Idempotency management
       const payloadHash = sha256Hex(JSON.stringify({ locator: cleanLocator, buyerUserId }));
       const existingIdempotency = await trx
         .selectFrom("idempotency_records")
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .where("client_id", "=", clientId)
         .where("idempotency_key", "=", idempotencyKey)
         .selectAll()
@@ -838,7 +888,7 @@ export class BookingService {
       const conf = await trx
         .selectFrom("buyer_confirmations")
         .where("interaction_locator", "=", cleanLocator)
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .selectAll()
         .forUpdate()
         .executeTakeFirst();
@@ -855,7 +905,7 @@ export class BookingService {
       const booking = await trx
         .selectFrom("bookings")
         .where("id", "=", conf.booking_id)
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .selectAll()
         .forUpdate()
         .executeTakeFirst();
@@ -891,7 +941,7 @@ export class BookingService {
       const holdCustomer = await trx
         .selectFrom("customers")
         .where("id", "=", booking.customer_id)
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .select(["email_ciphertext"])
         .executeTakeFirst();
 
@@ -915,7 +965,7 @@ export class BookingService {
           .insertInto("audit_events")
           .values({
             id: crypto.randomUUID(),
-            tenant_id: tenantId,
+            tenant_id: effectiveTenantId,
             actor_id: buyerUserId,
             actor_type: "USER",
             action: "booking.claimed_by_buyer",
@@ -1009,7 +1059,7 @@ export class BookingService {
           blocking: true,
         })
         .where("booking_id", "=", booking.id)
-        .where("tenant_id", "=", tenantId)
+        .where("tenant_id", "=", effectiveTenantId)
         .execute();
 
       // 7. Record committed intent to guarantee (tenant_id, intent_jti) uniqueness
@@ -1017,7 +1067,7 @@ export class BookingService {
         .insertInto("committed_intents")
         .values({
           id: crypto.randomUUID(),
-          tenant_id: tenantId,
+          tenant_id: effectiveTenantId,
           intent_jti: claims.jti,
           booking_id: booking.id,
           committed_at: dbNow,
@@ -1030,7 +1080,7 @@ export class BookingService {
         .insertInto("outbox_events")
         .values({
           id: crypto.randomUUID(),
-          tenant_id: tenantId,
+          tenant_id: effectiveTenantId,
           aggregate_type: "booking",
           aggregate_id: booking.id,
           event_type: "booking.committing",
@@ -1047,7 +1097,7 @@ export class BookingService {
         .insertInto("audit_events")
         .values({
           id: crypto.randomUUID(),
-          tenant_id: tenantId,
+          tenant_id: effectiveTenantId,
           actor_id: buyerUserId,
           actor_type: "USER",
           action: "booking.committed",
@@ -1074,7 +1124,7 @@ export class BookingService {
         .insertInto("idempotency_records")
         .values({
           id: crypto.randomUUID(),
-          tenant_id: tenantId,
+          tenant_id: effectiveTenantId,
           actor_id: actor.userId,
           client_id: clientId,
           operation: "approve_and_commit.v1",

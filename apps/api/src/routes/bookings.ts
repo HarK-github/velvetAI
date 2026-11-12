@@ -26,9 +26,13 @@ export function setBookingService(service: BookingService) {
 export { bookingService };
 
 export const bookingsRoutes: FastifyPluginAsync = async (app) => {
+  const defaultFallbackTenantId = (process.env.PUBLIC_DEMO_TENANT_ID ||
+    process.env.SELF_SIGNUP_TENANT_ID ||
+    "01932b10-0000-7000-8000-000000000a01") as TenantId;
+
   // POST /v1/booking-quotes: Request a 5-minute versioned booking quote
   app.post("/v1/booking-quotes", async (request, reply) => {
-    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const tenantId = request.tenantId || defaultFallbackTenantId;
     const principal = request.principal || {
       subject: "dev|default-owner",
       userId: "01932b10-0000-7000-8000-000000000002" as UserId,
@@ -62,7 +66,7 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /v1/bookings/prepare: Prepare booking with slot hold, signed intent & approval locator
   app.post("/v1/bookings/prepare", async (request, reply) => {
-    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const tenantId = request.tenantId || defaultFallbackTenantId;
     const clientId = request.clientId || "default-client";
     const principal = request.principal || {
       subject: "dev|default-owner",
@@ -121,7 +125,7 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
       note: typeof body.note === "string" ? body.note : undefined,
     };
 
-    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const tenantId = request.tenantId || defaultFallbackTenantId;
     const clientId = request.clientId || "default-client";
     const principal = request.principal || {
       subject: "dev|default-owner",
@@ -157,7 +161,7 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/booking-approvals/:locator: Retrieve terms from immutable server snapshot per Section D.4
   app.get("/v1/booking-approvals/:locator", async (request, reply) => {
     const { locator } = request.params as { locator: string };
-    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const tenantId = request.tenantId || defaultFallbackTenantId;
 
     // Hardened security headers per Amendment D.4
     reply.header("Cache-Control", "no-store");
@@ -171,7 +175,7 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
   // POST /v1/booking-approvals/:locator/confirm: Buyer approves terms -> issues one-time confirmation token
   app.post("/v1/booking-approvals/:locator/confirm", async (request, reply) => {
     const { locator } = request.params as { locator: string };
-    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const tenantId = request.tenantId || defaultFallbackTenantId;
 
     // Human Buyer Authorization Guard (Invariant F1):
     // 1. Unauthenticated requests are rejected with 401 HUMAN_APPROVAL_REQUIRED
@@ -240,7 +244,7 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
   // POST /v1/booking-approvals/:locator/approve-and-commit: Atomically approve and commit hold per D1
   app.post("/v1/booking-approvals/:locator/approve-and-commit", async (request, reply) => {
     const { locator } = request.params as { locator: string };
-    const tenantId = request.tenantId || ("01932b10-0000-7000-8000-000000000001" as TenantId);
+    const tenantId = request.tenantId || defaultFallbackTenantId;
     const clientId = request.clientId || "default-client";
     const idempotencyKey = request.headers["idempotency-key"] as string;
 
