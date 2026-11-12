@@ -783,7 +783,7 @@ export const ApprovalCard: FC<{
             <span>{isReleased ? "○ HOLD RELEASED" : "● HOLD ACTIVE"}</span>
             <span className="mono">{isReleased ? "Replaced" : "5m Window"}</span>
           </div>
-          <div style={{ marginTop: "6px", fontWeight: 600, color: "#ffffff", fontSize: "13px" }}>
+          <div style={{ marginTop: "6px", fontWeight: 600, color: "var(--ink)", fontSize: "13px" }}>
             {serviceName}
           </div>
           <div className="mono text-muted" style={{ fontSize: "11px", margin: "2px 0 6px 0" }}>
@@ -793,7 +793,7 @@ export const ApprovalCard: FC<{
             style={{
               margin: "6px 0 10px 0",
               fontSize: "12px",
-              color: "#cbd5e1",
+              color: "var(--secondary)",
             }}
           >
             {isReleased
@@ -849,8 +849,9 @@ export const BookingStatusCard: FC<{
       <div className="ai-tool-card-content">
         <div
           style={{
-            padding: "8px",
-            background: "#252836",
+            padding: "10px",
+            background: "var(--ground)",
+            border: "1px solid var(--hairline)",
             borderRadius: "6px",
             fontSize: "12px",
           }}
@@ -914,8 +915,9 @@ export const CancellationCard: FC<{
       <div className="ai-tool-card-content">
         <div
           style={{
-            padding: "8px",
-            background: "#252836",
+            padding: "10px",
+            background: "var(--ground)",
+            border: "1px solid var(--hairline)",
             borderRadius: "6px",
             fontSize: "12px",
           }}
