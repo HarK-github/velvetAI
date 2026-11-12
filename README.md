@@ -23,6 +23,7 @@ velvetAI is a production-grade appointment booking and deposit platform for loca
 - **Frontend:** React 19, Vite, TypeScript — hosted on **Vercel**
 - **Backend:** Fastify 5, Node.js 24 LTS, TypeScript — hosted on **Render**
 - **Database:** PostgreSQL 17 with GiST exclusion constraints + Row-Level Security (`FORCE ROW LEVEL SECURITY`)
+- **Scheduling UI:** Bryntum Scheduler 7.3.8 (trial)
 
 ## Future Work
 
