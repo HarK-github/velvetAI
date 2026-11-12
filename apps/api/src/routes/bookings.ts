@@ -30,26 +30,133 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
     process.env.SELF_SIGNUP_TENANT_ID ||
     "01932b10-0000-7000-8000-000000000a01") as TenantId;
 
+  async function resolveServiceTenant(
+    dbClient: typeof db,
+    preferredTenantId: TenantId,
+    serviceId: string,
+  ): Promise<TenantId> {
+    const inPreferred = await withTenantTransaction(dbClient, preferredTenantId, async (trx) => {
+      return await trx
+        .selectFrom("services")
+        .where("id", "=", serviceId)
+        .where("tenant_id", "=", preferredTenantId)
+        .where("status", "=", "ACTIVE")
+        .select(["tenant_id"])
+        .executeTakeFirst();
+    });
+    if (inPreferred) return inPreferred.tenant_id as TenantId;
+
+    const candidates = await dbClient
+      .selectFrom("tenants")
+      .where("status", "=", "ACTIVE")
+      .where("id", "!=", preferredTenantId)
+      .select(["id"])
+      .execute();
+
+    for (const candidate of candidates) {
+      const candidateTenantId = candidate.id as TenantId;
+      const found = await withTenantTransaction(dbClient, candidateTenantId, async (trx) => {
+        return await trx
+          .selectFrom("services")
+          .where("id", "=", serviceId)
+          .where("tenant_id", "=", candidateTenantId)
+          .where("status", "=", "ACTIVE")
+          .select(["tenant_id"])
+          .executeTakeFirst();
+      });
+      if (found) return found.tenant_id as TenantId;
+    }
+    return preferredTenantId;
+  }
+
+  async function resolveQuote(
+    dbClient: typeof db,
+    preferredTenantId: TenantId,
+    quoteId: string,
+  ): Promise<{ tenantId: TenantId; serviceId: string; startsAt: Date } | undefined> {
+    const inPreferred = await withTenantTransaction(dbClient, preferredTenantId, async (trx) => {
+      return await trx
+        .selectFrom("booking_quotes")
+        .innerJoin("service_versions", "service_versions.id", "booking_quotes.service_version_id")
+        .where("booking_quotes.id", "=", quoteId)
+        .where("booking_quotes.tenant_id", "=", preferredTenantId)
+        .select([
+          "booking_quotes.tenant_id",
+          "service_versions.service_id",
+          "booking_quotes.starts_at",
+        ])
+        .executeTakeFirst();
+    });
+    if (inPreferred) {
+      return {
+        tenantId: inPreferred.tenant_id as TenantId,
+        serviceId: inPreferred.service_id,
+        startsAt: inPreferred.starts_at,
+      };
+    }
+
+    const candidates = await dbClient
+      .selectFrom("tenants")
+      .where("status", "=", "ACTIVE")
+      .where("id", "!=", preferredTenantId)
+      .select(["id"])
+      .execute();
+
+    for (const candidate of candidates) {
+      const candidateTenantId = candidate.id as TenantId;
+      const found = await withTenantTransaction(dbClient, candidateTenantId, async (trx) => {
+        return await trx
+          .selectFrom("booking_quotes")
+          .innerJoin("service_versions", "service_versions.id", "booking_quotes.service_version_id")
+          .where("booking_quotes.id", "=", quoteId)
+          .where("booking_quotes.tenant_id", "=", candidateTenantId)
+          .select([
+            "booking_quotes.tenant_id",
+            "service_versions.service_id",
+            "booking_quotes.starts_at",
+          ])
+          .executeTakeFirst();
+      });
+      if (found) {
+        return {
+          tenantId: found.tenant_id as TenantId,
+          serviceId: found.service_id,
+          startsAt: found.starts_at,
+        };
+      }
+    }
+    return undefined;
+  }
+
+  async function resolveActiveLocation(
+    dbClient: typeof db,
+    tenantId: TenantId,
+    requestedLocationId?: string,
+  ): Promise<string | undefined> {
+    return await withTenantTransaction(dbClient, tenantId, async (trx) => {
+      if (requestedLocationId) {
+        const match = await trx
+          .selectFrom("locations")
+          .where("id", "=", requestedLocationId)
+          .where("tenant_id", "=", tenantId)
+          .where("status", "=", "ACTIVE")
+          .select(["id"])
+          .executeTakeFirst();
+        if (match) return match.id;
+      }
+      const fallbackLoc = await trx
+        .selectFrom("locations")
+        .where("tenant_id", "=", tenantId)
+        .where("status", "=", "ACTIVE")
+        .select(["id"])
+        .executeTakeFirst();
+      return fallbackLoc?.id;
+    });
+  }
+
   // POST /v1/booking-quotes: Request a 5-minute versioned booking quote
   app.post("/v1/booking-quotes", async (request, reply) => {
-    const tenantId = request.tenantId || defaultFallbackTenantId;
-    const principal = request.principal || {
-      subject: "dev|default-owner",
-      userId: "01932b10-0000-7000-8000-000000000002" as UserId,
-      tenantId,
-      roles: ["OWNER"],
-      roleVersion: 1,
-      authTime: new Date().toISOString(),
-      mfaVerified: true,
-    };
-
-    const actor: BookingActor = {
-      subject: principal.subject,
-      userId: principal.userId,
-      tenantId: principal.tenantId,
-      roles: principal.roles,
-    };
-
+    const initialTenantId = request.tenantId || defaultFallbackTenantId;
     const parsed = createBookingQuoteInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -60,14 +167,7 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const quote = await bookingService.createQuote(tenantId, actor, parsed.data);
-    return reply.status(201).send(quote);
-  });
-
-  // POST /v1/bookings/prepare: Prepare booking with slot hold, signed intent & approval locator
-  app.post("/v1/bookings/prepare", async (request, reply) => {
-    const tenantId = request.tenantId || defaultFallbackTenantId;
-    const clientId = request.clientId || "default-client";
+    const tenantId = await resolveServiceTenant(db, initialTenantId, parsed.data.serviceId);
     const principal = request.principal || {
       subject: "dev|default-owner",
       userId: "01932b10-0000-7000-8000-000000000002" as UserId,
@@ -81,10 +181,18 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
     const actor: BookingActor = {
       subject: principal.subject,
       userId: principal.userId,
-      tenantId: principal.tenantId,
+      tenantId,
       roles: principal.roles,
     };
 
+    const quote = await bookingService.createQuote(tenantId, actor, parsed.data);
+    return reply.status(201).send(quote);
+  });
+
+  // POST /v1/bookings/prepare: Prepare booking with slot hold, signed intent & approval locator
+  app.post("/v1/bookings/prepare", async (request, reply) => {
+    const initialTenantId = request.tenantId || defaultFallbackTenantId;
+    const clientId = request.clientId || "default-client";
     const parsed = prepareBookingInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -95,6 +203,24 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    const tenantId = await resolveServiceTenant(db, initialTenantId, parsed.data.serviceId);
+    const principal = request.principal || {
+      subject: "dev|default-owner",
+      userId: "01932b10-0000-7000-8000-000000000002" as UserId,
+      tenantId,
+      roles: ["OWNER"],
+      roleVersion: 1,
+      authTime: new Date().toISOString(),
+      mfaVerified: true,
+    };
+
+    const actor: BookingActor = {
+      subject: principal.subject,
+      userId: principal.userId,
+      tenantId,
+      roles: principal.roles,
+    };
+
     const res = await bookingService.prepareBooking(tenantId, actor, clientId, parsed.data);
     return reply.status(201).send(res);
   });
@@ -103,20 +229,45 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
   app.post("/v1/booking-holds", async (request, reply) => {
     const body = (request.body as Record<string, unknown>) || {};
     const customer = (body.customer as Record<string, unknown>) || {};
-    // Normalize to prepare input format if legacy format used
+    const initialTenantId = request.tenantId || defaultFallbackTenantId;
+
+    let resolvedQuote: { tenantId: TenantId; serviceId: string; startsAt: Date } | undefined;
+    if (typeof body.quoteId === "string" && body.quoteId.trim().length > 0) {
+      resolvedQuote = await resolveQuote(db, initialTenantId, body.quoteId.trim());
+    }
+
+    const effectiveServiceId =
+      (typeof body.serviceId === "string" && body.serviceId.trim().length > 0
+        ? body.serviceId.trim()
+        : resolvedQuote?.serviceId) || "01932b10-0001-7000-8000-000000000001";
+
+    const tenantId = await resolveServiceTenant(
+      db,
+      resolvedQuote?.tenantId || initialTenantId,
+      effectiveServiceId,
+    );
+
+    const activeLocationId = await resolveActiveLocation(
+      db,
+      tenantId,
+      typeof body.locationId === "string" ? body.locationId : undefined,
+    );
+
+    const startsAt =
+      typeof body.startsAt === "string" && body.startsAt.trim().length > 0
+        ? body.startsAt.trim()
+        : resolvedQuote?.startsAt
+          ? resolvedQuote.startsAt.toISOString()
+          : new Date(Date.now() + 3600_000).toISOString();
+
     const preparePayload = {
-      serviceId:
-        typeof body.serviceId === "string"
-          ? body.serviceId
-          : "01932b10-0001-7000-8000-000000000001",
+      serviceId: effectiveServiceId,
       locationId:
-        typeof body.locationId === "string"
+        activeLocationId ||
+        (typeof body.locationId === "string"
           ? body.locationId
-          : "01932b10-0002-7000-8000-000000000001",
-      startsAt:
-        typeof body.startsAt === "string"
-          ? body.startsAt
-          : new Date(Date.now() + 3600_000).toISOString(),
+          : "01932b10-0002-7000-8000-000000000001"),
+      startsAt,
       timeZone: typeof body.timeZone === "string" ? body.timeZone : "UTC",
       customer: {
         email: typeof customer.email === "string" ? customer.email : "guest@velvetai.internal",
@@ -125,7 +276,6 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
       note: typeof body.note === "string" ? body.note : undefined,
     };
 
-    const tenantId = request.tenantId || defaultFallbackTenantId;
     const clientId = request.clientId || "default-client";
     const principal = request.principal || {
       subject: "dev|default-owner",
@@ -140,7 +290,7 @@ export const bookingsRoutes: FastifyPluginAsync = async (app) => {
     const actor: BookingActor = {
       subject: principal.subject,
       userId: principal.userId,
-      tenantId: principal.tenantId,
+      tenantId,
       roles: principal.roles,
     };
 

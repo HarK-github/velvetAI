@@ -175,7 +175,7 @@ export class AvailabilityService {
           windowFrom = getUtcForLocalTime(todayStr, startHour, effectiveTimeZone);
         }
         if (!windowTo) {
-          windowTo = new Date(windowFrom.getTime() + 24 * 60 * 60_000);
+          windowTo = new Date(windowFrom.getTime() + 48 * 60 * 60_000);
         }
       }
 

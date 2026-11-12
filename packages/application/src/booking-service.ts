@@ -233,7 +233,18 @@ export class BookingService {
           resourceQuery = resourceQuery.where("id", "=", options.resourceId);
         }
 
-        const resource = await resourceQuery.selectAll().executeTakeFirst();
+        let resource = await resourceQuery.selectAll().executeTakeFirst();
+
+        if (!resource) {
+          // Fallback: If input.locationId did not match any active resource for this tenant,
+          // fall back to any active resource of this tenant.
+          resource = await trx
+            .selectFrom("resources")
+            .where("tenant_id", "=", tenantId)
+            .where("status", "=", "ACTIVE")
+            .selectAll()
+            .executeTakeFirst();
+        }
 
         if (!resource) {
           throw new DomainError("No active resource found for location", "RESOURCE_NOT_FOUND", 404);

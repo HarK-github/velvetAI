@@ -23,7 +23,10 @@ interface ServiceItem {
 
 interface SlotItem {
   startsAt: string;
+  endsAt?: string;
   localStartsAt: string;
+  locationId?: string;
+  resourceId?: string;
   fillProbability?: number;
   depositPreview: { valueMinor?: number; minor?: number; currency: string };
   price: { valueMinor?: number; minor?: number; currency: string };
@@ -265,7 +268,7 @@ export const BookingSimulatorSection: FC = () => {
       try {
         const data = await apiClient.createBookingQuote({
           serviceId: service.id,
-          locationId: "01932b10-0000-7000-8000-000000000001",
+          locationId: slot.locationId || "01932b10-0000-7000-8000-000000000001",
           startsAt: slot.startsAt,
           timeZone: "UTC",
         });
@@ -338,6 +341,10 @@ export const BookingSimulatorSection: FC = () => {
     try {
       const data = await apiClient.createBookingHold({
         quoteId: quote.quoteId,
+        serviceId: selectedService?.id,
+        locationId: selectedSlot?.locationId,
+        startsAt: selectedSlot?.startsAt,
+        timeZone: "UTC",
         customer: { email: customerEmail, displayName: "Autonomous Agent Demo" },
         note: "Reserved via velvetAI interactive frontend console",
       });
