@@ -1,4 +1,4 @@
-import { Kysely } from "kysely";
+import { Kysely, sql } from "kysely";
 import crypto from "node:crypto";
 import { Database } from "@velvetai/db";
 import { DomainError, MembershipRevokedError, Role } from "@velvetai/contracts";
@@ -109,6 +109,9 @@ export class OnboardingService {
 
     // 3. Transactional, concurrent-safe creation
     const result = await this.db.transaction().execute(async (trx) => {
+      // Set transaction-local tenant context so RLS policy on memberships permits insertion and selection
+      await sql`SELECT set_config('app.tenant_id', ${targetTenantId}, true)`.execute(trx);
+
       // Upsert app_users
       const userId = crypto.randomUUID();
       await trx
