@@ -643,6 +643,13 @@ export function formatAskAIErrorMessage(err: unknown): { message: string; isAuth
     };
   }
 
+  if (parsedCode === "user_not_provisioned" || /user_not_provisioned/i.test(combined)) {
+    return {
+      message: "Your account isn't set up yet. Click Retry in a moment to finish setup.",
+      isAuthError: false,
+    };
+  }
+
   if (parsedCode === "CONCURRENCY_LIMIT_EXCEEDED" || /CONCURRENCY_LIMIT_EXCEEDED/i.test(combined)) {
     return {
       message: "Another concierge request is still finishing. Please wait a moment and try again.",

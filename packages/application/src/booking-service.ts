@@ -20,6 +20,7 @@ import {
   BookingQuoteDTO,
   TenantId,
   UserId,
+  ResourceId,
   MoneyMinor,
   CurrencyCode,
   Rfc3339Timestamp,
@@ -202,6 +203,7 @@ export class BookingService {
     actor: BookingActor,
     clientId: string,
     input: PrepareBookingInput,
+    options?: { resourceId?: ResourceId },
   ): Promise<PrepareBookingResponse> {
     let conflictDetailsBuilder: (() => Record<string, unknown>) | undefined;
 
@@ -221,13 +223,17 @@ export class BookingService {
         }
 
         // 2. Select assignable resource for the location
-        const resource = await trx
+        let resourceQuery = trx
           .selectFrom("resources")
           .where("tenant_id", "=", tenantId)
           .where("location_id", "=", input.locationId)
-          .where("status", "=", "ACTIVE")
-          .selectAll()
-          .executeTakeFirst();
+          .where("status", "=", "ACTIVE");
+
+        if (options?.resourceId) {
+          resourceQuery = resourceQuery.where("id", "=", options.resourceId);
+        }
+
+        const resource = await resourceQuery.selectAll().executeTakeFirst();
 
         if (!resource) {
           throw new DomainError("No active resource found for location", "RESOURCE_NOT_FOUND", 404);

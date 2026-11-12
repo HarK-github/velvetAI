@@ -70,7 +70,11 @@ const Auth0StateButton: FC = () => {
           } catch (err: unknown) {
             if (err instanceof ApiError) {
               setAuthStatus(`HTTP ${err.status}`);
-              setAuthDetail(err.problem.detail || err.problem.code || null);
+              setAuthDetail(
+                err.problem.code === "user_not_provisioned"
+                  ? "Your account isn't set up yet"
+                  : err.problem.detail || err.problem.code || null,
+              );
             } else {
               setAuthStatus("Token Error");
               setAuthDetail(err instanceof Error ? err.message : String(err));

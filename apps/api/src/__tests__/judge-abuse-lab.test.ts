@@ -365,7 +365,7 @@ describe("WP 07: Live Abuse Lab Runner & /v1/judge/abuse-lab API", () => {
     }
 
     expect(finalRun).not.toBeNull();
-    expect(finalRun!.status).toBe("SUCCEEDED");
+    expect(finalRun!.status, JSON.stringify(finalRun!.scenarios, null, 2)).toBe("SUCCEEDED");
     expect(finalRun!.finishedAt).not.toBeNull();
     expect(finalRun!.summary).toEqual({
       total: 10,

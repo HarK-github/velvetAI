@@ -11,6 +11,10 @@ import { apiClient, generateIdempotencyKey } from "../api-client.js";
 import { formatUserLocalWindow } from "../lib/timezone.js";
 import { useAskAI } from "../context/AskAIContext.js";
 import { PayPalButton, type PayPalPaymentSuccess } from "../components/PayPalButton.js";
+import {
+  AccountProvisioningNotice,
+  isUserNotProvisionedError,
+} from "../components/AccountProvisioningNotice.js";
 
 export interface DerivedApprovalView {
   state:
@@ -440,6 +444,9 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
         setPageState("wrong_buyer");
       } else if (errorObj.status === 410 || errorObj.code === "HOLD_EXPIRED") {
         setPageState("expired");
+      } else if (isUserNotProvisionedError(err)) {
+        setErrorMessage("Your account isn't set up yet");
+        setPageState("error");
       } else {
         setErrorMessage(errorObj.message || "Approval failed.");
         setPageState("error");
@@ -466,6 +473,9 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
         setPageState("wrong_buyer");
       } else if (errorObj.status === 410 || errorObj.code === "HOLD_EXPIRED") {
         setPageState("expired");
+      } else if (isUserNotProvisionedError(err)) {
+        setErrorMessage("Your account isn't set up yet");
+        setPageState("error");
       } else {
         setErrorMessage(errorObj.message || "Confirmation failed.");
         setPageState("error");
@@ -831,27 +841,32 @@ export const ApprovalPage: FC<ApprovalPageProps> = ({ locator }) => {
           )}
 
           {/* State 12: ERROR */}
-          {pageState === "error" && (
-            <div
-              style={{
-                background: "rgba(239, 68, 68, 0.08)",
-                border: "1px solid rgba(239, 68, 68, 0.25)",
-                borderRadius: "16px",
-                padding: "36px",
-              }}
-              data-testid="state-error"
-            >
-              <h3 style={{ color: "#ef4444", margin: "0 0 10px 0" }}>
-                Unable to load approval details.
-              </h3>
-              <p style={{ color: "var(--text-body)", margin: "0 0 24px 0" }}>
-                {errorMessage || "An unexpected error occurred while loading this reservation."}
-              </p>
-              <button type="button" className="button button--solid" onClick={loadDetails}>
-                Try again
-              </button>
-            </div>
-          )}
+          {pageState === "error" &&
+            (errorMessage === "Your account isn't set up yet" ? (
+              <div data-testid="state-error">
+                <AccountProvisioningNotice onRetry={loadDetails} />
+              </div>
+            ) : (
+              <div
+                style={{
+                  background: "rgba(239, 68, 68, 0.08)",
+                  border: "1px solid rgba(239, 68, 68, 0.25)",
+                  borderRadius: "16px",
+                  padding: "36px",
+                }}
+                data-testid="state-error"
+              >
+                <h3 style={{ color: "#ef4444", margin: "0 0 10px 0" }}>
+                  Unable to load approval details.
+                </h3>
+                <p style={{ color: "var(--text-body)", margin: "0 0 24px 0" }}>
+                  {errorMessage || "An unexpected error occurred while loading this reservation."}
+                </p>
+                <button type="button" className="button button--solid" onClick={loadDetails}>
+                  Try again
+                </button>
+              </div>
+            ))}
 
           {/* State 4: WRONG_BUYER */}
           {pageState === "wrong_buyer" && (

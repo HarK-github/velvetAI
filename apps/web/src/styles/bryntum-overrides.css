@@ -1,0 +1,153 @@
+@import "@bryntum/scheduler/scheduler.css";
+@import "@bryntum/scheduler/svalbard-dark.css";
+
+.velvet-bryntum-shell {
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #14151a;
+  box-shadow: 0 12px 32px rgba(13, 13, 15, 0.14);
+}
+
+.velvet-bryntum-shell .b-scheduler {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --b-font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.b-sch-event.velvet-evt {
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.25;
+  color: #f9fafb;
+}
+
+.b-sch-event.velvet-evt--hold {
+  background: rgba(245, 158, 11, 0.22);
+  border: 1.5px dashed #f59e0b;
+  color: #fef3c7;
+}
+
+.b-sch-event.velvet-evt--awaiting-payer {
+  background: rgba(217, 119, 6, 0.28);
+  border: 1.5px solid #f59e0b;
+  color: #fef3c7;
+}
+
+@keyframes velvetVerifyPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
+  }
+}
+
+.b-sch-event.velvet-evt--verifying {
+  background: rgba(217, 119, 6, 0.34);
+  border: 1.5px solid #fbbf24;
+  color: #fef3c7;
+  animation: velvetVerifyPulse 1.8s ease-in-out infinite;
+}
+
+.b-sch-event.velvet-evt--paid {
+  background: rgba(16, 185, 129, 0.24);
+  border: 1.5px solid #10b981;
+  color: #ecfdf5;
+}
+
+.b-sch-event.velvet-evt--checked-in {
+  background: rgba(47, 91, 255, 0.3);
+  border: 1.5px solid #60a5fa;
+  color: #eff6ff;
+}
+
+.b-sch-event.velvet-evt--completed {
+  background: rgba(107, 114, 128, 0.28);
+  border: 1px solid rgba(156, 163, 175, 0.55);
+  color: #e5e7eb;
+  opacity: 0.72;
+}
+
+.b-sch-event.velvet-evt--no-show {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(248, 113, 113, 0.7);
+  color: #fee2e2;
+  opacity: 0.78;
+}
+
+.b-sch-event.velvet-evt--cancelled {
+  background: rgba(75, 85, 99, 0.22);
+  border: 1px solid rgba(156, 163, 175, 0.45);
+  color: #d1d5db;
+  opacity: 0.54;
+}
+
+.b-sch-event.velvet-evt--cancelled .velvet-evt-line2 {
+  text-decoration: line-through;
+}
+
+.b-sch-event.velvet-evt--demo {
+  background: rgba(55, 65, 81, 0.52);
+  border-color: rgba(148, 163, 184, 0.65);
+}
+
+.b-sch-event.velvet-evt--demo .velvet-evt-status {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+@keyframes velvetRaceFlash {
+  0%,
+  100% {
+    background: rgba(47, 91, 255, 0.75);
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 4px rgba(124, 151, 255, 0.45);
+  }
+  50% {
+    background: rgba(16, 185, 129, 0.75);
+    border-color: #6ee7b7;
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.35);
+  }
+}
+
+.b-sch-event.velvet-evt--race-flash {
+  animation: velvetRaceFlash 0.65s ease-in-out infinite;
+  color: #ffffff;
+}
+
+.velvet-evt-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.velvet-evt-line1 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.velvet-evt-line2 {
+  font-size: 10px;
+  opacity: 0.92;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.velvet-evt-tag {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #f9fafb;
+  letter-spacing: 0.03em;
+}

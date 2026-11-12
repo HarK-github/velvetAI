@@ -11,6 +11,8 @@ import {
   CommitCancellationInput,
   CommitCancellationResponse,
   TriggerLiveAbuseRunResponse,
+  ScheduleResponse,
+  RaceTestResponse,
   ProblemDetails,
 } from "@velvetai/contracts";
 import { isAuth0Configured, isMockAuthEnabled, computeAuthDiagnostic } from "./lib/auth-config.js";
@@ -31,14 +33,17 @@ export interface ApiClientConfig {
 
 export class ApiError extends Error {
   public readonly code?: string;
+  public readonly retryAfterSeconds?: number;
 
   constructor(
     public readonly status: number,
     public readonly problem: ProblemDetails,
+    retryAfterSeconds?: number,
   ) {
     super(problem.detail || problem.title);
     this.name = "ApiError";
     this.code = problem.code;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -327,7 +332,12 @@ export class VelvetApiClient {
           code: "unknown_error",
         };
       }
-      throw new ApiError(response.status, problem);
+      const rawRetryAfter = response.headers?.get?.("retry-after");
+      const retryAfterSeconds =
+        rawRetryAfter && /^\d+$/.test(rawRetryAfter.trim())
+          ? Number.parseInt(rawRetryAfter.trim(), 10)
+          : undefined;
+      throw new ApiError(response.status, problem, retryAfterSeconds);
     }
 
     return response.json();
@@ -732,6 +742,120 @@ export class VelvetApiClient {
         const data = (await res.json()) as TriggerLiveAbuseRunResponse;
         return { kind: "started" as const, data };
       },
+      { keepKeyOnSuccess: false },
+    );
+  }
+
+  /**
+   * Fetches the Bryntum Scheduler read model (`GET /v1/merchant/schedule`), supporting ETag/304
+   * and unauthenticated public demo mode (`?public=true`).
+   */
+  async getMerchantSchedule(params: {
+    from: string;
+    to: string;
+    etag?: string | null;
+    publicMode?: boolean;
+  }): Promise<
+    | { kind: "ok"; data: ScheduleResponse; etag: string | null }
+    | { kind: "not_modified"; etag: string | null }
+  > {
+    this.ensureBaseUrl();
+
+    const query = new URLSearchParams({
+      from: params.from,
+      to: params.to,
+    });
+    if (params.publicMode) {
+      query.set("public", "true");
+    }
+
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+    };
+
+    if (!params.publicMode) {
+      const token = await this.resolveAuthToken();
+      const authorization = this.resolveAuthorizationHeader(token);
+      if (authorization) {
+        headers.Authorization = authorization;
+      }
+    }
+
+    if (params.etag) {
+      headers["If-None-Match"] = params.etag;
+    }
+
+    const res = await fetch(`${this.baseUrl}/v1/merchant/schedule?${query.toString()}`, {
+      method: "GET",
+      headers,
+    });
+
+    const responseEtag = res.headers?.get?.("etag") ?? null;
+    if (res.status === 304) {
+      return {
+        kind: "not_modified",
+        etag: responseEtag ?? params.etag ?? null,
+      };
+    }
+
+    if (!res.ok) {
+      let problem: ProblemDetails;
+      try {
+        problem = await res.json();
+      } catch {
+        problem = {
+          type: "https://api.velvetai.example/problems/unknown",
+          title: res.statusText || "Request failed",
+          status: res.status,
+          code: "unknown_error",
+        };
+      }
+      const rawRetryAfter = res.headers?.get?.("retry-after");
+      const retryAfterSeconds =
+        rawRetryAfter && /^\d+$/.test(rawRetryAfter.trim())
+          ? Number.parseInt(rawRetryAfter.trim(), 10)
+          : undefined;
+      throw new ApiError(res.status, problem, retryAfterSeconds);
+    }
+
+    const data = (await res.json()) as ScheduleResponse;
+    return {
+      kind: "ok",
+      data,
+      etag: responseEtag ?? `"${data.scheduleRevision}"`,
+    };
+  }
+
+  /**
+   * Triggers N parallel hold attempts on a single slot via the production PostgreSQL GiST path.
+   */
+  async runRaceTest(
+    params: {
+      resourceId?: string;
+      serviceId?: string;
+      startsAt?: string;
+      parallel?: number;
+    } = {},
+    idempotencyKey?: string,
+  ): Promise<RaceTestResponse> {
+    const actionScope = `judge:race-test:${params.resourceId || "default"}:${params.startsAt || "auto"}`;
+    return this.withRetryIdempotencyKey(
+      actionScope,
+      "race-test",
+      idempotencyKey,
+      (key) =>
+        this.request<RaceTestResponse>("/v1/judge/race-test", {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify({
+            parallel: params.parallel ?? 20,
+            ...(params.resourceId ? { resourceId: params.resourceId } : {}),
+            ...(params.serviceId ? { serviceId: params.serviceId } : {}),
+            ...(params.startsAt ? { startsAt: params.startsAt } : {}),
+          }),
+        }),
       { keepKeyOnSuccess: false },
     );
   }

@@ -54,6 +54,7 @@ describe("WP 04A: Public Read-Only Access (/v1/services & /v1/availability)", ()
     const judgeLocation = await testDb
       .selectFrom("locations")
       .where("tenant_id", "=", JUDGE_TENANT_ID)
+      .where("name", "=", "SoHo Flagship")
       .select(["id"])
       .executeTakeFirstOrThrow();
     judgeLocationId = judgeLocation.id;

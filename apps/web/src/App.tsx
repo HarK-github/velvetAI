@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import type { FC, ReactNode } from "react";
 import { Auth0Provider, useAuth0 } from "@auth0/auth0-react";
 import { RouterProvider, useRouter } from "./router.js";
@@ -7,13 +7,17 @@ import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { Navbar } from "./components/Navbar.js";
 import { EdgeMeta } from "./components/EdgeMeta.js";
 import { AskAIDrawer } from "./components/AskAIDrawer.js";
+import { FirstRunWelcomeBanner } from "./components/FirstRunWelcomeBanner.js";
 import { HomePage } from "./pages/HomePage.js";
 import { BookingPage } from "./pages/BookingPage.js";
-import { SchedulePage } from "./pages/SchedulePage.js";
 import { PolicyPage } from "./pages/PolicyPage.js";
 import { StatusPage } from "./pages/StatusPage.js";
 import { ApprovalPage } from "./pages/ApprovalPage.js";
 import { SecurityPage } from "./pages/SecurityPage.js";
+
+const SchedulePage = lazy(() =>
+  import("./pages/SchedulePage.js").then((m) => ({ default: m.SchedulePage })),
+);
 import {
   computeAuthDiagnostic,
   sanitizeReturnTo,
@@ -109,7 +113,17 @@ const AppContent: FC = () => {
       case "/book":
         return <BookingPage />;
       case "/schedule":
-        return <SchedulePage />;
+        return (
+          <Suspense
+            fallback={
+              <div style={{ padding: "120px var(--page-padding)", color: "var(--text-dim)" }}>
+                Loading scheduler...
+              </div>
+            }
+          >
+            <SchedulePage />
+          </Suspense>
+        );
       case "/policy":
         return <PolicyPage />;
       case "/status":
@@ -149,6 +163,7 @@ const AppContent: FC = () => {
       )}
 
       <Navbar apiHealthy={apiHealthy} apiLatency={apiLatency} onOpenAi={openDrawer} />
+      <FirstRunWelcomeBanner onOpenAi={openDrawer} />
       <EdgeMeta scrollPercentage={scrollPercentage} />
 
       <main id="main-content">{renderCurrentPage()}</main>

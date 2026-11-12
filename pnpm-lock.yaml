@@ -304,6 +304,12 @@ importers:
       '@auth0/auth0-react':
         specifier: 2.28.2
         version: 2.28.2(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@bryntum/scheduler':
+        specifier: npm:@bryntum/scheduler-trial@7.3.8
+        version: '@bryntum/scheduler-trial@7.3.8'
+      '@bryntum/scheduler-react':
+        specifier: 7.3.8
+        version: 7.3.8
       '@velvetai/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -704,6 +710,17 @@ packages:
   '@babel/types@7.29.8':
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
+
+  '@bryntum/scheduler-react@7.3.8':
+    resolution: {integrity: sha512-PTzGFzsCrRoqLbbVqHlJ4sO8BSEEPzIkpVsCEwVy4Ci9hQlbVD62dTKcU35kTp81NhuDPw85l9Jj0xeQfCpZGg==}
+    engines: {node: '>=0.10.0'}
+
+  '@bryntum/scheduler-trial-lib@1.0.1':
+    resolution: {integrity: sha512-gTrNKz2O7JdNalEU9hma0fYyZ1mGhXXb6yCn/+E+SPjRyg/qFad1bQ7vfBUFitw3S3eB66IdtAZLD+QCtiIUKw==}
+
+  '@bryntum/scheduler-trial@7.3.8':
+    resolution: {integrity: sha512-VyZvV5koom8Td4DQF1aGMKpT7SKVieSMeVd0CuzEF4sctx2+bxoXXYeWxgLkWPzuKWJ9p8AxP4a06aYvxo0NvA==}
+    engines: {node: '>=0.10.0'}
 
   '@csstools/color-helpers@5.1.0':
     resolution: {integrity: sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA==}
@@ -3077,6 +3094,14 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
+
+  '@bryntum/scheduler-react@7.3.8': {}
+
+  '@bryntum/scheduler-trial-lib@1.0.1': {}
+
+  '@bryntum/scheduler-trial@7.3.8':
+    dependencies:
+      '@bryntum/scheduler-trial-lib': 1.0.1
 
   '@csstools/color-helpers@5.1.0': {}
 
