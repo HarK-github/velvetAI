@@ -69,7 +69,7 @@
    - WP 03: Render Deployment — `IMPLEMENTED`
    - WP 04: Judge Tenant Seed and Reset — `IMPLEMENTED` (Commit 1 merged to main @ `ec732a1`)
    - WP 04A: Judge Onboarding and First-Run Access — `IMPLEMENTED` (JIT buyer self-provisioning, public read-only catalog/availability, strict judge user provisioning CLI with placeholder rejection, production hold advisory lock + 40P01/23P01 -> 409 mapping; verified 54 test files, 450 tests across 12 packages)
-   - WP 05: Bryntum Scheduler — `NOT_STARTED`
+   - WP 05: Bryntum Scheduler — `VERIFIED` (Trial 7.3.8, lazy-loaded day view, schedule read model, race test, 04A Part 5 onboarding UI)
    - WP 06: Forecasting and Deposits — `NOT_STARTED`
    - WP 07: Abuse Lab Dashboard — `NOT_STARTED`
    - WP 08: Judge Page Proof and Fault Injection — `NOT_STARTED`
@@ -711,3 +711,12 @@ Package 02 completes the end-to-end human approval and direct commit flow for re
    - Hardened Vite server and production headers with `frame-ancestors 'none'` CSP and `X-Frame-Options: DENY`.
    - Verified with unit tests in `apps/web/src/__tests__/approve-page.test.tsx` (16/16 tests pass).
    - Updated `packages/db/src/__tests__/migration-lifecycle.test.ts` to prove `down()` and `up()` idempotency for migration 0006.
+
+8. **WP 05: Bryntum Scheduler & WP 04A Part 5 Judge Onboarding UI**
+   - Installed exact matching Bryntum trial version `7.3.8` (`@bryntum/scheduler@npm:@bryntum/scheduler-trial@7.3.8` and `@bryntum/scheduler-react@7.3.8`) with trial watermark untouched and `THIRD_PARTY_NOTICES.md` attribution.
+   - Code-split `/schedule` via `React.lazy` and `React.Suspense`. Verified clean separation: `SchedulePage-*.js` (3.87 MB uncompressed / 1.51 MB gzip) and `SchedulePage-*.css` (374 kB uncompressed / 59.7 kB gzip).
+   - Implemented `GET /v1/merchant/schedule` read model with 4 judge tenant providers, pure `toSchedulePaymentState()` mapping, masked buyer labels, revision hash + deterministic ETag (`If-None-Match` -> `304`), max 14-day window, and public read-only demo mode with 60/min IP rate limiting.
+   - Built Bryntum Scheduler Day View with 9 status visual indicators, live 1s hold countdown and local expiry, 5s polling paused when tab is hidden, `aria-live="polite"` booking announcements, accessible `<ul>` legend, and signed-out demo banner.
+   - Implemented `POST /v1/judge/race-test` executing $N=20$ concurrent holds through production concurrency control (`1 hold, 19 rejected by the database`) with instant winner release, zero residue, and judge-only UI trigger.
+   - Implemented 04A Part 5 onboarding UI: `FirstRunWelcomeBanner` with user sub hash persistence and `AccountProvisioningNotice` with `Retry` on `403 user_not_provisioned`.
+   - Evidence recorded in `docs/evidence/bryntum-scheduler.md`. All package suites passing (`@velvetai/contracts`: 31/31, `@velvetai/application`: 88/88, `@velvetai/api`: 160/160, `@velvetai/web`: 136/136).

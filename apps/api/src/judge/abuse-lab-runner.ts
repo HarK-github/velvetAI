@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { Kysely, sql } from "kysely";
 import { Database, withTenantTransaction } from "@velvetai/db";
-import { BookingActor, BookingService } from "@velvetai/application";
+import { BookingActor, BookingService, executeConcurrentHoldRace } from "@velvetai/application";
 import {
   BookingId,
   DomainError,
@@ -17,7 +17,6 @@ import {
   LocationId,
   Rfc3339Timestamp,
   ServiceId,
-  SlotUnavailableError,
   TenantId,
   UserId,
 } from "@velvetai/contracts";
@@ -146,46 +145,31 @@ export const DEFAULT_LIVE_SCENARIOS: readonly LiveScenarioDefinition[] = [
     expected: "1 winner + 19 slot_unavailable (409)",
     execute: async (ctx) => {
       const startsAt = getSlotWindow(ctx.scenarioIndex) as Rfc3339Timestamp;
-      const results = await Promise.allSettled(
-        Array.from({ length: 20 }, (_, i) => {
-          const email = makeProbeEmail(ctx, `racer-${i}`);
-          return ctx.bookingService.prepareBooking(
-            JUDGE_TENANT_ID,
-            ctx.actor,
-            `probe-client-${i}`,
-            {
-              serviceId: ctx.target.serviceId,
-              locationId: ctx.target.locationId,
-              startsAt,
-              timeZone: ctx.target.timeZone,
-              customer: { email, displayName: `Probe Racer ${i}` },
-            },
-          );
+      const race = await executeConcurrentHoldRace({
+        bookingService: ctx.bookingService,
+        tenantId: JUDGE_TENANT_ID,
+        serviceId: ctx.target.serviceId,
+        locationId: ctx.target.locationId,
+        startsAt,
+        timeZone: ctx.target.timeZone,
+        parallel: 20,
+        actorForAttempt: () => ctx.actor,
+        clientIdForAttempt: (i) => `probe-client-${i}`,
+        customerForAttempt: (i) => ({
+          email: makeProbeEmail(ctx, `racer-${i}`),
+          displayName: `Probe Racer ${i}`,
         }),
-      );
+      });
 
-      let winners = 0;
-      let conflicts = 0;
-      let unexpected = 0;
-
-      for (const res of results) {
-        if (res.status === "fulfilled") {
-          winners += 1;
-          ctx.probeBookingIds.add(res.value.bookingId);
-        } else if (
-          res.reason instanceof SlotUnavailableError ||
-          isDomainFailureWithCode(res.reason, "slot_unavailable", 409)
-        ) {
-          conflicts += 1;
-        } else {
-          unexpected += 1;
-        }
+      for (const bookingId of race.createdBookingIds) {
+        ctx.probeBookingIds.add(bookingId);
       }
 
-      const passed = winners === 1 && conflicts === 19 && unexpected === 0;
+      const unexpected = race.unexpectedErrors.length;
+      const passed = race.succeeded === 1 && race.conflicts === 19 && unexpected === 0;
       return {
         passed,
-        observed: `${winners} winner, ${conflicts} slot_unavailable (409), ${unexpected} other errors`,
+        observed: `${race.succeeded} winner, ${race.conflicts} slot_unavailable (409), ${unexpected} other errors`,
       };
     },
   },

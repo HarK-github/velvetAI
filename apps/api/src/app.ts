@@ -21,7 +21,10 @@ import { aiRoutes } from "./routes/ai.js";
 import { judgeRoutes, setJudgeDb } from "./routes/judge.js";
 import { judgeAbuseLabRoutes, setJudgeAbuseLabDb } from "./routes/judge-abuse-lab.js";
 import { judgeProofRoutes, setJudgeProofDb } from "./routes/judge-proof.js";
+import { scheduleRoutes, setScheduleDb } from "./routes/schedule.js";
+import { judgeRaceRoutes, setJudgeRaceDb } from "./routes/judge-race.js";
 import type { JudgeAbuseLabService } from "./judge/abuse-lab-runner.js";
+import type { JudgeRaceTestService } from "@velvetai/application";
 import { registerAuth } from "./plugins/auth.js";
 import { registerIdempotency } from "./plugins/idempotency.js";
 import { Kysely } from "kysely";
@@ -31,6 +34,7 @@ export interface AppOptions {
   modelProvider?: ModelProviderPort;
   db?: Kysely<Database>;
   abuseLabService?: JudgeAbuseLabService;
+  raceTestService?: JudgeRaceTestService;
 }
 
 export function buildApp(options: AppOptions = {}): FastifyInstance {
@@ -107,7 +111,7 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
       return cb(null, false);
     },
     credentials: true,
-    exposedHeaders: ["Date"],
+    exposedHeaders: ["Date", "ETag"],
   });
 
   // Auth and Idempotency Middleware on Root App
@@ -161,11 +165,14 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
     setJudgeDb(options.db);
     setJudgeAbuseLabDb(options.db);
     setJudgeProofDb(options.db);
+    setScheduleDb(options.db);
+    setJudgeRaceDb(options.db);
   }
 
   // Business & frontend endpoints
   app.register(servicesRoutes);
   app.register(availabilityRoutes);
+  app.register(scheduleRoutes);
   app.register(bookingsRoutes);
   app.register(riskRoutes);
   app.register(paymentsRoutes);
@@ -178,6 +185,10 @@ export function buildApp(options: AppOptions = {}): FastifyInstance {
   });
   app.register(judgeProofRoutes, {
     db: options.db,
+  });
+  app.register(judgeRaceRoutes, {
+    db: options.db,
+    raceTestService: options.raceTestService,
   });
   app.register(aiRoutes, options);
 

@@ -4,6 +4,10 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { PayPalButton, PayPalPaymentSuccess } from "./PayPalButton.js";
 import { API_BASE_URL, apiClient } from "../api-client.js";
 import { isAuth0Configured, isMockAuthEnabled } from "../lib/auth-config.js";
+import {
+  AccountProvisioningNotice,
+  isUserNotProvisionedError,
+} from "./AccountProvisioningNotice.js";
 
 interface ServiceItem {
   id: string;
@@ -278,7 +282,11 @@ export const BookingSimulatorSection: FC = () => {
         } else {
           setQuote(null);
           setQuoteError(
-            err instanceof Error ? err.message : "Failed to calculate dynamic deposit quote",
+            isUserNotProvisionedError(err)
+              ? "user_not_provisioned"
+              : err instanceof Error
+                ? err.message
+                : "Failed to calculate dynamic deposit quote",
           );
         }
       } finally {
@@ -335,7 +343,13 @@ export const BookingSimulatorSection: FC = () => {
       setHold(data as unknown as HoldData);
     } catch (err: unknown) {
       if (!isMountedRef.current) return;
-      setHoldError(err instanceof Error ? err.message : "Failed to secure slot hold on server");
+      setHoldError(
+        isUserNotProvisionedError(err)
+          ? "user_not_provisioned"
+          : err instanceof Error
+            ? err.message
+            : "Failed to secure slot hold on server",
+      );
     } finally {
       if (isMountedRef.current) {
         setIsLockingHold(false);
@@ -684,22 +698,34 @@ export const BookingSimulatorSection: FC = () => {
                     </div>
                   )}
 
-                  {quoteError && (
-                    <div
-                      role="alert"
-                      style={{
-                        margin: "12px 0",
-                        padding: "8px 12px",
-                        background: "rgba(239, 68, 68, 0.08)",
-                        border: "1px solid rgba(239, 68, 68, 0.3)",
-                        borderRadius: "4px",
-                        color: "#dc2626",
-                        fontSize: "11px",
-                      }}
-                    >
-                      {quoteError}
-                    </div>
-                  )}
+                  {quoteError &&
+                    (quoteError === "user_not_provisioned" ? (
+                      <div style={{ margin: "12px 0" }}>
+                        <AccountProvisioningNotice
+                          onRetry={() => {
+                            if (selectedService && selectedSlot) {
+                              void fetchQuote(selectedService, selectedSlot);
+                            }
+                          }}
+                          retrying={isLoadingQuote}
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        role="alert"
+                        style={{
+                          margin: "12px 0",
+                          padding: "8px 12px",
+                          background: "rgba(239, 68, 68, 0.08)",
+                          border: "1px solid rgba(239, 68, 68, 0.3)",
+                          borderRadius: "4px",
+                          color: "#dc2626",
+                          fontSize: "11px",
+                        }}
+                      >
+                        {quoteError}
+                      </div>
+                    ))}
 
                   <div style={{ margin: "20px 0" }}>
                     <label
@@ -741,22 +767,30 @@ export const BookingSimulatorSection: FC = () => {
                     {quote?.cancellationPolicy?.summary || selectedService.cancellationSummary}
                   </div>
 
-                  {holdError && (
-                    <div
-                      role="alert"
-                      style={{
-                        margin: "12px 0",
-                        padding: "10px 14px",
-                        background: "rgba(239, 68, 68, 0.08)",
-                        border: "1px solid rgba(239, 68, 68, 0.3)",
-                        borderRadius: "4px",
-                        color: "#dc2626",
-                        fontSize: "11px",
-                      }}
-                    >
-                      {holdError}
-                    </div>
-                  )}
+                  {holdError &&
+                    (holdError === "user_not_provisioned" ? (
+                      <div style={{ margin: "12px 0" }}>
+                        <AccountProvisioningNotice
+                          onRetry={() => void handleLockHold()}
+                          retrying={isLockingHold}
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        role="alert"
+                        style={{
+                          margin: "12px 0",
+                          padding: "10px 14px",
+                          background: "rgba(239, 68, 68, 0.08)",
+                          border: "1px solid rgba(239, 68, 68, 0.3)",
+                          borderRadius: "4px",
+                          color: "#dc2626",
+                          fontSize: "11px",
+                        }}
+                      >
+                        {holdError}
+                      </div>
+                    ))}
 
                   {!hold ? (
                     <button

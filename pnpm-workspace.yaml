@@ -3,6 +3,8 @@ packages:
   - "packages/*"
 
 allowBuilds:
+  '@bryntum/scheduler-trial': true
+  '@bryntum/scheduler-trial-lib': true
   browser-tabs-lock: true
   esbuild: true
 

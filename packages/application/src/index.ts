@@ -13,4 +13,6 @@ export * from "./ai/index.js";
 export * from "./judge/seed-plan.js";
 export * from "./judge/judge-reset-service.js";
 export * from "./judge/booking-proof-service.js";
+export * from "./judge/race-test-service.js";
+export * from "./schedule-service.js";
 export * from "./onboarding-service.js";
