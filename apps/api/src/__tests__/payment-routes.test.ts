@@ -421,6 +421,25 @@ describe("API PayPal Payment & Ingress Endpoints (W3 - W8)", () => {
     expect(capBody.bookingStatus).toBe("CAPTURE_UNCERTAIN");
     expect(capBody.paymentStatus).toBe("UNCERTAIN");
     expect(capBody.statusUrl).toBeDefined();
+
+    // Verify GET /v1/operations/:operationId returns 200 under RLS and tenant discovery
+    const opRes = await app.inject({
+      method: "GET",
+      url: capBody.statusUrl,
+    });
+    expect(opRes.statusCode).toBe(200);
+    const opBody = opRes.json();
+    expect(opBody.id).toBe(capBody.operationId);
+    expect(opBody.operationType).toBe("CAPTURE");
+    expect(opBody.state).toBeDefined();
+
+    // Verify GET /v1/operations/:operationId returns 404 for non-existent operation
+    const notFoundRes = await app.inject({
+      method: "GET",
+      url: "/v1/operations/00000000-0000-0000-0000-000000000000",
+    });
+    expect(notFoundRes.statusCode).toBe(404);
+    expect(notFoundRes.json().code).toBe("OPERATION_NOT_FOUND");
   });
 
   it("POST /v1/captures/:captureId/refunds prevents over-refund under capture lock", async () => {

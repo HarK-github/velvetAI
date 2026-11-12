@@ -611,7 +611,8 @@ export function registerAuth(app: FastifyInstance): void {
         request.url.startsWith("/v1/availability?") ||
         request.url === "/v1/merchant/schedule" ||
         request.url.startsWith("/v1/merchant/schedule?") ||
-        request.url.startsWith("/v1/booking-approvals/"));
+        request.url.startsWith("/v1/booking-approvals/") ||
+        request.url.startsWith("/v1/operations/"));
 
     const authHeader = request.headers.authorization;
     let token: string | undefined;

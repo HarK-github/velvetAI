@@ -1,5 +1,5 @@
-import { Kysely } from "kysely";
-import { Database, withTenantTransaction } from "@velvetai/db";
+import { Kysely, Selectable } from "kysely";
+import { Database, withTenantTransaction, ProviderOperationTable } from "@velvetai/db";
 import { PaymentPort } from "@velvetai/application";
 import { createLogger } from "@velvetai/observability";
 
@@ -23,18 +23,33 @@ export class ReconciliationProcessor {
   async reconcilePendingOperations(limit = 25, tenantId?: string): Promise<ReconciliationResult> {
     const now = new Date();
 
-    let query = this.db
-      .selectFrom("provider_operations")
-      .where("state", "in", ["SENT_UNKNOWN", "PENDING", "RECONCILING"])
-      .where((eb) =>
-        eb.or([eb("next_reconcile_at", "is", null), eb("next_reconcile_at", "<=", now)]),
-      );
+    const tenantIds: string[] = tenantId
+      ? [tenantId]
+      : (
+          await this.db
+            .selectFrom("tenants")
+            .select(["id"])
+            .where("status", "=", "ACTIVE")
+            .execute()
+        ).map((t) => t.id);
 
-    if (tenantId) {
-      query = query.where("tenant_id", "=", tenantId);
+    const ops: Selectable<ProviderOperationTable>[] = [];
+    for (const tid of tenantIds) {
+      if (ops.length >= limit) break;
+      const tenantOps = await withTenantTransaction(this.db, tid, async (trx) => {
+        return await trx
+          .selectFrom("provider_operations")
+          .where("tenant_id", "=", tid)
+          .where("state", "in", ["SENT_UNKNOWN", "PENDING", "RECONCILING"])
+          .where((eb) =>
+            eb.or([eb("next_reconcile_at", "is", null), eb("next_reconcile_at", "<=", now)]),
+          )
+          .selectAll()
+          .limit(limit - ops.length)
+          .execute();
+      });
+      ops.push(...tenantOps);
     }
-
-    const ops = await query.selectAll().limit(limit).execute();
 
     let reconciled = 0;
     let failed = 0;
@@ -61,6 +76,8 @@ export class ReconciliationProcessor {
             const ord = await this.paymentPort.getOrder(op.provider_order_id);
             if (ord.captures && ord.captures.length > 0) {
               captureStatus = ord.captures[0]!.status;
+            } else if (ord.status === "COMPLETED") {
+              captureStatus = "COMPLETED";
             }
           }
 
